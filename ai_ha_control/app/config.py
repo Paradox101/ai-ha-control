@@ -106,6 +106,8 @@ class Config:
     # Washer/dryer/dishwasher done (by power use) and water that never stops running (0 = off)
     appliance_alerts: bool = True
     leak_flow_hours: float = 2.0
+    # Monday morning: broken automations, updates, dead devices (only when there is something)
+    health_report: bool = True
     calendar_context: bool = True
     energy_context: bool = True
     api_key: str = ""

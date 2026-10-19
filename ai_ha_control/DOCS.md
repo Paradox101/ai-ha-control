@@ -118,6 +118,10 @@ Heeft een stroommeter (`sensor.*` met device class *power*) *wasmachine*, *droge
 
 Een watermeter (*water*, totaal) of doorstroomsensor (*volume_flow_rate*) die `leak_flow_hours` lang nooit een kwartier stilstaat, geeft een waarschuwing. Overdag wacht de add-on drie keer zo lang, omdat douchen of de tuin sproeien dan normaal is.
 
+### Huisdokter
+
+Maandagochtend om 10:00 krijg je (alleen als er iets is) één melding over de gezondheid van Home Assistant: automatiseringen met een fout, die uit staan, al 60 dagen niet liepen of naar kapotte apparaten verwijzen, beschikbare updates, apparaten die al 3 dagen onbereikbaar zijn, een bijna volle schijf (System Monitor) en lege batterijen. Vraag het ook in de chat: "hoe gezond is mijn Home Assistant?". De add-on past hier niets aan.
+
 ### Nachtronde
 
 Gaat het huis naar de slaapmodus (slaapscène of begin van `sleep_hours`), dan krijg je één melding met ramen en deuren die open staan, sloten en garage die niet dicht zijn en lampen die nog aan staan, met een knop *Lampen uit*. Voor elk slot en de garage komt een aparte vraag op je telefoon; de agent doet dat nooit zelf. Staat alles goed, dan krijg je niets.
@@ -245,6 +249,7 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 | `bedtime_check` | `true` | Nachtronde: bij het slapengaan één melding met wat nog open of aan staat |
 | `appliance_alerts` | `true` | Melding als wasmachine, droger of vaatwasser klaar is (stroommeter met die naam) |
 | `leak_flow_hours` | `2` | Waarschuwing als een watermeter zo lang zonder pauze telt ('s nachts/weg; overdag 3×), 0 = uit |
+| `health_report` | `true` | Huisdokter: maandagochtend kapotte automatiseringen, updates en dode apparaten |
 | `escalate_minutes` | `5` | Kritieke melding zonder *Gezien* na zoveel minuten opnieuw naar iedereen en omroepen (max. 3 keer, 0 = uit) |
 | `calendar_context` | `true` | Agenda in de ochtendsamenvatting; lopende afspraak met "vakantie"/"gasten" zet de huismodus |
 | `energy_context` | `true` | Stroomprijs, goedkoopste tijdvak en zonneverwachting in de samenvatting en de chat |

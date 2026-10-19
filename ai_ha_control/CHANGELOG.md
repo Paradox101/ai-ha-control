@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.12
+
+- **Huisdokter**: maandagochtend één melding (alleen als er iets is) met automatiseringen die een fout hebben, uit staan, al 60 dagen niet liepen of naar niet-bestaande of al dagen onbereikbare apparaten verwijzen; beschikbare updates; apparaten die al 3 dagen onbereikbaar zijn; een bijna volle schijf en lege batterijen. Ook op vraag in de chat ("hoe gezond is mijn Home Assistant?"). Alleen lezen (`health_report`).
+
 ## 0.6.11
 
 - **Apparaat klaar**: melding naar wie thuis is als de wasmachine, droger of vaatwasser klaar is, herkend aan een stroommeter met die naam (`appliance_alerts`).

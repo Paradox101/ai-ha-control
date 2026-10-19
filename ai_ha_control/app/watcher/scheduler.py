@@ -22,6 +22,7 @@ from .rules import Watcher
 _LOGGER = logging.getLogger(__name__)
 
 TICK_SECONDS = 60
+HEALTH_REPORT_WEEKDAY, HEALTH_REPORT_TIME = 0, "10:00"  # Monday morning
 ROUTINE_ANALYSIS_TIME = "03:30"
 LLM_CHECK_SECONDS = 300
 
@@ -168,6 +169,11 @@ class Scheduler:
             await self.daily_summary()
         if config.routine_learning and self._due("routines", ROUTINE_ANALYSIS_TIME, now):
             await self.routines()
+        if config.health_report and now.weekday() == HEALTH_REPORT_WEEKDAY and \
+                self._due("doctor", HEALTH_REPORT_TIME, now):
+            from ..doctor import send_health_report
+
+            await send_health_report(self._ctx)
 
     async def _autonomous_round(self, now: datetime) -> None:
         config = self._ctx.config

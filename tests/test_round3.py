@@ -300,3 +300,53 @@ async def test_normal_use_with_pauses_is_no_leak(ctx, notifier):
         meter(ctx, liters)
         await monitor.tick("slapen", t + minute * 60)
     assert ctx.db.incidents(status="active") == []
+
+
+# --- home doctor ----------------------------------------------------------------------------------------
+
+from app.doctor import format_report, health_findings, send_health_report  # noqa: E402
+
+from .test_security_comfort import ago  # noqa: E402
+
+
+async def test_home_doctor_finds_broken_things(ctx, notifier):
+    def add(entity_id, state, minutes=0, **attrs):
+        ctx.index.update_state({"entity_id": entity_id, "state": state, "attributes": attrs,
+                                "last_changed": ago(minutes)})
+
+    add("automation.vertrek", "on", friendly_name="Vertrek", id="1", last_triggered=ago(5))
+    add("automation.kerst", "on", 200 * 1440, friendly_name="Kerstverlichting", id="2", last_triggered=ago(90 * 1440))
+    add("automation.oud", "off", friendly_name="Oude regel")
+    add("automation.kapot", "unavailable", friendly_name="Kapotte regel")
+
+    async def states():
+        return [{"entity_id": "update.home_assistant_core_update", "state": "on",
+                 "attributes": {"friendly_name": "Home Assistant Core", "installed_version": "2026.9.1",
+                                "latest_version": "2026.10.2"}}]
+
+    ctx.ha.get_states = states
+    add("sensor.tuin_temperatuur", "unavailable", 5 * 1440, friendly_name="Tuin temperatuur")
+    add("sensor.system_monitor_disk_use_percent", "91", friendly_name="Schijfgebruik")
+
+    async def config(automation_id):
+        return {"triggers": [{"trigger": "state", "entity_id": "sensor.tuin_temperatuur"}],
+                "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.weg"}}]} \
+            if automation_id == "1" else {"actions": []}
+
+    ctx.ha.get_automation_config = config
+    findings = await health_findings(ctx)
+    assert findings["Automatiseringen met een fout"] == ["Kapotte regel"]
+    assert findings["Automatiseringen die uit staan"] == ["Oude regel"]
+    assert findings["Automatiseringen al 60+ dagen niet uitgevoerd"] == ["Kerstverlichting (90 dagen)"]
+    (broken,) = findings["Automatiseringen die naar kapotte apparaten verwijzen"]
+    assert "light.weg bestaat niet" in broken and "Tuin temperatuur al 5 dagen onbereikbaar" in broken
+    assert findings["Updates beschikbaar"] == ["Home Assistant Core (2026.9.1 → 2026.10.2)"]
+    assert "Tuin temperatuur" in findings["Al 3+ dagen onbereikbaar"]
+    assert findings["Schijf bijna vol"] == ["Schijfgebruik: 91% vol"]
+    assert "Kapotte regel" in await send_health_report(ctx)
+    assert ctx.db.events()[0]["title"] == "🩺 Huisdokter"
+
+
+async def test_healthy_home_sends_nothing(ctx, notifier):
+    assert format_report({}).startswith("Alles gezond")
+    assert await send_health_report(ctx) == ""

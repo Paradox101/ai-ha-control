@@ -135,6 +135,8 @@ SECTIONS: list[dict[str, Any]] = [
         _f("leak_flow_hours", "Waarschuwen als water blijft lopen na", "number",
            "Watermeter die zo lang zonder pauze telt ('s nachts en als je weg bent; overdag 3× zo lang). 0 = uit.",
            min=0, max=24, step=0.5, unit="uur"),
+        _f("health_report", "Huisdokter", "toggle",
+           "Maandagochtend een overzicht van kapotte automatiseringen, updates en dode apparaten (alleen als er iets is)."),
         _f("escalate_minutes", "Alarm herhalen als niemand 'Gezien' drukt na", "number",
            "Naar iedereen en omroepen op de speakers, maximaal 3 keer. 0 = uit.", min=0, max=60, step=1, unit="min"),
     ]},

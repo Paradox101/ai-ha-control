@@ -130,6 +130,9 @@ configuration:
   leak_flow_hours:
     name: Waarschuwen als water blijft lopen na (uren)
     description: Watermeter of doorstroomsensor zonder pauze; overdag drie keer zo lang. 0 = uit
+  health_report:
+    name: Huisdokter
+    description: Maandagochtend een overzicht van kapotte automatiseringen, updates en dode apparaten
   escalate_minutes:
     name: Alarm herhalen na (minuten)
     description: "Kritieke meldingen zonder 'Gezien' gaan opnieuw naar iedereen en worden omgeroepen, maximaal 3 keer. 0 = uit."
