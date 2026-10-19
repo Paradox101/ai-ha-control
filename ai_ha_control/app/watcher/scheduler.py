@@ -14,13 +14,15 @@ from ..notify import Notifier
 from ..tools.base import ToolContext
 from ..i18n import text as text_for
 from ..tools.context import agenda, energy_info
-from .baseline import house_mode
+from ..scheduled import run_due
+from .baseline import MODE_SLEEP, house_mode
 from .routines import analyze_routines
 from .rules import Watcher
 
 _LOGGER = logging.getLogger(__name__)
 
 TICK_SECONDS = 60
+HEALTH_REPORT_WEEKDAY, HEALTH_REPORT_TIME = 0, "10:00"  # Monday morning
 ROUTINE_ANALYSIS_TIME = "03:30"
 LLM_CHECK_SECONDS = 300
 
@@ -86,6 +88,10 @@ class Scheduler:
         self.snapshots = None
         self.publisher = None
         self.comfort = None
+        self.thresholds = None
+        self._previous_mode: str | None = None
+        self.appliances = None
+        self.simulation = None
         self._agent_task: asyncio.Task | None = None
         self._llm_checked = -1e9
         self.llm_down_since: float | None = None
@@ -151,6 +157,8 @@ class Scheduler:
             return
         config = self._ctx.config
         await self._watcher.tick()
+        await self._notifier.escalate()
+        await run_due(self._ctx)
         now = self._notifier.now()
         await self._autonomous_round(now)
         await self._check_llm()
@@ -162,6 +170,11 @@ class Scheduler:
             await self.daily_summary()
         if config.routine_learning and self._due("routines", ROUTINE_ANALYSIS_TIME, now):
             await self.routines()
+        if config.health_report and now.weekday() == HEALTH_REPORT_WEEKDAY and \
+                self._due("doctor", HEALTH_REPORT_TIME, now):
+            from ..doctor import send_health_report
+
+            await send_health_report(self._ctx)
 
     async def _autonomous_round(self, now: datetime) -> None:
         config = self._ctx.config
@@ -169,6 +182,10 @@ class Scheduler:
         mode = house_mode(self._ctx.index, config, now)
         if self.agent is not None:
             self.agent.set_mode(mode)
+        if mode == MODE_SLEEP and self._previous_mode not in (None, MODE_SLEEP) and not settling \
+                and config.bedtime_check:
+            await self._watcher.bedtime_round()
+        self._previous_mode = mode
         if self.baseline is not None and not settling:
             for anomaly in self.baseline.sample(now) + self.baseline.offline():
                 await self._watcher.report_anomaly(anomaly)
@@ -177,6 +194,12 @@ class Scheduler:
             self._start_agent()
         if self.comfort is not None and not settling:
             await self.comfort.tick(mode, now)
+        if self.thresholds is not None and not settling:
+            await self.thresholds.tick(mode)
+        if self.appliances is not None and not settling:
+            await self.appliances.tick(mode)
+        if self.simulation is not None and not settling:
+            await self.simulation.tick(mode, now)
         if self.patrol is not None and not settling and self.patrol.due(mode):
             await self.patrol.run()
         if self.incidents is not None:

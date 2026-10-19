@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.16
+
+- **Aanwezigheid nabootsen op vakantie** (`presence_simulation`, standaard uit): in de huismodus vakantie gaan 's avonds na zonsondergang in de ruimtes die je normaal gebruikt lampen aan en uit, op basis van de geleerde bewegingsactiviteit per uur (zonder leerdata: woonkamer/keuken 18-23 uur), met wat willekeur in tijd en dagen. Alleen lampen, één per ruimte; na middernacht alles uit. Stopt bij thuiskomst of als *Zelf handelen* uit staat.
+
+## 0.6.15
+
+- **Huisdokter**: maandagochtend één melding (alleen als er iets is) met automatiseringen die een fout hebben, uit staan, al 60 dagen niet liepen of naar niet-bestaande of al dagen onbereikbare apparaten verwijzen; beschikbare updates; apparaten die al 3 dagen onbereikbaar zijn; een bijna volle schijf en lege batterijen. Ook op vraag in de chat ("hoe gezond is mijn Home Assistant?"). Alleen lezen (`health_report`).
+
+## 0.6.14
+
+- **Apparaat klaar**: melding naar wie thuis is als de wasmachine, droger of vaatwasser klaar is, herkend aan een stroommeter met die naam (`appliance_alerts`).
+- **Water blijft lopen**: telt een watermeter of doorstroomsensor urenlang zonder pauze, dan komt er een waarschuwing (lekkende kraan of wc). Standaard na 2 uur 's nachts of als je weg bent, overdag na 6 uur (`leak_flow_hours`, 0 = uit).
+
+## 0.6.13
+
+- **Herinneringen en geplande acties** via de chat: "herinner me om 18:00 aan de vuilnisbak", "zet over een uur de verwarming op 18". Bewaard over herstarts, zichtbaar en te annuleren bovenaan het tabblad Meldingen. Een geplande actie gaat op het moment zelf door dezelfde regels: deuren en alarm worden dan nog op je telefoon gevraagd. Stond de add-on op dat moment uit, dan wordt een actie niet alsnog uren later uitgevoerd maar gemeld.
+
+## 0.6.12
+
+- **Nachtronde**: bij het slapengaan één melding met open ramen/deuren, sloten of garage die niet dicht zijn en lampen die nog aan staan, met een knop *Lampen uit*. Sloten en garage alleen als vraag op de telefoon. Niets aan de hand = geen melding (`bedtime_check`).
+
+## 0.6.11
+
+- **Alarm niet gezien**: kritieke meldingen hebben een knop *Gezien*. Zonder reactie na `escalate_minutes` (standaard 5) gaat de melding opnieuw naar iedereen en wordt hij omgeroepen, maximaal 3 keer. Ook *Gezien* in het tabblad Incidenten.
+- **Bewakingsregels**: "waarschuw als de vriezer boven -15 graden komt" wordt een vaste regel (entiteit, boven/onder/is, waarde, minimale duur, optioneel alleen in bepaalde huismodi). De add-on controleert hem bij elke wijziging zelf, zonder de AI, en meldt het als het weer normaal is. Aanmaken via de chat (met bevestiging) of in het tabblad Huisregels.
+- Voorbeeldknoppen in het tabblad Huisregels lopen op een telefoon niet meer buiten beeld.
+
 ## 0.6.10
 
 - **⬇ Excel** opent nu een venster met *Excel downloaden*, *Delen…* (deelmenu van de telefoon, waar dat kan) en *Kopieer als tekst*. In de Home Assistant-app kon het bestand niet worden opgeslagen; de tekst kopiëren en plakken werkt daar wel.
