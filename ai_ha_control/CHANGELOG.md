@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.33
+
+- **Stroom en weer van nu komen rechtstreeks uit Home Assistant**: "Hoeveel stroom verbruiken we nu?", "Leveren we terug?", "Wat leveren de zonnepanelen?", "Wat is de stroomprijs?" en "Wat voor weer is het?" beantwoordt de chat direct uit de P1-meter, de omvormer, de prijssensor en de weer-entiteit ("Het huis neemt nu 835 W af van het net. De zonnepanelen leveren nu 138 W."). Vragen over een hele dag ("hoeveel hebben we vandaag verbruikt"), het goedkoopste moment of het weer van morgen gaan nog naar de agent, net als vragen waarvoor geen sensor is.
+
 ## 0.6.32
 
 Beveiliging uitgebreid, met vaste regels (geen taalmodel). De agent bedient het alarm en de sloten nog steeds nooit zelf.

@@ -12,8 +12,8 @@ from typing import Any
 
 from .config import Config
 from .ha.index import EntityIndex, EntityInfo, NON_ROOM_AREAS, normalize
-from .house import (QUESTION_START, car_answer, climate_text, fmt_number, outside_temperature, readings_text,
-                    room_readings)
+from .house import (QUESTION_START, car_answer, climate_text, fmt_number, grid_power, is_price_unit,
+                    outside_temperature, readings_text, room_readings, solar_power, weather_text)
 
 STATUS_START = QUESTION_START | {"welke", "wie", "staan", "zijn", "waar", "brandt", "branden", "which", "who", "are",
                                  "is", "any", "graag", "geef", "noem", "toon", "give", "show", "list"}
@@ -34,6 +34,14 @@ TEMP_WORDS = {"temperatuur", "temperaturen", "warm", "koud", "graden", "temperat
 OUTSIDE_WORDS = {"buiten", "outside", "buitentemperatuur"}
 PEOPLE_WORDS = {"wie", "who", "iemand", "iedereen", "everyone", "everybody", "anyone", "somebody", "someone", "niemand", "nobody"}
 HOME_WORDS = {"thuis", "home", "weg", "away"}
+# "Hoeveel stroom verbruiken we nu?": the meter right now, never a total over a day (that goes to the agent).
+POWER_WORDS = {"stroom", "verbruik", "verbruiken", "verbruikt", "vermogen", "watt", "afname", "energie",
+               "power", "usage", "electricity", "using", "use"}
+SOLAR_WORDS = {"zonnepanelen", "zonnepaneel", "panelen", "zon", "opwek", "opbrengst", "teruglevering", "terug",
+               "leveren", "levert", "solar", "panels", "producing"}
+PRICE_WORDS = {"prijs", "stroomprijs", "kost", "kosten", "tarief", "duur", "goedkoop", "price", "cost"}
+ENERGY_FILLER = {"ik", "we", "wij", "huidige", "actuele", "veel", "much", "current", "currently", "kwh"}
+WEATHER_WORDS = {"weer", "weather", "regent", "wind", "waait", "zonnig", "bewolkt"}
 # "Staat de keukenlamp aan?": one device by name, asked about its state.
 STATE_WORDS = {"aan", "uit", "open", "dicht", "gesloten", "slot", "brandt", "draait", "speelt", "status", "stand",
                "ingeschakeld", "uitgeschakeld", "on", "off", "closed", "locked", "running", "playing"}
@@ -205,6 +213,31 @@ def _named(index: EntityIndex, areas: list[str], area_words: set[str], rest: set
     return "; ".join(line(e) for e in sorted(found, key=lambda e: (e.area or "", e.name))) + "."
 
 
+def _energy(index: EntityIndex, rest: set[str], nl: bool) -> str | None:
+    grid, solar = grid_power(index), solar_power(index)
+    prices = [e for e in index.entities.values() if e.domain == "sensor" and is_price_unit(e.unit)
+              and e.state not in ("unavailable", "unknown")]
+    parts = []
+    if rest & PRICE_WORDS:
+        if not prices:
+            return None
+        price = min(prices, key=lambda e: e.entity_id)
+        value = price.state.replace(".", ",") if nl else price.state
+        parts.append(f"{'De stroomprijs is nu' if nl else 'The electricity price is'} {value} {price.unit}.")
+    if rest & POWER_WORDS or (rest & SOLAR_WORDS and rest & {"teruglevering", "terug"}):
+        if grid is not None:
+            watts = float(grid.state)
+            parts.append((f"Het huis levert nu {-watts:.0f} W terug aan het net." if watts < 0
+                          else f"Het huis neemt nu {watts:.0f} W af van het net.") if nl else
+                         (f"The house is feeding {-watts:.0f} W back to the grid." if watts < 0
+                          else f"The house is drawing {watts:.0f} W from the grid."))
+    if rest & SOLAR_WORDS or (rest & POWER_WORDS and solar is not None):
+        if solar is not None:
+            parts.append(f"{'De zonnepanelen leveren nu' if nl else 'The solar panels produce'} "
+                         f"{float(solar.state):.0f} W.")
+    return " ".join(parts) or None
+
+
 def status_answer(index: EntityIndex, config: Config, question: str, profiles: list[dict[str, Any]] | tuple = (),
                   voice: bool = False) -> str | None:
     """The answer to a plain status question, or None when the agent should handle it."""
@@ -224,6 +257,12 @@ def status_answer(index: EntityIndex, config: Config, question: str, profiles: l
         return _openings(index, areas, nl, voice)
     if rest <= TEMP_WORDS | OUTSIDE_WORDS and rest & (TEMP_WORDS | {"buitentemperatuur"}):
         return _temperatures(index, config, list(profiles), areas, bool(rest & OUTSIDE_WORDS), nl, voice)
+    energy = POWER_WORDS | SOLAR_WORDS | PRICE_WORDS
+    if not areas and rest & energy and rest <= energy | ENERGY_FILLER:
+        return _energy(index, rest, nl)
+    if not areas and rest & WEATHER_WORDS and rest <= WEATHER_WORDS | OUTSIDE_WORDS | TEMP_WORDS | {"voor", "soort"}:
+        text = weather_text(index, nl)
+        return f"{'Buiten' if nl else 'Outside'}: {text}." if text else None
     if rest & STATE_WORDS and (named := _named(index, areas, area_words, rest, nl)):
         return named
     people = _people(index)
