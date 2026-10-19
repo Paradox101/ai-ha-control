@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.20
+
+- **Chat toont opmaak** in plaats van losse sterretjes: vetgedrukt, cursief, kopjes en (geneste) opsommingen worden netjes weergegeven. Veilig opgebouwd zonder HTML uit het antwoord. Ook de samenvatting gebruikt dit.
+- **Meldingen en spraak zonder markdown**: pushmeldingen, de tijdlijn, omroepen op de speakers en Assist-antwoorden krijgen platte tekst (opsommingen als "•", uitgesproken als losse zinnen).
+
 ## 0.6.19
 
 Beter gebruik van wat er echt in huis hangt (op basis van een entiteitenexport van ~3700 entiteiten).

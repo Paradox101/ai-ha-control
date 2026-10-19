@@ -15,6 +15,8 @@ from tests.conftest import STATES
 from tests.test_e2e import fake_home_assistant, fake_ollama
 
 RUNNING = {}  # the add-on state of the running test server
+# Markdown as the model writes it, plus HTML that must stay text.
+ANSWER = "**Alles** is rustig thuis.\n\n**Personen**\n- Vincent: *thuis*\n  - sinds `10:00`\n- <img src=x onerror=alert(1)>"
 TABS = ["incidents", "agent", "events", "rules", "routines", "memory", "log", "settings", "pair", "chat"]
 
 
@@ -23,7 +25,7 @@ async def addon(tmp_path, monkeypatch):
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
     monkeypatch.setenv("OPTIONS_FILE", str(tmp_path / "options.json"))
     ha_server = TestServer(fake_home_assistant([]))
-    ollama_server = TestServer(fake_ollama([], [{"role": "assistant", "content": "Alles is rustig thuis."}]))
+    ollama_server = TestServer(fake_ollama([], [{"role": "assistant", "content": ANSWER}]))
     await ha_server.start_server()
     await ollama_server.start_server()
     config = Config(ha_url=str(ha_server.make_url("")).rstrip("/"), ha_token="secret",
@@ -77,6 +79,12 @@ async def test_ui_tabs_chat_and_settings(addon):
         await page.fill("#input", "Hoe gaat het thuis?")
         await page.click("#send")
         await page.wait_for_selector(".msg:not(.user):not(.typing):has-text('Alles is rustig thuis.')")
+        answer = page.locator(".msg:not(.user):not(.typing)").last
+        assert "*" not in await answer.inner_text()
+        assert await answer.locator("strong").first.inner_text() == "Alles"
+        assert await answer.locator("ul > li > ul > li code").inner_text() == "10:00"
+        assert await answer.locator("img").count() == 0
+        assert "<img src=x" in await answer.inner_text()
 
         await page.click("#nav button[data-tab='agent']")
         await page.wait_for_selector("#agent-perf .card:has-text('qwen3:8b')")

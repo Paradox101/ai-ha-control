@@ -8,6 +8,8 @@ from datetime import datetime, time as dtime
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
+from .text import plain_text
+
 if TYPE_CHECKING:
     from .config import Config
     from .ha.client import HAClient
@@ -83,6 +85,7 @@ class Notifier:
         incident_id: int | None = None,
     ) -> int:
         """Log the event and push it unless quiet hours apply. Returns the event id."""
+        title, message = plain_text(title), plain_text(message)
         event_id = self._db.add_event(kind, title, message, entity_id, False, ref, incident_id)
         quiet = respect_quiet_hours and not critical and in_quiet_hours(self._config.quiet_hours, self.now())
         if quiet:
@@ -168,6 +171,7 @@ class Notifier:
         players = [p for p in self._config.announce_players if p]
         if not players:
             return
+        message = plain_text(message, speech=True)
         if not self._config.tts_entity:
             _LOGGER.warning("announce_players is set but tts_entity is empty")
             return
@@ -191,6 +195,8 @@ class Notifier:
         critical: bool,
         kind: str = "info",
     ) -> None:
+        # Phones show markdown as literal ** and #; persistent notifications would render it, but keep it uniform.
+        title, message = plain_text(title), plain_text(message)
         services = self.targets(kind, critical)
         if not services:
             await self._ha.call_service(
