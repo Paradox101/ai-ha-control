@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 from app.agent.autonomous import area_climate
-from app.house import car_status, duplicates, is_car, rechargeable_devices
+from app.house import car_answer, car_status, duplicates, is_car, rechargeable_devices
 from app.tools.history import detection_places
 from app.watcher.baseline import Baseline
 
@@ -45,6 +45,9 @@ def test_the_car_is_the_ford(index):
     assert len(lines) == 1 and lines[0].startswith("Ford Explorer")
     assert not any(is_car(e) for e in index.entities.values() if e.domain in ("camera", "binary_sensor", "vacuum"))
     assert "ford_explorer_wf0rpaef3ssm50705_achtertuin" in rechargeable_devices(index)
+    assert car_answer(index, "Hoe vol is de auto").startswith("De accu is 75 % vol")
+    assert car_answer(index, "Is de auto op slot en hoe vol is de accu?").startswith("De auto staat op slot. De accu")
+    assert car_answer(index, "staat de stofzuiger op auto?") is None
 
 
 def test_no_server_anomalies(index, tmp_path):

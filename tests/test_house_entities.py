@@ -510,3 +510,23 @@ async def test_car_lock_only_in_the_car_line(ctx):
     put(ctx, "lock.fordpass_doorlock", "locked", friendly_name="Deuren", device="Ford Explorer")
     prompt = Agent(ctx, build_registry()).system_prompt()
     assert "Slot: Deuren" not in prompt and "Slot: Voordeur slot" in prompt
+
+
+async def test_how_full_is_the_car_never_reaches_the_model(ctx):
+    from app.agent.loop import Agent
+    from app.house import car_answer
+    from app.tools.home import build_registry
+    from tests.conftest import FakeLLM
+    ford(ctx, charging="CHARGING", plug="CONNECTED", charger_w=7400)
+    # An earlier wrong answer in the history must not come back.
+    ctx.db.add_message("c1", "user", "Is de auto op slot en hoe vol is de accu?")
+    ctx.db.add_message("c1", "assistant", "De auto staat op slot. De accu is volledig vol.")
+    ctx.llm = FakeLLM([{"role": "assistant", "content": "De accu van de auto is volledig vol."}])
+    result = await Agent(ctx, build_registry()).run("Hoe vol is de auto", "c1")
+    assert result.answer == "De accu is 75 % vol en de auto is nu aan het laden (7,4 kW). Het bereik is 226 km."
+    assert not ctx.llm.requests
+    assert car_answer(ctx.index, "Is de auto op slot en hoe vol is de accu?") == \
+        "De auto staat op slot. De accu is 75 % vol en de auto is nu aan het laden (7,4 kW)."
+    for other in ("doe de auto op slot", "wanneer heeft de auto geladen?", "hoe vol is de vaatwasser?",
+                  "Hoeveel auto's zijn er vandaag gezien?", "zet de airco op auto"):
+        assert car_answer(ctx.index, other) is None, other
