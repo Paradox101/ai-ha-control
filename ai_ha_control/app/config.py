@@ -99,6 +99,8 @@ class Config:
     person_notify: list[str] = field(default_factory=list)
     digest_time: str = ""
     llm_down_minutes: int = 30
+    calendar_context: bool = True
+    energy_context: bool = True
     api_key: str = ""
     log_level: str = "info"
 

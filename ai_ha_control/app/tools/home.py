@@ -12,6 +12,7 @@ from .actions import perform
 from .agent_tools import AGENT_TOOLS, HOUSE_RULE_TOOLS
 from .automations import TOOLS as AUTOMATION_TOOLS
 from .base import Tool, ToolContext, ToolRegistry, as_list
+from .context import CONTEXT_TOOLS
 
 # --- Reading -----------------------------------------------------------------
 
@@ -439,7 +440,7 @@ AUTONOMOUS_AUTOMATION_TOOLS = {"list_automations", "get_automation", "related_au
 def build_registry() -> ToolRegistry:
     from ..comfort import comfort_tools  # comfort imports the agent package, which imports tools
 
-    return ToolRegistry(TOOLS + AUTOMATION_TOOLS + HOUSE_RULE_TOOLS + comfort_tools())
+    return ToolRegistry(TOOLS + AUTOMATION_TOOLS + HOUSE_RULE_TOOLS + comfort_tools() + CONTEXT_TOOLS)
 
 
 def build_autonomous_registry() -> ToolRegistry:

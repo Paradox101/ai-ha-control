@@ -121,6 +121,12 @@ configuration:
     name: Evening digest (HH:MM)
   llm_down_minutes:
     name: Report an unreachable AI server after (minutes)
+  calendar_context:
+    name: Use calendar
+    description: Appointments in the morning summary; an ongoing event with 'vacation' or 'guests' sets the house mode
+  energy_context:
+    name: Use energy prices
+    description: Cheapest electricity time and solar forecast in the morning summary and on request
   api_key:
     name: API key
     description: Used by the Assist integration. Empty = generated automatically.

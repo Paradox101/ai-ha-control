@@ -1,5 +1,5 @@
 name: AI HA Control
-version: "0.6.0"
+version: "0.6.1"
 slug: ai_ha_control
 description: Lokale AI (Ollama) die je huis helpt beheren via Home Assistant
 url: https://github.com/paradox101/ai-ha-control
@@ -16,6 +16,14 @@ discovery:
 ingress: true
 ingress_port: 8099
 watchdog: http://[HOST]:[PORT:8099]/api/health
+backup: hot
+backup_pre: /usr/bin/ai-ha-backup
+backup_exclude:
+  - "snapshots"
+  - "ai_ha_control.db"
+  - "ai_ha_control.db-wal"
+  - "ai_ha_control.db-shm"
+  - "*.tmp"
 panel_icon: mdi:robot-happy
 panel_title: AI Huis
 options:
@@ -84,6 +92,8 @@ options:
   person_notify: []
   digest_time: ""
   llm_down_minutes: 30
+  calendar_context: true
+  energy_context: true
   api_key: ""
   log_level: info
 schema:
@@ -141,5 +151,7 @@ schema:
     - match(^person\.[a-z0-9_]+=[a-z_]+\.[a-z0-9_]+$)
   digest_time: str?
   llm_down_minutes: int(5,1440)
+  calendar_context: bool
+  energy_context: bool
   api_key: password?
   log_level: list(debug|info|warning|error)

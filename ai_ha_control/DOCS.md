@@ -74,6 +74,18 @@ Elke melding heeft **👍 Nuttig / 👎 Onnodig**. 👎 op een afwijking beteken
 
 Gebruik ze op je dashboard of in eigen automatiseringen (bijv. een lamp rood als `binary_sensor.ai_bezorgd` aan gaat).
 
+Met de **integratie** (zie Assist hieronder) krijg je in plaats daarvan echte entiteiten onder het apparaat *AI HA Control*: huisstatus, huismodus, laatste incident, open incidenten, wacht op bevestiging, AI-reactietijd, bezorgd, add-on-probleem en de schakelaar *Zelf handelen*. Die overleven een herstart van HA, kun je hernoemen en aan een ruimte hangen; de losse `sensor.ai_*` hierboven verdwijnen dan.
+
+Bij elk nieuw of verergerd incident vuurt de add-on het event `ai_ha_control_incident` (`incident_id`, `kind`, `severity`, `title`, `text`, `new`):
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: ai_ha_control_incident
+    event_data:
+      severity: critical
+```
+
 **Dodemansknop**: ligt de add-on zelf plat, dan kan hij dat niet melden. Laat Home Assistant het doen:
 
 ```yaml
@@ -99,6 +111,9 @@ Is alleen de AI-server (Ollama) weg, dan meldt de add-on dat zelf na `llm_down_m
 - Sloten, alarm, rolluiken/garagedeuren, kranen en **nieuwe automatiseringen** vragen altijd om bevestiging: in de web-UI, met een knop op je telefoon of door "ja" te zeggen. Alles wat deuren of het alarm raakt kan **niet** via spraak worden bevestigd.
 - De API-sleutel (voor de Assist-integratie) geeft alleen toegang tot het gesprek; instellingen en de noodknop alleen via het HA-paneel.
 - HA herstarten/stoppen, shell-commando's, add-ons beheren en de recorder zijn geblokkeerd.
+- De add-on draait onder een eigen **AppArmor-profiel**: alleen `/data` is schrijfbaar, de code is alleen-lezen en de HA-config, back-ups, media en gedeelde mappen zijn afgeschermd.
+- `/api/health` controleert de verbinding met HA en de interne planner; de Supervisor-watchdog herstart de add-on bij problemen.
+- HA-back-ups bevatten een consistente kopie van de database (gemaakt vlak voor de back-up), zonder camera-snapshots.
 - Elke actie wordt gelogd in het *Actielog*.
 
 ## Installatie
@@ -147,6 +162,10 @@ Flash attention + `q8_0` KV-cache halveren het contextgeheugen, zodat `qwen3:8b`
 3. *Instellingen → Spraakassistenten* → kies **AI HA Control** als gespreksagent.
 
 De integratie geeft ook de actie `ai_ha_control.ask` (met antwoord), te gebruiken in scripts en automatiseringen.
+
+**Sneller**: zet in de spraakassistent **"Prefer handling commands locally"** (*Commando's lokaal afhandelen*) aan. Simpele commando's als "doe de keukenlamp aan" doet HA dan zelf in een fractie van een seconde; alleen vragen en lastige opdrachten gaan naar de AI. Antwoorden van de AI worden gestreamd, en de ruimte van de spraaksatelliet gaat mee ("doe het licht aan" = licht in die ruimte).
+
+Vanaf versie 0.6.1 heeft de integratie Home Assistant 2025.6 of nieuwer nodig.
 
 ## Opties
 
@@ -198,6 +217,8 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 | `person_notify` | – | Telefoon per persoon: `person.vincent=notify.mobile_app_vincent`. Deurbel/comfort naar wie thuis is, alarmen naar iedereen |
 | `digest_time` | – | Avondoverzicht van niet-dringende meldingen, bijv. `20:00` |
 | `llm_down_minutes` | `30` | Melding als de AI-server zo lang onbereikbaar is |
+| `calendar_context` | `true` | Agenda in de ochtendsamenvatting; lopende afspraak met "vakantie"/"gasten" zet de huismodus |
+| `energy_context` | `true` | Stroomprijs, goedkoopste tijdvak en zonneverwachting in de samenvatting en de chat |
 | `api_key` | automatisch | Sleutel voor de Assist-integratie (alleen het gesprek) |
 
 "Niemand thuis" wordt bepaald aan de hand van je `person.*`-entiteiten. Zonder personen worden afwezigheidsregels overgeslagen.

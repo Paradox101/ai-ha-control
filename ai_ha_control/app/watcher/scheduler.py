@@ -12,6 +12,8 @@ from typing import Any
 from ..agent.loop import DAYS_NL
 from ..notify import Notifier
 from ..tools.base import ToolContext
+from ..i18n import text as text_for
+from ..tools.context import agenda, energy_info
 from .baseline import house_mode
 from .routines import analyze_routines
 from .rules import Watcher
@@ -55,12 +57,13 @@ async def build_daily_summary(ctx: ToolContext, notifier: Notifier) -> str:
                                     if e["kind"] not in ("summary", "confirmation", "confirmation_result")],
         "routine_suggesties": len(ctx.db.suggestions()),
     }
+    if ctx.config.calendar_context:
+        data["agenda_vandaag"] = await agenda(ctx)
+    if ctx.config.energy_context:
+        data["energie"] = energy_info(ctx)
     messages = [
-        {"role": "system", "content": "Je bent de AI-assistent van het huis. Schrijf in het Nederlands."},
-        {"role": "user", "content":
-            "Schrijf een korte, vriendelijke ochtendsamenvatting (maximaal 6 zinnen, geen opmaak) voor de "
-            "bewoners op basis van deze gegevens. Noem het weer, bijzonderheden van de nacht (incidenten), wat je "
-            "zelf hebt gedaan, open ramen/sloten en lege batterijen alleen als ze er zijn.\n\n"
+        {"role": "system", "content": text_for(ctx.config, "summary_system")},
+        {"role": "user", "content": text_for(ctx.config, "summary_prompt") + "\n\n"
             + json.dumps(data, ensure_ascii=False, default=str)},
     ]
     reply = await ctx.llm.chat(messages)
@@ -74,6 +77,7 @@ class Scheduler:
         self._watcher = watcher
         self._last_run: dict[str, str] = {}
         self._task: asyncio.Task | None = None
+        self.loop_tick = time.monotonic()  # start of the latest loop iteration, for the health check
         # Optional collaborators of the autonomous agent, wired up by the app.
         self.agent = None
         self.baseline = None
@@ -133,6 +137,7 @@ class Scheduler:
 
     async def _loop(self) -> None:
         while True:
+            self.loop_tick = time.monotonic()
             try:
                 await self.run_once()
             except asyncio.CancelledError:
@@ -176,8 +181,10 @@ class Scheduler:
             await self.patrol.run()
         if self.incidents is not None:
             self.incidents.resolve_stale()
-        if self.snapshots is not None and self._due("cleanup", "04:00", now):
-            self.snapshots.cleanup(config.snapshot_retention_days)
+        if self._due("cleanup", "04:00", now):
+            if self.snapshots is not None:
+                self.snapshots.cleanup(config.snapshot_retention_days)
+            _LOGGER.info("Database cleanup: %s", self._ctx.db.prune())
         if self.publisher is not None:
             await self.publisher.publish(mode, self.agent.last_summary if self.agent else "", self.health())
 
@@ -221,16 +228,15 @@ class Scheduler:
     async def daily_summary(self) -> str:
         text = await build_daily_summary(self._ctx, self._notifier)
         if text:
-            await self._notifier.send("☀️ Goedemorgen", text, kind="summary")
+            await self._notifier.send(text_for(self._ctx.config, "summary_title"), text, kind="summary")
         return text
 
     async def routines(self) -> int:
         new = await analyze_routines(self._ctx)
         if new:
             await self._notifier.send(
-                "💡 Nieuwe routines gevonden",
-                f"Ik heb {new} terugkerende handeling(en) gevonden die ik kan automatiseren. "
-                "Bekijk ze in AI Huis → Routines.",
+                text_for(self._ctx.config, "routines_title"),
+                text_for(self._ctx.config, "routines_message", count=new),
                 kind="routine",
             )
         return new

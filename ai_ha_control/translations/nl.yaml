@@ -121,6 +121,12 @@ configuration:
     name: Avondoverzicht (UU:MM)
   llm_down_minutes:
     name: Melden als de AI-server onbereikbaar is na (minuten)
+  calendar_context:
+    name: Agenda gebruiken
+    description: Afspraken in de ochtendsamenvatting; een lopende afspraak met 'vakantie' of 'gasten' zet de huismodus
+  energy_context:
+    name: Energieprijzen gebruiken
+    description: Goedkoopste stroommoment en zonneverwachting in de ochtendsamenvatting en op vraag
   api_key:
     name: API-sleutel
     description: Voor de Assist-integratie. Leeg = automatisch gegenereerd.
