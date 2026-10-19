@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- **Aanwezigheid**: alleen de status `home` telt als thuis. Iemand in een andere zone (bijv. "Werk Vincent") wordt gemeld als weg, met de naam van de zone erbij.
+
 ## 0.5.0 — Autonome agent
 
 ### Autonoom het huis bewaken

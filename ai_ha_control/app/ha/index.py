@@ -123,6 +123,13 @@ class EntityInfo:
             return ALARM_STATES.get(self.state, self.state)
         if self.domain == "lock":
             return LOCK_STATES.get(self.state, self.state)
+        if self.domain in ("person", "device_tracker"):
+            # Only "home" is home: any other zone (e.g. "Werk Vincent") means away.
+            if self.state == "home":
+                return "thuis"
+            if self.state == "not_home":
+                return "weg"
+            return f"weg (in zone {self.state})"
         if self.unit:
             return f"{self.state} {self.unit}"
         return self.state
