@@ -165,6 +165,7 @@ class EntityIndex:
         self.areas: dict[str, str] = {}  # area_id -> name
         self.services: dict[str, dict[str, Any]] = {}
         self.allowed: set[str] | None = None  # None = all entities allowed
+        self.always: set[str] = set()  # kept even when not exposed or hidden (the kill switch)
         self.location_name: str | None = None
         self._registry: dict[str, dict[str, Any]] = {}
         self._device_area: dict[str, str | None] = {}
@@ -203,10 +204,11 @@ class EntityIndex:
         domain = eid.split(".", 1)[0]
         if domain in SKIP_DOMAINS:
             return
-        if self.allowed is not None and eid not in self.allowed:
+        keep = eid in self.always
+        if self.allowed is not None and eid not in self.allowed and not keep:
             return
         reg = self._registry.get(eid, {})
-        if reg.get("hidden_by") or reg.get("entity_category") in ("config", "diagnostic"):
+        if not keep and reg.get("hidden_by") or reg.get("entity_category") in ("config", "diagnostic"):
             # Diagnostic/config entities are hardly ever what a user means.
             if domain not in ("sensor", "binary_sensor"):
                 return

@@ -152,29 +152,42 @@ class Scheduler:
                 _LOGGER.exception("Scheduled job failed")
             await asyncio.sleep(TICK_SECONDS)
 
+    async def _stage(self, name: str, coro: Any, job: str | None = None) -> bool:
+        """One failing stage (a broken notify service, a bad rule) must not starve the others."""
+        try:
+            await coro
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Scheduled stage %s failed", name)
+            if job is not None:
+                self._last_run.pop(job, None)  # try the daily job again next tick
+            return False
+
     async def run_once(self) -> None:
         if not self._ctx.ha.connected or not self._ctx.index.entities:
             return
         config = self._ctx.config
-        await self._watcher.tick()
-        await self._notifier.escalate()
-        await run_due(self._ctx)
+        await self._stage("watcher", self._watcher.tick())
+        await self._stage("escalate", self._notifier.escalate())
+        await self._stage("scheduled", run_due(self._ctx))
         now = self._notifier.now()
         await self._autonomous_round(now)
-        await self._check_llm()
+        await self._stage("llm", self._check_llm())
         if config.digest_time and self._due("digest", config.digest_time, now):
-            await self._notifier.send_digest(self._last_digest)
-            self._last_digest = time.time()
+            if await self._stage("digest", self._notifier.send_digest(self._last_digest), "digest"):
+                self._last_digest = time.time()
         self.last_tick = time.time()
         if config.proactive and self._due("summary", config.daily_summary_time, now):
-            await self.daily_summary()
+            await self._stage("summary", self.daily_summary(), "summary")
         if config.routine_learning and self._due("routines", ROUTINE_ANALYSIS_TIME, now):
-            await self.routines()
+            await self._stage("routines", self.routines(), "routines")
         if config.health_report and now.weekday() == HEALTH_REPORT_WEEKDAY and \
                 self._due("doctor", HEALTH_REPORT_TIME, now):
             from ..doctor import send_health_report
 
-            await send_health_report(self._ctx)
+            await self._stage("doctor", send_health_report(self._ctx), "doctor")
 
     async def _autonomous_round(self, now: datetime) -> None:
         config = self._ctx.config
@@ -184,32 +197,42 @@ class Scheduler:
             self.agent.set_mode(mode)
         if mode == MODE_SLEEP and self._previous_mode not in (None, MODE_SLEEP) and not settling \
                 and config.bedtime_check:
-            await self._watcher.bedtime_round()
+            await self._stage("bedtime", self._watcher.bedtime_round())
         self._previous_mode = mode
         if self.baseline is not None and not settling:
-            for anomaly in self.baseline.sample(now) + self.baseline.offline():
-                await self._watcher.report_anomaly(anomaly)
+            await self._stage("baseline", self._anomalies(now))
         if self.agent is not None and not settling and self.agent.due() and \
                 (self._agent_task is None or self._agent_task.done()):
             self._start_agent()
         if self.comfort is not None and not settling:
-            await self.comfort.tick(mode, now)
+            await self._stage("comfort", self.comfort.tick(mode, now))
         if self.thresholds is not None and not settling:
-            await self.thresholds.tick(mode)
+            await self._stage("thresholds", self.thresholds.tick(mode))
         if self.appliances is not None and not settling:
-            await self.appliances.tick(mode)
+            await self._stage("appliances", self.appliances.tick(mode))
         if self.simulation is not None and not settling:
-            await self.simulation.tick(mode, now)
+            await self._stage("simulation", self.simulation.tick(mode, now))
         if self.patrol is not None and not settling and self.patrol.due(mode):
-            await self.patrol.run()
+            await self._stage("patrol", self.patrol.run())
         if self.incidents is not None:
-            self.incidents.resolve_stale()
+            try:
+                self.incidents.resolve_stale()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Resolving stale incidents failed")
         if self._due("cleanup", "04:00", now):
-            if self.snapshots is not None:
-                self.snapshots.cleanup(config.snapshot_retention_days)
-            _LOGGER.info("Database cleanup: %s", self._ctx.db.prune())
+            try:
+                if self.snapshots is not None:
+                    self.snapshots.cleanup(config.snapshot_retention_days)
+                _LOGGER.info("Database cleanup: %s", self._ctx.db.prune())
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Database cleanup failed")
         if self.publisher is not None:
-            await self.publisher.publish(mode, self.agent.last_summary if self.agent else "", self.health())
+            await self._stage("publish", self.publisher.publish(mode, self.agent.last_summary if self.agent else "",
+                                                                self.health()))
+
+    async def _anomalies(self, now: datetime) -> None:
+        for anomaly in self.baseline.sample(now) + self.baseline.offline():
+            await self._watcher.report_anomaly(anomaly)
 
     def health(self) -> dict[str, Any]:
         """For the dead man's switch: when we last ran and whether the AI server answers."""

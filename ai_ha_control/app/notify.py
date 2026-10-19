@@ -207,11 +207,19 @@ class Notifier:
         if critical:
             data.update({"priority": "high", "ttl": 0, "channel": "alarm_stream",
                          "push": {"interruption-level": "critical"}})
+        # One phone with a renamed or removed notify service must not keep the others from hearing it.
+        errors = []
         for service in services:
             domain, _, name = service.partition(".")
             if not name:
                 domain, name = "notify", domain
-            await self._ha.call_service(domain, name, {"title": title, "message": message, "data": data})
+            try:
+                await self._ha.call_service(domain, name, {"title": title, "message": message, "data": data})
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Notification via %s failed: %s", service, err)
+                errors.append(err)
+        if errors and len(errors) == len(services):
+            raise errors[0]
 
     def people(self) -> dict[str, str]:
         """person entity -> notify service, from the person_notify option."""
@@ -237,8 +245,8 @@ class Notifier:
 
     async def send_digest(self, since: float) -> str:
         """One notification with everything that waited for the digest."""
-        events = [e for e in self._db.events(since=since, limit=50)
-                  if e["kind"] in DIGEST_KINDS and not e["pushed"]]
+        # Also look back a day: after a restart `since` is "now", but what waited before it is still unsent.
+        events = self._db.unpushed_events(DIGEST_KINDS, min(since, time.time() - 86400))
         if not events:
             return ""
         lines = [f"• {e['title']}: {e['message']}" for e in reversed(events[:15])]

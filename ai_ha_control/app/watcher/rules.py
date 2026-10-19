@@ -160,7 +160,14 @@ class Watcher:
 
     async def handle_state_changed(self, data: dict[str, Any]) -> None:
         new, old = data.get("new_state"), data.get("old_state")
-        if not new or not old or old.get("state") in ("unavailable", "unknown"):
+        if not new or not old:
+            return
+        if old.get("state") in ("unavailable", "unknown"):
+            # A battery smoke or leak sensor that wakes up already in alarm must still be heard.
+            ent = self._ctx.index.get(new["entity_id"])
+            if self.config.proactive and ent is not None and ent.domain == "binary_sensor" \
+                    and ent.device_class in SAFETY_CLASSES and ent.state == "on":
+                await self._safety_alert(ent)
             return
         setpoint = (new.get("attributes") or {}).get("temperature")
         setpoint_changed = (new["entity_id"].startswith("climate.")
@@ -294,6 +301,7 @@ class Watcher:
                                         entity_id=anomaly.entity_id, ref=anomaly.key, correlate_seconds=6 * 3600)
 
     async def _safety_alert(self, ent: EntityInfo) -> None:
+        self._once(f"safety-on:{ent.entity_id}:{ent.last_changed}")  # the tick check need not repeat this one
         if not self._allowed(f"safety:{ent.entity_id}", 600):
             return
         label = SAFETY_LABELS.get(ent.device_class or "", "een alarm")
@@ -503,8 +511,16 @@ class Watcher:
     async def tick(self) -> None:
         if not self.config.proactive or self.in_grace:
             return
+        await self._safety_still_on()
         await self._window_and_heating()
         await self._unsecured_while_away()
+
+    async def _safety_still_on(self) -> None:
+        """Safety sensors already in alarm when we (re)connected never sent an off→on change."""
+        for ent in list(self._ctx.index.entities.values()):
+            if ent.domain == "binary_sensor" and ent.device_class in SAFETY_CLASSES and ent.state == "on" \
+                    and self._once(f"safety-on:{ent.entity_id}:{ent.last_changed}"):
+                await self._safety_alert(ent)
 
     async def _window_and_heating(self) -> None:
         entities = list(self._ctx.index.entities.values())

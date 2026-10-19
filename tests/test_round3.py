@@ -110,6 +110,14 @@ async def test_watch_rule_fires_after_duration_and_recovers(ctx, notifier):
 
     set_state(ctx.index, "sensor.vriezer", "-17")
     await monitor.check(ctx.index.get("sensor.vriezer"), now + 30 * 60)
+    assert len(ctx.db.incidents(status="active")) == 1  # one cold reading is not yet "normal again"
+    set_state(ctx.index, "sensor.vriezer", "-14")
+    await monitor.check(ctx.index.get("sensor.vriezer"), now + 31 * 60)
+    set_state(ctx.index, "sensor.vriezer", "-17")
+    await monitor.check(ctx.index.get("sensor.vriezer"), now + 32 * 60)
+    await monitor.tick(now=now + 33 * 60)
+    assert len(ctx.db.events()) == 1  # hovering around the limit: no new alert, no "weer normaal"
+    await monitor.tick(now=now + 35 * 60)
     assert ctx.db.incidents(status="active") == []
     assert ctx.db.events()[0]["title"] == "✅ Weer normaal"
 

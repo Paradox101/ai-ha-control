@@ -64,9 +64,11 @@ def profile_target(profile: dict[str, Any], mode: str) -> float | None:
 
 def save_profile(db: Database, payload: dict[str, Any]) -> dict[str, Any]:
     """Validate and store a profile (from the web UI or a confirmed chat request)."""
-    area = (payload.get("area") or "").strip()
+    area = str(payload.get("area") or "").strip()
     if not area:
         return {"status": "error", "error": "ruimte ontbreekt"}
+    if not isinstance(payload.get("targets") or {}, dict) or not isinstance(payload.get("backup") or {}, dict):
+        return {"status": "error", "error": "targets en backup moeten objecten zijn"}
     targets = {}
     for mode, value in (payload.get("targets") or {}).items():
         if mode not in MODES or value in (None, ""):
@@ -78,7 +80,7 @@ def save_profile(db: Database, payload: dict[str, Any]) -> dict[str, Any]:
         if not 5 <= number <= 30:
             return {"status": "error", "error": f"temperatuur voor {mode} moet tussen 5 en 30 °C liggen"}
         targets[mode] = number
-    backup_entity = (payload.get("backup_entity") or "").strip()
+    backup_entity = str(payload.get("backup_entity") or "").strip()
     if backup_entity and backup_entity == payload.get("climate_entity"):
         return {"status": "error", "error": "de backup moet een andere thermostaat zijn dan de airco"}
     backup = {}
@@ -93,8 +95,16 @@ def save_profile(db: Database, payload: dict[str, Any]) -> dict[str, Any]:
         if not low <= number <= high:
             return {"status": "error", "error": f"backup {key} moet tussen {low} en {high} liggen"}
         backup[key] = int(number) if key == "after_minutes" else number
-    profile = {**payload, "area": area, "targets": targets, "backup_entity": backup_entity, "backup": backup,
-               "preheat_minutes": max(0, min(int(payload.get("preheat_minutes") or 0), 240))}
+    try:
+        preheat = max(0, min(int(float(payload.get("preheat_minutes") or 0)), 240))
+        profile_id = int(payload["id"]) if payload.get("id") not in (None, "") else None
+    except (TypeError, ValueError):
+        return {"status": "error", "error": "ongeldige voorverwarmtijd of profiel-id"}
+    for key in ("lights", "shade_covers"):
+        if not isinstance(payload.get(key) or [], list):
+            return {"status": "error", "error": f"{key} moet een lijst zijn"}
+    profile = {**payload, "id": profile_id, "area": area, "targets": targets, "backup_entity": backup_entity,
+               "backup": backup, "preheat_minutes": preheat, "enabled": bool(payload.get("enabled", True))}
     return {"status": "ok", "profile_id": db.save_profile(profile)}
 
 
@@ -167,7 +177,7 @@ class ComfortController:
                 wish = self._backup_wish(profile, mode, now, air.get(profile["area"], {}))
                 if wish is not None:
                     backup.setdefault(profile["backup_entity"], []).append(wish)
-                done += await self._dusk_lights(profile, mode)
+                done += await self._dusk_lights(profile, mode, now)
                 done += await self._ventilation(profile, air.get(profile["area"], {}))
                 done += await self._shading(profile)
             except Exception:  # noqa: BLE001
@@ -198,6 +208,8 @@ class ComfortController:
         self._applied[eid] = target
         result = await self._act("climate", "set_temperature", [eid], {"temperature": target},
                                  f"{reason} = {target:g} °C")
+        if result.get("status") == "error":
+            self._applied.pop(eid, None)  # try again next tick
         return [f"{ent.name} → {target:g} °C ({result.get('status')})"]
 
     def _target(self, profile: dict[str, Any], mode: str, now: datetime) -> tuple[float | None, str]:
@@ -229,14 +241,19 @@ class ComfortController:
         standby = float(settings.get("standby", BACKUP_STANDBY))
         primary = self._ctx.index.get(profile["climate_entity"]) if profile.get("climate_entity") else None
         target, _ = self._target(profile, mode, now)
-        if primary is not None and primary.state == "off":
-            self.heating[pid] = {"source": "uit", "reason": "airco staat uit"}
-            return None  # the resident switched heating off here: don't heat with the boiler instead
 
         def standby_wish(why: str) -> tuple[float, str]:
             self._backup_on.pop(pid, None)
             self.heating[pid] = {"source": "airco", "reason": why}
             return standby, f"comfortprofiel {profile['area']}: cv stand-by, {why}"
+
+        if primary is not None and primary.state == "off":
+            if pid in self._backup_on:
+                wish = standby_wish("airco staat uit")  # we raised the boiler: bring it back down
+                self.heating[pid] = {"source": "uit", "reason": "airco staat uit"}
+                return wish
+            self.heating[pid] = {"source": "uit", "reason": "airco staat uit"}
+            return None  # the resident switched heating off here: don't heat with the boiler instead
 
         if target is None:
             return standby_wish("geen doeltemperatuur")
@@ -296,6 +313,8 @@ class ComfortController:
         self._applied[eid] = value
         result = await self._act("climate", "set_temperature", [eid], {"temperature": value},
                                  f"{reason} = {value:g} °C")
+        if result.get("status") == "error":
+            self._applied.pop(eid, None)  # try again next tick
         return [f"{ent.name} → {value:g} °C ({result.get('status')})"]
 
     def arriving_soon(self, now: datetime, minutes: int) -> str:
@@ -325,7 +344,7 @@ class ComfortController:
 
     # --- Light, air and sun --------------------------------------------------------------
 
-    async def _dusk_lights(self, profile: dict[str, Any], mode: str) -> list[str]:
+    async def _dusk_lights(self, profile: dict[str, Any], mode: str, now: datetime) -> list[str]:
         lights = [e for e in profile.get("lights") or [] if self._ctx.index.get(e)]
         sun = self._ctx.index.get("sun.sun")
         key = f"dusk:{profile['id']}"
@@ -333,8 +352,8 @@ class ComfortController:
             return []
         if mode not in (MODE_HOME, MODE_GUEST) or self._ctx.index.anyone_home() is False:
             return []
-        if sun.attributes.get("rising") is True:
-            return []  # morning twilight, not dusk
+        if sun.attributes.get("rising") is True or now.hour < 12:
+            return []  # morning twilight (or after midnight, before solar midnight flips "rising"), not dusk
         self._done_today.add(key)
         off = self._free([e for e in lights if self._ctx.index.get(e).state == "off"])
         if not off:
@@ -354,10 +373,17 @@ class ComfortController:
             if not self._free([fan]):
                 return []
             state = self._ctx.index.get(fan).state
+            key = f"fan:{fan}"
+            if self._applied.get(fan) == "on" and state == "off" and \
+                    time.monotonic() - self._last_notice.get(key, -1e9) >= VENTILATION_NOTICE_SECONDS:
+                self._applied.pop(fan)  # turned off again, or the request was refused: may ask again
             if stale and self._applied.get(fan) != "on" and state == "off":
                 self._applied[fan] = "on"
+                self._last_notice[key] = time.monotonic()
                 result = await self._act(fan.split(".", 1)[0], "turn_on", [fan], {},
                                          f"comfortprofiel {profile['area']}: {what}")
+                if result.get("status") == "error":
+                    self._applied.pop(fan, None)
                 return [f"ventilatie {profile['area']} aan ({result.get('status')})"]
             if fresh and self._applied.get(fan) == "on" and state == "on":
                 self._applied[fan] = "off"
