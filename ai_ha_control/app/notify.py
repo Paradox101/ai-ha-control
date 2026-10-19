@@ -21,12 +21,15 @@ ACTION_PREFIX_REJECT = "AIHA_REJECT_"
 ACTION_PREFIX_UNDO = "AIHA_UNDO_"
 ACTION_PREFIX_FEEDBACK_UP = "AIHA_FB_UP_"
 ACTION_PREFIX_FEEDBACK_DOWN = "AIHA_FB_DOWN_"
+ACTION_PREFIX_ACK = "AIHA_ACK_"
+ACTION_PREFIX_LIGHTS_OFF = "AIHA_LIGHTS_OFF_"
 MAX_ACTIONS = 3  # Android shows at most three buttons
+MAX_ESCALATIONS = 3  # a critical notification nobody saw is repeated at most this often
 
 # Not urgent: bundled in the evening digest when one is configured.
 DIGEST_KINDS = {"anomaly", "energy", "device", "comfort", "routine"}
 # Only for the people at home (who can do something about it there).
-HOME_KINDS = {"doorbell", "energy", "comfort"}
+HOME_KINDS = {"doorbell", "energy", "comfort", "appliance"}
 
 # Kinds where 👍/👎 feedback makes sense (things the AI decided to tell you).
 FEEDBACK_KINDS = {"camera", "motion", "energy", "anomaly", "agent", "autonomous", "presence", "security", "summary",
@@ -86,11 +89,16 @@ class Notifier:
             return event_id
         if self._config.digest_time and kind in DIGEST_KINDS and not critical and not actions:
             return event_id  # goes into the evening digest
-        buttons = list(actions or [])
+        # "{event_id}" in a button action: for buttons that refer back to this notification
+        buttons = [{**b, "action": b["action"].replace("{event_id}", str(event_id))} for b in actions or []]
+        escalate = critical and self._config.escalate_minutes > 0
+        if escalate:
+            buttons.insert(0, self._ack_button(event_id))
+            self._db.set_escalation(event_id, time.time() + self._config.escalate_minutes * 60)
         if kind in FEEDBACK_KINDS:
             buttons += [{"action": f"{ACTION_PREFIX_FEEDBACK_UP}{event_id}", "title": "👍 Nuttig"},
                         {"action": f"{ACTION_PREFIX_FEEDBACK_DOWN}{event_id}", "title": "👎 Onnodig"}]
-        tag = f"aiha_{ref or kind}_{incident_id or entity_id or ''}"
+        tag = self._tag(kind, ref, incident_id, entity_id)
         try:
             await self._push(title, message, tag, image_entity, buttons[:MAX_ACTIONS], critical, kind)
             self._db.set_event_pushed(event_id)
@@ -99,6 +107,61 @@ class Notifier:
         if announce:
             await self.announce(announce)
         return event_id
+
+    @staticmethod
+    def _tag(kind: str, ref: str | None, incident_id: int | None, entity_id: str | None) -> str:
+        # Same tag = same notification: updates replace each other instead of piling up.
+        return f"aiha_{ref or kind}_{incident_id or entity_id or ''}"
+
+    def _ack_button(self, event_id: int) -> dict[str, str]:
+        return {"action": f"{ACTION_PREFIX_ACK}{event_id}",
+                "title": "👁 Gezien" if self._config.language == "nl" else "👁 Seen"}
+
+    async def escalate(self, now: float | None = None) -> int:
+        """Critical notifications nobody marked as seen: repeat to everybody and say them out loud."""
+        now = now or time.time()
+        repeated = 0
+        for event in self._db.due_escalations(now):
+            incident = self._db.get_incident(event["incident_id"]) if event["incident_id"] else None
+            if incident is not None and incident["status"] == "resolved":
+                self._db.set_escalation(event["id"], None, event["escalations"])
+                continue
+            level = event["escalations"] + 1
+            last = level >= MAX_ESCALATIONS
+            self._db.set_escalation(event["id"], None if last else now + self._config.escalate_minutes * 60, level)
+            minutes = int((now - event["ts"]) / 60)
+            nl = self._config.language == "nl"
+            title = f"‼️ {'Nog niet gezien' if nl else 'Not seen yet'}: {event['title']}"
+            tag = self._tag(event["kind"], event["ref"], event["incident_id"], event["entity_id"])
+            try:
+                await self._push(title, event["message"], tag, None, [self._ack_button(event["id"])], True,
+                                 event["kind"])
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Escalation failed: %s", err)
+            await self.announce(f"{'Let op' if nl else 'Attention'}! {event['title']}. {event['message']}")
+            if event["incident_id"]:
+                self._db.add_incident_event(
+                    event["incident_id"],
+                    f"Niet gezien na {minutes} min: opnieuw gemeld aan iedereen ({level}/{MAX_ESCALATIONS})")
+            repeated += 1
+        return repeated
+
+    def acknowledge(self, event_id: int, via: str = "telefoon") -> bool:
+        """'Seen' on a critical notification: stop escalating it (and the rest of its incident)."""
+        event = self._db.get_event(event_id)
+        if event is None:
+            return False
+        incident_id = event["incident_id"]
+        pending = self._db.ack_events(incident_id=incident_id) if incident_id else self._db.ack_events(event_id)
+        if incident_id and pending:
+            self._db.add_incident_event(incident_id, f"Gezien via {via}")
+        return True
+
+    def acknowledge_incident(self, incident_id: int, via: str = "web-UI") -> int:
+        pending = self._db.ack_events(incident_id=incident_id)
+        if pending:
+            self._db.add_incident_event(incident_id, f"Gezien via {via}")
+        return pending
 
     async def announce(self, message: str) -> None:
         """Speak a message on the configured speakers (TTS)."""
@@ -130,7 +193,6 @@ class Notifier:
     ) -> None:
         services = self.targets(kind, critical)
         if not services:
-            # Same tag = same notification: updates replace each other instead of piling up.
             await self._ha.call_service(
                 "persistent_notification", "create", {"title": title, "message": message, "notification_id": tag}
             )

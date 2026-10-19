@@ -158,8 +158,10 @@ AGENT_TOOLS = [
 HOUSE_RULE_TOOLS = [
     Tool(
         "add_house_rule",
-        "Voeg een huisregel toe waar de autonome agent zich aan houdt, bijv. 'Waarschuw als de vriezer "
-        "boven -15 graden komt' of 'Houd de woonkamer op 20 graden als er iemand thuis is'.",
+        "Voeg een huisregel in gewone taal toe waar de autonome agent zich aan houdt, bijv. 'Doe 's nachts de "
+        "buitenlampen aan bij beweging in de tuin'. Voor een drempel op één meetwaarde of status ('waarschuw als "
+        "de vriezer boven -15 graden komt') gebruik je add_watch_rule; temperatuur per ruimte gaat via "
+        "set_comfort_profile.",
         {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
         add_house_rule,
     ),

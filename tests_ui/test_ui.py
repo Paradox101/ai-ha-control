@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 
 import pytest
 from aiohttp.test_utils import TestServer
@@ -13,6 +14,7 @@ from app.main import create_app
 from tests.conftest import STATES
 from tests.test_e2e import fake_home_assistant, fake_ollama
 
+RUNNING = {}  # the add-on state of the running test server
 TABS = ["incidents", "agent", "events", "rules", "routines", "memory", "log", "settings", "pair", "chat"]
 
 
@@ -34,6 +36,7 @@ async def addon(tmp_path, monkeypatch):
         if len(state.index.entities) >= len(STATES):
             break
         await asyncio.sleep(0.05)
+    RUNNING["state"] = state
     yield str(server.make_url("/"))
     await server.close()
     await ha_server.close()
@@ -105,6 +108,10 @@ async def test_settings_save_with_unknown_field_type(addon, monkeypatch):
         await page.evaluate("document.querySelector(\"input[aria-label='Denkmodus']\").click()")
         await page.click("#settings-save")
         await page.wait_for_selector("text=Opgeslagen en direct toegepast")
+        await browser.close()
+    assert not errors, errors
+
+
 async def test_ui_comfort_backup_heating(addon):
     errors = []
     async with async_playwright() as pw:
@@ -132,5 +139,43 @@ async def test_ui_comfort_backup_heating(addon):
         assert not await page.evaluate("document.documentElement.scrollWidth > window.innerWidth")
         if os.environ.get("UI_SCREENSHOT"):
             await page.screenshot(path=os.environ["UI_SCREENSHOT"], full_page=True)
+        await browser.close()
+    assert not errors, errors
+
+
+async def test_ui_alarm_seen_and_watch_rules(addon):
+    errors = []
+    state = RUNNING["state"]
+    await state.incidents.report("security", "Mogelijke inbraak", "Achterdeur ging open", severity="critical",
+                                 critical=True)
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
+        page = await browser.new_page(viewport={"width": 390, "height": 844})
+        page.on("pageerror", lambda err: errors.append(str(err)))
+        page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+        await page.goto(addon)
+        await page.wait_for_selector("#ha:has-text('HA ✓')")
+
+        await page.click("#nav button[data-tab='incidents']")
+        await page.click("#incidents button:has-text('Gezien')")
+        await page.wait_for_selector("#incidents .card:has-text('Mogelijke inbraak')")
+        await page.wait_for_selector("#incidents button:has-text('Gezien')", state="detached")
+        assert state.db.incidents(status="active")[0]["unseen"] == 0
+
+        await page.click("#nav button[data-tab='rules']")
+        await page.wait_for_selector("#watch-entity option[value='sensor.woonkamer_temperatuur']", state="attached")
+        await page.select_option("#watch-entity", "sensor.woonkamer_temperatuur")
+        await page.select_option("#watch-op", ">")
+        await page.fill("#watch-value", "25")
+        await page.click("#watch-add")
+        await page.wait_for_selector("#watch-rules .card:has-text('boven 25')")
+        assert state.db.watch_rules()[0]["entity_id"] == "sensor.woonkamer_temperatuur"
+
+        state.db.add_scheduled(time.time() + 3600, "reminder", "Vuilnisbak buiten zetten", {})
+        await page.click("#nav button[data-tab='events']")
+        await page.click("#scheduled .card:has-text('Vuilnisbak') button:has-text('Annuleren')")
+        await page.wait_for_selector("#scheduled .card", state="detached")
+        assert state.db.scheduled() == []
+        assert not await page.evaluate("document.documentElement.scrollWidth > window.innerWidth")
         await browser.close()
     assert not errors, errors

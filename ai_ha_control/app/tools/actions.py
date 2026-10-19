@@ -137,6 +137,10 @@ async def resolve_confirmation(ctx: ToolContext, action_id: str, approve: bool, 
         from ..comfort import save_profile
 
         result = save_profile(ctx.db, pending.payload)
+    elif pending.kind == "watch":
+        from ..watcher.thresholds import save_watch_rule
+
+        result = save_watch_rule(ctx, pending.payload)
     else:
         p = pending.payload
         result = await execute(ctx, p["domain"], p["service"], p["entity_ids"], p["data"], confirmed=True)

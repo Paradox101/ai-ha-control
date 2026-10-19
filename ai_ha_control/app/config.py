@@ -99,6 +99,17 @@ class Config:
     person_notify: list[str] = field(default_factory=list)
     digest_time: str = ""
     llm_down_minutes: int = 30
+    # Critical notifications without "Seen" are repeated to everybody after this many minutes (0 = off)
+    escalate_minutes: int = 5
+    # When the house goes to sleep: one overview of open windows/doors, locks and lights still on
+    bedtime_check: bool = True
+    # Washer/dryer/dishwasher done (by power use) and water that never stops running (0 = off)
+    appliance_alerts: bool = True
+    leak_flow_hours: float = 2.0
+    # Monday morning: broken automations, updates, dead devices (only when there is something)
+    health_report: bool = True
+    # On vacation: lights on and off in the evening like the house is normally used (opt-in)
+    presence_simulation: bool = False
     calendar_context: bool = True
     energy_context: bool = True
     api_key: str = ""

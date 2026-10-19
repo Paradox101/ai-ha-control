@@ -121,6 +121,24 @@ configuration:
     name: Avondoverzicht (UU:MM)
   llm_down_minutes:
     name: Melden als de AI-server onbereikbaar is na (minuten)
+  bedtime_check:
+    name: Nachtronde
+    description: Bij het slapengaan één melding met open ramen/deuren, sloten en lampen die nog aan staan
+  appliance_alerts:
+    name: Apparaat klaar
+    description: Melding als wasmachine, droger of vaatwasser klaar is (stroommeter met die naam)
+  leak_flow_hours:
+    name: Waarschuwen als water blijft lopen na (uren)
+    description: Watermeter of doorstroomsensor zonder pauze; overdag drie keer zo lang. 0 = uit
+  health_report:
+    name: Huisdokter
+    description: Maandagochtend een overzicht van kapotte automatiseringen, updates en dode apparaten
+  presence_simulation:
+    name: Aanwezigheid nabootsen op vakantie
+    description: In de huismodus vakantie 's avonds lampen aan en uit zoals het huis normaal gebruikt wordt (alleen lampen)
+  escalate_minutes:
+    name: Alarm herhalen na (minuten)
+    description: "Kritieke meldingen zonder 'Gezien' gaan opnieuw naar iedereen en worden omgeroepen, maximaal 3 keer. 0 = uit."
   calendar_context:
     name: Agenda gebruiken
     description: Afspraken in de ochtendsamenvatting; een lopende afspraak met 'vakantie' of 'gasten' zet de huismodus
