@@ -433,6 +433,7 @@ class App:
             self.db.delete_profile(int(request.match_info["profile_id"]))
         return web.json_response({"profiles": self.db.profiles(), "suggestions": profile_suggestions(self.db),
                                   "areas": sorted(self.index.areas.values()),
+                                  "heating": {str(k): v for k, v in self.comfort.heating.items()},
                                   "enabled": self.config.comfort})
 
     async def agent_run(self, _request: web.Request) -> web.Response:

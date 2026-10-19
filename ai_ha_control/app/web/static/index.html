@@ -659,6 +659,26 @@
     grid.append(el("div", "", "Voorverwarmen"), ph);
     grid.append(el("div", "", "Ventilatie"), entitySelect(comfortEntities.fans, draftP.ventilation_entity, v => { draftP.ventilation_entity = v; }));
     card.appendChild(grid);
+    const now = p.id && (comfortData.heating || {})[p.id];
+    if (now) card.appendChild(el("div", "meta heat-source",
+      now.source === "cv" ? `🔥 Nu: cv als backup (${now.reason})` : now.source === "uit" ? `⏸️ Nu: ${now.reason}` : `❄️ Nu: airco verwarmt (${now.reason})`));
+    draftP.backup = draftP.backup || {};
+    const bk = el("details", "backup"); bk.open = !!draftP.backup_entity;
+    bk.appendChild(el("summary", "", "Backup-verwarming (cv)"));
+    bk.appendChild(el("div", "meta", "De thermostaat hierboven (airco) verwarmt eerst. De cv springt alleen bij als de airco het niet redt, en nooit terwijl de airco koelt."));
+    const bg = el("div", "autonomy-grid"); bg.style.marginTop = "8px";
+    bg.append(el("div", "", "Cv-thermostaat"), entitySelect(comfortEntities.climate, draftP.backup_entity, v => { draftP.backup_entity = v; }));
+    const num = (key, min, max, step, unit, placeholder) => {
+      const w = el("div", "unit"); const i = el("input"); i.type = "number"; i.min = min; i.max = max; i.step = step;
+      i.name = `backup_${key}`; i.value = draftP.backup[key] ?? ""; i.placeholder = placeholder;
+      i.oninput = () => { if (i.value === "") delete draftP.backup[key]; else draftP.backup[key] = Number(i.value); };
+      w.append(i, el("span", "meta", unit)); return w;
+    };
+    bg.append(el("div", "", "Cv bij buiten onder"), num("below", -25, 15, 0.5, "°C", "uit"));
+    bg.append(el("div", "", "Cv als airco te traag"), num("after_minutes", 0, 480, 5, "min onder setpoint", "60"));
+    bg.append(el("div", "", "Cv stand-by"), num("standby", 5, 20, 0.5, "°C", "15"));
+    bk.appendChild(bg);
+    card.appendChild(bk);
     const more = el("details"); more.appendChild(el("summary", "", "Lampen bij schemer en zonwering"));
     more.append(el("div", "meta", "Lampen die aangaan als de zon ondergaat en er iemand thuis is:"),
                 entityChecks(comfortEntities.light, draftP.lights, draftP.area, v => { draftP.lights = v; }),
@@ -708,7 +728,7 @@
     const used = new Set(comfortData.profiles.map(p => p.area));
     const area = (comfortData.areas || []).find(a => !used.has(a)) || "";
     $("profiles").querySelector(".empty")?.remove();
-    $("profiles").appendChild(profileCard({ area, targets: {}, lights: [], shade_covers: [], enabled: true }));
+    $("profiles").appendChild(profileCard({ area, targets: {}, lights: [], shade_covers: [], backup: {}, enabled: true }));
   };
 
   /* ---------------- Events ---------------- */
