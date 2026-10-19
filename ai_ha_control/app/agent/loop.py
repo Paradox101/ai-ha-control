@@ -11,8 +11,9 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from ..ha.index import normalize
-from ..house import car_answer, car_status, fmt_number, is_car, outside_temperature, readings_text, room_readings
+from ..ha.index import NON_ROOM_AREAS, normalize
+from ..answers import status_answer
+from ..house import car_status, climate_text, fmt_number, is_car, outside_temperature, readings_text, room_readings, weather_text
 from ..llm.ollama import PRIORITY_CHAT, DeltaCallback
 from ..watcher.baseline import house_mode
 from ..tools.actions import resolve_confirmation
@@ -219,7 +220,8 @@ class Agent:
         lights = [e for e in index.entities.values() if e.domain == "light" and e.state == "on"]
         lines = [
             f"- Huismodus: {house_mode(index, self._ctx.config, now)}",
-            f"- Personen: {', '.join(o['people']) or 'geen person-entiteiten'}",
+            f"- Personen: {'; '.join(self._person_text(e) for e in index.entities.values() if e.domain == 'person')
+                           or 'geen person-entiteiten'}",
             # All of them, per room: cutting at 8 made the model leave the rest out.
             f"- Lampen aan ({len(lights)}): {index.area_text(index.group_by_area(lights)) or 'geen'}",
             self._openings_line(index),
@@ -230,8 +232,10 @@ class Agent:
             *[f"- Alarm: {e.name} = {e.readable_state}" for e in index.entities.values()
               if e.domain == "alarm_control_panel"],
             self._readings_line(index, nl),
-            *[f"- Klimaat: {c}" for c in o["climate"][:4]],
-            *[f"- Weer: {w}" for w in o["weather"]],
+            # One short line per thermostat/airco: all of them, without hvac_modes or min/max.
+            *[f"- Klimaat: {climate_text(e, nl)}" for e in sorted(index.entities.values(), key=lambda e: e.entity_id)
+              if e.domain == "climate" and e.state not in ("unavailable", "unknown")][:8],
+            *([f"- Weer: {w}"] if (w := weather_text(index, nl)) else []),
             *[f"- Agenda nu: {e.attributes.get('message')} ({e.name})" for e in index.entities.values()
               if e.domain == "calendar" and e.state == "on" and e.attributes.get("message")][:3],
             *[f"- ALARM: {a}" for a in o["safety_alerts"]],
@@ -244,12 +248,18 @@ class Agent:
         ).replace("; Buiten ", "; Outside ")
 
     def _readings_line(self, index, nl: bool) -> str:
-        readings = room_readings(index, self._ctx.db.profiles())
+        # Meterkast and Server are no rooms: their sensors measure a cupboard.
+        readings = {a: v for a, v in room_readings(index, self._ctx.db.profiles()).items()
+                    if normalize(a) not in NON_ROOM_AREAS}
         outside = outside_temperature(index, self._ctx.config)
         text = readings_text(readings, nl) or "geen ruimtesensoren"
         if outside is not None:
             text += f"; Buiten {fmt_number(outside, nl)} °C"
         return f"- Temperatuur per ruimte (alleen ruimtes met een sensor): {text}"
+
+    @staticmethod
+    def _person_text(e) -> str:
+        return f"{e.name} ({e.entity_id}) = {e.readable_state}"
 
     @staticmethod
     def _openings_line(index) -> str:
@@ -337,11 +347,12 @@ class Agent:
         ctx = replace(self._ctx, conversation_id=conversation_id, source=source)
         db = ctx.db
         shortcut = await self._answer_confirmation(ctx, user_text)
-        if shortcut is None and (car := car_answer(ctx.index, user_text, ctx.config.language == "nl")):
-            # Straight from the car's sensors: small models turned "75 %" into "volledig vol", and a wrong
-            # earlier answer in the history kept coming back.
-            shortcut = AgentResult(answer=car)
-            shortcut.actions.append({"tool": "car_status", "arguments": {}, "result": car})
+        if shortcut is None and (facts := status_answer(ctx.index, ctx.config, user_text, db.profiles(),
+                                                         voice=source == "assist")):
+            # Straight from Home Assistant: small models turned "75 %" into "volledig vol", left lights out,
+            # and a wrong earlier answer in the history kept coming back.
+            shortcut = AgentResult(answer=facts)
+            shortcut.actions.append({"tool": "status", "arguments": {}, "result": facts})
         if shortcut is not None:
             db.add_message(conversation_id, "user", user_text)
             db.add_message(conversation_id, "assistant", shortcut.answer)

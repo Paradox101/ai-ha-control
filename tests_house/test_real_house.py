@@ -80,3 +80,20 @@ def test_overview_and_prompt(index, tmp_path):
     prompt = Agent(ctx, build_registry()).snapshot(datetime(2026, 10, 19, 16, 30))
     assert "Server" not in prompt and "Slot: Deuren" not in prompt and "Pluisje" not in prompt
     assert "Deuren/ramen" in prompt and "alles dicht" in prompt
+
+
+def test_status_questions_from_the_house(index):
+    from app.answers import status_answer
+    from app.config import Config
+
+    config = Config()
+    temps = status_answer(index, config, "Graag alle temperaturen")
+    assert "Woonkamer 20 °C" in temps and "Meterkast" not in temps and "Server" not in temps
+    assert status_answer(index, config, "Wat is de temperatuur in de slaapkamer?").startswith(
+        "Slaapkamer achterkant 21,5 °C")
+    assert status_answer(index, config, "Hoe warm is het buiten?") == "Buiten is het 14,4 °C."
+    assert status_answer(index, config, "Is Nikky thuis?") == "Nikky van Essen is in Werk Nikky."
+    assert status_answer(index, config, "Welke lampen staan aan?") == "Er staan geen lampen aan."
+    assert status_answer(index, config, "Staan er ramen open?") == "Alle ramen en deuren met een sensor zijn dicht."
+    assert status_answer(index, config, "Hoe vol is de auto?").startswith("De accu is 75 % vol")
+    assert status_answer(index, config, "staat de hoeklamp aan?") is None

@@ -380,7 +380,8 @@ async def test_check_intro_sentences_are_stripped(ctx):
         {"role": "assistant", "content": "De momentopname bevat al de benodigde informatie. Hier is het antwoord "
                                          "nog een keer:\n\n- Woonkamer: 19,7 °C\n- Badkamer: 21,3 °C"},
     ])
-    result = await Agent(ctx, build_registry()).run("Graag alle temperaturen", "q9")
+    # A plain "Graag alle temperaturen" never reaches the model any more; one with a request in it still does.
+    result = await Agent(ctx, build_registry()).run("Graag alle temperaturen, moet er iets warmer?", "q9")
     assert result.answer == "- Woonkamer: 19,7 °C\n- Badkamer: 21,3 °C"
 
 

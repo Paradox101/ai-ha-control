@@ -9,5 +9,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/paradox101/ai-ha-control/issues",
   "requirements": [],
-  "version": "0.6.29"
+  "version": "0.6.30"
 }
