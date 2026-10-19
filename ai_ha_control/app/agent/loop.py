@@ -380,16 +380,17 @@ class Agent:
         ctx = replace(self._ctx, conversation_id=conversation_id, source=source)
         db = ctx.db
         shortcut = await self._answer_confirmation(ctx, user_text)
+        if shortcut is None and ctx.config.language == "nl" and (secure := security_answer(ctx, user_text)):
+            # First: "is het alarmsysteem aan?" also names a device, but this answer says what is still open.
+            # "Staat het alarm aan?": straight from the panels and contacts, not the model's guess.
+            shortcut = AgentResult(answer=secure)
+            shortcut.actions.append({"tool": "security_status", "arguments": {}, "result": secure})
         if shortcut is None and (facts := status_answer(ctx.index, ctx.config, user_text, db.profiles(),
                                                          voice=source == "assist")):
             # Straight from Home Assistant: small models turned "75 %" into "volledig vol", left lights out,
             # and a wrong earlier answer in the history kept coming back.
             shortcut = AgentResult(answer=facts)
             shortcut.actions.append({"tool": "status", "arguments": {}, "result": facts})
-        if shortcut is None and ctx.config.language == "nl" and (secure := security_answer(ctx, user_text)):
-            # "Staat het alarm aan?": straight from the panels and contacts, not the model's guess.
-            shortcut = AgentResult(answer=secure)
-            shortcut.actions.append({"tool": "security_status", "arguments": {}, "result": secure})
         if shortcut is not None:
             db.add_message(conversation_id, "user", user_text)
             db.add_message(conversation_id, "assistant", shortcut.answer)
