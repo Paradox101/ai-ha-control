@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.28
+
+Nagelopen tegen de volledige entiteitenlijst van het huis (3657 entiteiten):
+
+- **Serverkast is geen kamer**: temperaturen van de server (chipset, schijven, apparaten met een IP-adres als naam) tellen niet meer mee als kamertemperatuur ("Server 43 °C") en leveren geen "ongewoon hoog"-incidenten meer op.
+- **Tado-geofencing is geen beweging**: `binary_sensor.home` ("Tado CE Hub Geofencing") telt niet meer als detectie bij een camera of als ongewone activiteit. Het "Openen"-contact van een bewegingsmelder telt ook niet meer als beweging.
+- **"Venster Voorspeld" is geen open raam**: Tado's gok dat er een raam open staat geeft geen inbraakmelding en staat niet in de lijst met open ramen.
+- **Voertuigdetectie van een camera is geen auto**: "Schuur Voertuig" werd als onderdeel van een auto gezien en daardoor genegeerd. De robotstofzuiger (`auto_empty`) staat ook niet meer als auto in de chat.
+- **Lege batterijen**: telefoons, horloge, auto, stofzuiger en UPS laden zichzelf op en staan niet meer in "lege batterijen"; per apparaat één regel (niet ook de "Batterij+"-kopie).
+- **Dubbele entiteiten**: twee werkende apparaten met dezelfde naam in verschillende ruimtes (een "Sirene" op elke verdieping) zijn geen dubbele meer.
+- **Het autoslot staat alleen in de regel "Auto"** van de chat, niet meer als "Slot: Deuren".
+- Testdata: `scripts/export_to_fixture.py` maakt van de Excel-export een testhuis; `tests_house/` controleert alle regels daartegen (het bestand zelf staat niet in de repository).
+
 ## 0.6.27
 
 - **Bewegingsmelders zijn geen ramen**: het "Openen"-contact van een bewegingsmelder (sabotage van de behuizing) telt niet meer als open raam of deur. Dat geldt voor het thuisoverzicht, de momentopname, de nachtronde, de inbraakregels en "raam open, verwarming aan". Een contact op hetzelfde apparaat als een bewegings- of aanwezigheidssensor, of met "bewegingsmelder"/"motion"/"pir"/"sabotage" in de naam, wordt overgeslagen.

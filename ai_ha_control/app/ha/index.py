@@ -48,7 +48,9 @@ SAFETY_CLASSES = {"smoke", "gas", "carbon_monoxide", "moisture", "safety", "heat
 OPENING_CLASSES = {"door", "window", "opening", "garage_door"}
 DETECTION_CLASSES = {"motion", "occupancy", "presence"}
 # A motion detector's "opening" sensor is its tamper/cover contact, not a door or window.
-NOT_OPENING_WORDS = {"bewegingsmelder", "bewegingssensor", "beweging", "motion", "pir", "tamper", "sabotage"}
+# Also a thermostat's guess that a window is open (Tado "Venster Voorspeld"): no contact, never an intrusion.
+NOT_OPENING_WORDS = {"bewegingsmelder", "bewegingssensor", "beweging", "motion", "pir", "tamper", "sabotage",
+                     "predicted", "voorspeld"}
 # Areas that are no living space (a dashboard group, the server or meter cupboard): left out of the overview lists.
 NON_ROOM_AREAS = {"overzicht", "overview", "server", "serverkast", "serverruimte", "meterkast", "technische ruimte"}
 DETECTION_WORDS = ("person", "persoon", "people", "vehicle", "voertuig", "car", "visitor", "bezoeker",
@@ -375,7 +377,10 @@ class EntityIndex:
         return "; ".join(f"{area}: {', '.join(names)}" for area, names in grouped.items())
 
     def is_detection_sensor(self, ent: EntityInfo) -> bool:
-        if ent.domain != "binary_sensor":
+        from ..house import is_geofence
+
+        # Not a motion detector's tamper contact ("Openen", sometimes with the occupancy class) either.
+        if ent.domain != "binary_sensor" or is_geofence(ent) or _object_tokens(ent) & {"openen", "tamper", "sabotage"}:
             return False
         if ent.device_class in DETECTION_CLASSES:
             return True

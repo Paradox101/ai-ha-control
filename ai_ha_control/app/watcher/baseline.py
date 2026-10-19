@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from ..ha.index import DETECTION_CLASSES, OPENING_CLASSES, EntityInfo, normalize
+from ..ha.index import DETECTION_CLASSES, EntityInfo, normalize
 from ..notify import in_quiet_hours
 
 if TYPE_CHECKING:
@@ -164,9 +164,14 @@ class Baseline:
         self._reported_offline: set[str] = set()
         self._seen_available: set[str] = set()
 
-    @staticmethod
-    def learnable(ent: EntityInfo) -> bool:
-        return ent.domain == "sensor" and ent.device_class in MIN_DEVIATION
+    def learnable(self, ent: EntityInfo) -> bool:
+        """Sensors of the house: a busy server or container is no anomaly worth an incident."""
+        from ..house import is_hardware
+
+        if ent.domain != "sensor" or ent.device_class not in MIN_DEVIATION or is_hardware(ent):
+            return False
+        ignored = {a.lower() for a in getattr(self._config, "offline_ignore_areas", None) or []}
+        return not (ent.area and ent.area.lower() in ignored)
 
     def _emit(self, anomaly: Anomaly) -> Anomaly | None:
         return None if self._db.is_muted(anomaly.key) else anomaly
@@ -210,7 +215,11 @@ class Baseline:
 
     def activity(self, ent: EntityInfo, now: datetime) -> Anomaly | None:
         """A motion/door sensor active at an hour where it has never been active before."""
-        if ent.domain != "binary_sensor" or ent.device_class not in DETECTION_CLASSES | OPENING_CLASSES:
+        from ..house import is_geofence
+
+        if ent.domain != "binary_sensor" or is_geofence(ent):
+            return None
+        if ent.device_class not in DETECTION_CLASSES and not self._index.is_opening(ent):
             return None
         first_seen = self._db.first_seen(ent.entity_id)
         before = self._db.activity_increment(ent.entity_id, now.hour)
