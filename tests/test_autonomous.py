@@ -85,8 +85,8 @@ async def test_system_prompt_has_live_snapshot(ctx):
     ctx.index.update_state({"entity_id": "alarm_control_panel.huis", "state": "armed_away",
                             "attributes": {"friendly_name": "Alarm"}})
     prompt = Agent(ctx, build_registry()).system_prompt()
-    assert "Lampen aan (1): Keukenlamp" in prompt
-    assert "Deuren/ramen (1 sensoren): OPEN: Raam slaapkamer" in prompt and "Huismodus: " in prompt
+    assert "Lampen aan (1): Keuken: Keukenlamp" in prompt
+    assert "Deuren/ramen (1 sensoren): OPEN: Slaapkamer: Raam slaapkamer" in prompt and "Huismodus: " in prompt
     assert "Alarm: Alarm = ingeschakeld (afwezig)" in prompt and "Slot: Voordeur slot = op slot" in prompt
     set_state(ctx.index, "binary_sensor.raam_slaapkamer", "off")
     assert "Deuren/ramen (1 sensoren): alles dicht" in Agent(ctx, build_registry()).system_prompt()

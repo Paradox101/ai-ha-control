@@ -92,3 +92,38 @@ def test_person_only_home_zone_is_home(index):
     index.update_state({"entity_id": "person.vincent", "state": "home", "attributes": {"friendly_name": "Vincent"}})
     assert index.get("person.vincent").readable_state == "thuis"
     assert index.anyone_home() is True
+
+
+def test_motion_detector_tamper_is_no_window():
+    from app.ha.index import EntityIndex
+
+    index = EntityIndex()
+    index.load(
+        [
+            {"entity_id": "binary_sensor.bewegingsmelder_kantoor_openen", "state": "on",
+             "attributes": {"friendly_name": "Bewegingsmelder Kantoor Openen", "device_class": "opening"}},
+            {"entity_id": "binary_sensor.pir_trap_contact", "state": "on",
+             "attributes": {"friendly_name": "Trap contact", "device_class": "door"}},
+            {"entity_id": "binary_sensor.pir_trap_motion", "state": "off",
+             "attributes": {"friendly_name": "Trap beweging", "device_class": "motion"}},
+            {"entity_id": "binary_sensor.raam_keuken", "state": "on",
+             "attributes": {"friendly_name": "Raam keuken", "device_class": "window"}},
+            {"entity_id": "light.hoeklamp", "state": "on", "attributes": {"friendly_name": "Hoeklamp"}},
+            {"entity_id": "light.ledstrip", "state": "on", "attributes": {"friendly_name": "Ledstrip"}},
+            {"entity_id": "light.keuken", "state": "on", "attributes": {"friendly_name": "Keukenlamp"}},
+        ],
+        areas=[{"area_id": "woon", "name": "Woonkamer"}, {"area_id": "keuken", "name": "Keuken"},
+               {"area_id": "server", "name": "Server"}, {"area_id": "overzicht", "name": "Overzicht"}],
+        entities=[{"entity_id": "binary_sensor.pir_trap_contact", "device_id": "pir"},
+                  {"entity_id": "binary_sensor.pir_trap_motion", "device_id": "pir"},
+                  {"entity_id": "binary_sensor.raam_keuken", "area_id": "keuken"},
+                  {"entity_id": "light.hoeklamp", "area_id": "woon"},
+                  {"entity_id": "light.ledstrip", "area_id": "woon"},
+                  {"entity_id": "light.keuken", "area_id": "keuken"}],
+    )
+    overview = index.overview()
+    assert overview["open_doors_windows"] == ["binary_sensor.raam_keuken (Raam keuken, Keuken) = open"]
+    assert overview["open_by_area"] == {"Keuken": ["Raam keuken"]}
+    assert overview["lights_on_by_area"] == {"Keuken": ["Keukenlamp"], "Woonkamer": ["Hoeklamp", "Ledstrip"]}
+    assert overview["areas"] == ["Keuken", "Woonkamer"]
+    assert all("idle" not in c for c in overview["cameras"])

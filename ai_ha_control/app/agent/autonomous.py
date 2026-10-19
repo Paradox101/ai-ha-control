@@ -114,8 +114,9 @@ class AutonomousAgent:
     def note_state_change(self, ent: EntityInfo, old: str, new: str, origin: str = DEVICE, label: str = "") -> None:
         if not _is_watched(ent) or "unavailable" in (old, new) or "unknown" in (old, new):
             return
-        if ent.domain == "binary_sensor" and ent.device_class not in OPENING_CLASSES | SAFETY_CLASSES:
-            if new == "on":
+        if ent.domain == "binary_sensor" and ent.device_class not in SAFETY_CLASSES \
+                and not self._ctx.index.is_opening(ent):
+            if ent.device_class not in OPENING_CLASSES and new == "on":
                 self._activity[ent.name] += 1  # motion/detections: counted, not listed
             return
         who = "" if ent.domain == "binary_sensor" else f" [{ContextTracker.describe(origin, label)}]"
