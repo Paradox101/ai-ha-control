@@ -3,6 +3,7 @@
 ## 0.6.20
 
 - **Chat toont opmaak** in plaats van losse sterretjes: vetgedrukt, cursief, kopjes en (geneste) opsommingen worden netjes weergegeven. Veilig opgebouwd zonder HTML uit het antwoord. Ook de samenvatting gebruikt dit.
+- **Rustiger antwoorden**: kort en zonder vetgedrukte woorden in gewone zinnen, en geen opmerkingen meer als "De momentopname beantwoordt de vraag volledig".
 - **Meldingen en spraak zonder markdown**: pushmeldingen, de tijdlijn, omroepen op de speakers en Assist-antwoorden krijgen platte tekst (opsommingen als "•", uitgesproken als losse zinnen).
 
 ## 0.6.19

@@ -65,6 +65,15 @@ async def test_answer_without_checking_is_sent_back(ctx):
     assert "geschiedenis" in result.answer
 
 
+async def test_check_remark_is_not_shown_to_the_user(ctx):
+    ctx.llm = FakeLLM([
+        {"role": "assistant", "content": "Het was vannacht 19,9 °C."},
+        {"role": "assistant", "content": "De momentopname beantwoordt de vraag **volledig**. Het was vannacht 19,9 °C."},
+    ])
+    result = await Agent(ctx, build_registry()).run("Hoe warm was het vannacht in de slaapkamer?", "q3")
+    assert result.answer == "Het was vannacht 19,9 °C."
+
+
 async def test_small_talk_is_not_sent_back(ctx):
     ctx.llm = FakeLLM([{"role": "assistant", "content": "Graag gedaan!"}])
     result = await Agent(ctx, build_registry()).run("bedankt", "q2")
