@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "AI HA Control",
+        "description": "Verbind met de AI HA Control add-on. De URL en API-sleutel staan in AI Huis, tabblad 'Koppelen'.",
+        "data": {
+          "url": "Add-on URL",
+          "api_key": "API-sleutel"
+        }
+      },
+      "hassio_confirm": {
+        "title": "AI HA Control add-on gevonden",
+        "description": "De AI HA Control add-on gebruiken als gespreksagent voor Assist?"
+      },
+      "reauth_confirm": {
+        "title": "Nieuwe API-sleutel",
+        "data": {
+          "api_key": "API-sleutel"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken met de add-on",
+      "invalid_auth": "Ongeldige API-sleutel"
+    },
+    "abort": {
+      "already_configured": "Al ingesteld",
+      "reauth_successful": "API-sleutel bijgewerkt"
+    }
+  },
+  "services": {
+    "ask": {
+      "name": "Vraag de AI",
+      "description": "Stuur een vraag of opdracht naar de lokale AI en krijg het antwoord terug.",
+      "fields": {
+        "text": {
+          "name": "Tekst",
+          "description": "Vraag of opdracht"
+        },
+        "conversation_id": {
+          "name": "Gesprek-ID",
+          "description": "Een eerder gesprek voortzetten"
+        }
+      }
+    }
+  }
+}

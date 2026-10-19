@@ -1,0 +1,13 @@
+{
+  "domain": "ai_ha_control",
+  "name": "AI HA Control",
+  "codeowners": ["@paradox101"],
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "documentation": "https://github.com/paradox101/ai-ha-control",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/paradox101/ai-ha-control/issues",
+  "requirements": [],
+  "version": "0.3.0"
+}

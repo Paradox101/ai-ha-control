@@ -1,0 +1,87 @@
+name: AI HA Control
+version: "0.3.1"
+slug: ai_ha_control
+description: Lokale AI (Ollama) die je huis helpt beheren via Home Assistant
+url: https://github.com/paradox101/ai-ha-control
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: auto
+homeassistant_api: true
+hassio_api: true
+discovery:
+  - ai_ha_control
+ingress: true
+ingress_port: 8099
+watchdog: http://[HOST]:[PORT:8099]/api/health
+panel_icon: mdi:robot-happy
+panel_title: AI Huis
+options:
+  ollama_url: "http://192.168.1.10:11434"
+  model: "qwen3:8b"
+  vision_model: "qwen3-vl:4b"
+  context_size: 12288
+  keep_alive: "30m"
+  think: false
+  language: "nl"
+  dry_run: true
+  only_exposed_entities: false
+  confirm_domains:
+    - lock
+    - alarm_control_panel
+    - cover
+    - valve
+  deny_domains:
+    - shell_command
+    - hassio
+    - recorder
+    - python_script
+  deny_services:
+    - homeassistant.restart
+    - homeassistant.stop
+    - homeassistant.reload_all
+  max_tool_calls: 8
+  notify_service: ""
+  proactive: true
+  camera_alerts: away
+  open_window_minutes: 10
+  unlocked_away_minutes: 15
+  daily_summary_time: "07:30"
+  quiet_hours: "23:00-07:00"
+  routine_learning: true
+  tts_entity: ""
+  announce_players: []
+  api_key: ""
+  log_level: info
+schema:
+  ollama_url: url
+  model: str
+  vision_model: str
+  context_size: int(2048,131072)
+  keep_alive: str
+  think: bool
+  language: list(nl|en)
+  dry_run: bool
+  only_exposed_entities: bool
+  confirm_domains:
+    - str
+  deny_domains:
+    - str
+  deny_services:
+    - str
+  max_tool_calls: int(1,30)
+  notify_service: str?
+  proactive: bool
+  camera_alerts: list(off|away|always)
+  open_window_minutes: int(1,240)
+  unlocked_away_minutes: int(1,240)
+  daily_summary_time: str?
+  quiet_hours: str?
+  routine_learning: bool
+  tts_entity: str?
+  announce_players:
+    - str
+  api_key: password?
+  log_level: list(debug|info|warning|error)

@@ -1,0 +1,4 @@
+-r ai_ha_control/requirements.txt
+pytest
+pytest-asyncio
+pytest-aiohttp
