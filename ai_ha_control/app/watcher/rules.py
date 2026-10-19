@@ -266,7 +266,7 @@ class Watcher:
         text = f"{ent.name}{where} ging open terwijl {why}."
         if self.agent is not None:
             self.agent.observe(f"BEVEILIGING: {text}", urgent=True)
-        camera = self._ctx.index.camera_for(ent)
+        camera = self._ctx.index.camera_for(ent, self.config.camera_profiles)
         snapshot = None
         if camera is not None and self.snapshots is not None:
             try:

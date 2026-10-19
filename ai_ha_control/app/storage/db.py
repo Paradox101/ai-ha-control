@@ -341,10 +341,15 @@ class Database:
         )
         self._conn.commit()
 
-    def recent_messages(self, conversation_id: str, limit: int = 10) -> list[dict[str, str]]:
+    def last_message_ts(self, conversation_id: str, role: str) -> float | None:
+        row = self._conn.execute("SELECT MAX(ts) AS ts FROM messages WHERE conversation_id = ? AND role = ?",
+                                 (conversation_id, role)).fetchone()
+        return row["ts"] if row else None
+
+    def recent_messages(self, conversation_id: str, limit: int = 10, since: float = 0) -> list[dict[str, str]]:
         rows = self._conn.execute(
-            "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
-            (conversation_id, limit),
+            "SELECT role, content FROM messages WHERE conversation_id = ? AND ts >= ? ORDER BY id DESC LIMIT ?",
+            (conversation_id, since, limit),
         ).fetchall()
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
@@ -364,6 +369,20 @@ class Database:
         )
         self._conn.commit()
         return int(cur.lastrowid)
+
+    def audit_since(self, conversation_id: str, since: float) -> list[dict[str, Any]]:
+        """Audit rows of one conversation (e.g. "simulation"), oldest first."""
+        rows = self._conn.execute("SELECT * FROM audit WHERE conversation_id = ? AND ts >= ? ORDER BY id",
+                                  (conversation_id, since)).fetchall()
+        return [{**dict(r), "arguments": json.loads(r["arguments"])} for r in rows]
+
+    def audit_actions(self, since: float, exclude: tuple[str, ...] = (), limit: int = 20) -> list[dict[str, Any]]:
+        """Newest audit rows since a time, leaving out kinds such as the requests themselves ("assist")."""
+        sql = "SELECT * FROM audit WHERE ts >= ?"
+        if exclude:
+            sql += f" AND action NOT IN ({','.join('?' * len(exclude))})"
+        rows = self._conn.execute(sql + " ORDER BY id DESC LIMIT ?", (since, *exclude, limit)).fetchall()
+        return [{**dict(r), "arguments": json.loads(r["arguments"])} for r in rows]
 
     def audit_log(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = self._conn.execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,)).fetchall()

@@ -403,7 +403,7 @@ async def test_agent_knows_about_automations(auto):
     registry = build_autonomous_registry()
     assert {"list_automations", "get_automation", "related_automations"} <= set(registry.names)
     result = json.loads(await registry.run(auto, "related_automations", {"entity_id": "light.keuken"}))
-    assert result["automations"] == ["automation.vertrek (Vertrek), laatst: 2026-10-19T08:00"]
+    assert result["automations"] == ["automation.vertrek (Vertrek), laatst: 2026-10-19 10:00"]  # shown in local time
     agent = AutonomousAgent(auto, registry, auto.incidents)
     agent.note_automation({"name": "Vertrek", "entity_id": "automation.vertrek"})
     assert "Automatisering uitgevoerd: Vertrek" in agent.situation_report([])

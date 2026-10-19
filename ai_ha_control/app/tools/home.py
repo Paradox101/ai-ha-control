@@ -206,6 +206,14 @@ async def analyze_camera(
     if not targets:
         return {"error": f"geen camera gevonden voor '{area or entity_id}'",
                 "cameras": [c.compact() for c in index.cameras()]}
+    # Bedroom, bathroom and baby cameras ("off"): only when a person asks for exactly that camera, never by the
+    # agent on its own and never as a side effect of asking about a room.
+    asked_exactly = ent is not None and ent.domain == "camera" and ctx.source in ("web", "assist")
+    allowed = [c for c in targets if asked_exactly or index.camera_profile(c, ctx.config.camera_profiles) != "off"]
+    if not allowed:
+        return {"error": "deze camera kijkt in een slaapkamer of badkamer (profiel 'uit'); daar kijk ik niet "
+                         "zelf mee. Vraag het met de exacte camera-entiteit als je het echt wilt."}
+    targets = allowed
 
     language = "Antwoord in het Nederlands." if ctx.config.language == "nl" else "Answer in English."
     results, images = [], []
