@@ -101,6 +101,8 @@ class Config:
     llm_down_minutes: int = 30
     # Critical notifications without "Seen" are repeated to everybody after this many minutes (0 = off)
     escalate_minutes: int = 5
+    # When the house goes to sleep: one overview of open windows/doors, locks and lights still on
+    bedtime_check: bool = True
     calendar_context: bool = True
     energy_context: bool = True
     api_key: str = ""

@@ -128,6 +128,8 @@ SECTIONS: list[dict[str, Any]] = [
            "Niet-dringende meldingen (afwijkingen, energie, apparaten) gebundeld in één melding.", optional=True),
         _f("llm_down_minutes", "Melden als de AI-server weg is na", "number", "", min=5, max=1440, step=5,
            unit="min"),
+        _f("bedtime_check", "Nachtronde", "toggle",
+           "Bij het slapengaan één melding met wat nog open of aan staat. Sloten en garage alleen als vraag."),
         _f("escalate_minutes", "Alarm herhalen als niemand 'Gezien' drukt na", "number",
            "Naar iedereen en omroepen op de speakers, maximaal 3 keer. 0 = uit.", min=0, max=60, step=1, unit="min"),
     ]},

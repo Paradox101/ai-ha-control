@@ -108,6 +108,10 @@ automation:
 
 Is alleen de AI-server (Ollama) weg, dan meldt de add-on dat zelf na `llm_down_minutes`.
 
+### Nachtronde
+
+Gaat het huis naar de slaapmodus (slaapscène of begin van `sleep_hours`), dan krijg je één melding met ramen en deuren die open staan, sloten en garage die niet dicht zijn en lampen die nog aan staan, met een knop *Lampen uit*. Voor elk slot en de garage komt een aparte vraag op je telefoon; de agent doet dat nooit zelf. Staat alles goed, dan krijg je niets.
+
 ### Bewakingsregels
 
 Voor een drempel op één meetwaarde of status, bijvoorbeeld "waarschuw als de vriezer boven -15 graden komt" of "meld het als de achterdeur langer dan 10 minuten open staat". Vraag het in de chat (je bevestigt de regel) of maak hem in het tabblad *Huisregels*. De add-on controleert de regel zelf bij elke wijziging en elke minuut, zonder de AI, opent één incident en meldt het als de waarde weer normaal is. Ernst *kritiek* gebruikt dezelfde escalatie als een alarm.
@@ -228,6 +232,7 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 | `person_notify` | – | Telefoon per persoon: `person.vincent=notify.mobile_app_vincent`. Deurbel/comfort naar wie thuis is, alarmen naar iedereen |
 | `digest_time` | – | Avondoverzicht van niet-dringende meldingen, bijv. `20:00` |
 | `llm_down_minutes` | `30` | Melding als de AI-server zo lang onbereikbaar is |
+| `bedtime_check` | `true` | Nachtronde: bij het slapengaan één melding met wat nog open of aan staat |
 | `escalate_minutes` | `5` | Kritieke melding zonder *Gezien* na zoveel minuten opnieuw naar iedereen en omroepen (max. 3 keer, 0 = uit) |
 | `calendar_context` | `true` | Agenda in de ochtendsamenvatting; lopende afspraak met "vakantie"/"gasten" zet de huismodus |
 | `energy_context` | `true` | Stroomprijs, goedkoopste tijdvak en zonneverwachting in de samenvatting en de chat |

@@ -22,6 +22,7 @@ ACTION_PREFIX_UNDO = "AIHA_UNDO_"
 ACTION_PREFIX_FEEDBACK_UP = "AIHA_FB_UP_"
 ACTION_PREFIX_FEEDBACK_DOWN = "AIHA_FB_DOWN_"
 ACTION_PREFIX_ACK = "AIHA_ACK_"
+ACTION_PREFIX_LIGHTS_OFF = "AIHA_LIGHTS_OFF_"
 MAX_ACTIONS = 3  # Android shows at most three buttons
 MAX_ESCALATIONS = 3  # a critical notification nobody saw is repeated at most this often
 
@@ -88,7 +89,8 @@ class Notifier:
             return event_id
         if self._config.digest_time and kind in DIGEST_KINDS and not critical and not actions:
             return event_id  # goes into the evening digest
-        buttons = list(actions or [])
+        # "{event_id}" in a button action: for buttons that refer back to this notification
+        buttons = [{**b, "action": b["action"].replace("{event_id}", str(event_id))} for b in actions or []]
         escalate = critical and self._config.escalate_minutes > 0
         if escalate:
             buttons.insert(0, self._ack_button(event_id))

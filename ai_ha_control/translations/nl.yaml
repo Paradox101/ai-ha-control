@@ -121,6 +121,9 @@ configuration:
     name: Avondoverzicht (UU:MM)
   llm_down_minutes:
     name: Melden als de AI-server onbereikbaar is na (minuten)
+  bedtime_check:
+    name: Nachtronde
+    description: Bij het slapengaan één melding met open ramen/deuren, sloten en lampen die nog aan staan
   escalate_minutes:
     name: Alarm herhalen na (minuten)
     description: "Kritieke meldingen zonder 'Gezien' gaan opnieuw naar iedereen en worden omgeroepen, maximaal 3 keer. 0 = uit."

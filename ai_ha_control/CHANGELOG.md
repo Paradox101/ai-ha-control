@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.9
+
+- **Nachtronde**: bij het slapengaan één melding met open ramen/deuren, sloten of garage die niet dicht zijn en lampen die nog aan staan, met een knop *Lampen uit*. Sloten en garage alleen als vraag op de telefoon. Niets aan de hand = geen melding (`bedtime_check`).
+
 ## 0.6.8
 
 - **Alarm niet gezien**: kritieke meldingen hebben een knop *Gezien*. Zonder reactie na `escalate_minutes` (standaard 5) gaat de melding opnieuw naar iedereen en wordt hij omgeroepen, maximaal 3 keer. Ook *Gezien* in het tabblad Incidenten.

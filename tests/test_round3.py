@@ -143,3 +143,50 @@ async def test_watch_rules_and_ack_api(client):
     assert listed[0]["unseen"] == 1
     assert (await (await client.post(f"/api/incidents/{incident_id}/ack")).json())["stopped"] == 1
     assert (await (await client.get("/api/incidents?status=active")).json())[0]["unseen"] == 0
+
+
+# --- bedtime round ---------------------------------------------------------------------------------------
+
+async def test_bedtime_round_lists_and_turns_lights_off(ctx, notifier):
+    ctx.config.notify_service = "notify.mobile_app_vincent"
+    set_state(ctx.index, "lock.voordeur", "unlocked")
+    watcher = Watcher(ctx, notifier)
+    text = await watcher.bedtime_round()
+    assert "Raam slaapkamer" in text and "Voordeur slot" in text and "Keukenlamp" in text
+    bedtime = next(c for c in pushes(ctx) if c[2]["title"] == "🌙 Nachtronde")
+    (button,) = [a for a in actions_of(bedtime) if a.startswith("AIHA_LIGHTS_OFF_")]
+    assert button == f"AIHA_LIGHTS_OFF_{ctx.db.events(limit=10)[-1]['id']}"
+    assert [p.payload["entity_ids"] for p in ctx.confirmations.list()] == [["lock.voordeur"]]
+    assert not any(c[0] == "lock" for c in ctx.ha.calls)  # never by itself
+
+    await watcher.handle_notification_action({"action": button})
+    assert ("light", "turn_off") in [(c[0], c[1]) for c in ctx.ha.calls]
+    off = next(c for c in ctx.ha.calls if c[:2] == ("light", "turn_off"))
+    assert off[3] == {"entity_id": ["light.keuken"]}
+
+
+async def test_bedtime_round_quiet_when_all_is_well(ctx, notifier):
+    set_state(ctx.index, "binary_sensor.raam_slaapkamer", "off")
+    set_state(ctx.index, "light.keuken", "off")
+    assert await Watcher(ctx, notifier).bedtime_round() == ""
+    assert pushes(ctx) == []
+
+
+async def test_scheduler_runs_bedtime_round_on_entering_sleep(ctx, notifier, monkeypatch):
+    from app.watcher import scheduler as scheduler_module
+    from app.watcher.scheduler import Scheduler
+
+    watcher = Watcher(ctx, notifier)
+    calls = []
+
+    async def fake_round():
+        calls.append(1)
+        return ""
+
+    watcher.bedtime_round = fake_round
+    sched = Scheduler(ctx, notifier, watcher)
+    modes = iter(["thuis", "slapen", "slapen", "thuis", "slapen"])
+    monkeypatch.setattr(scheduler_module, "house_mode", lambda *a: next(modes))
+    for _ in range(5):
+        await sched._autonomous_round(notifier.now())
+    assert len(calls) == 2

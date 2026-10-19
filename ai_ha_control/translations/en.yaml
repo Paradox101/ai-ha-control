@@ -121,6 +121,9 @@ configuration:
     name: Evening digest (HH:MM)
   llm_down_minutes:
     name: Report an unreachable AI server after (minutes)
+  bedtime_check:
+    name: Bedtime check
+    description: When the house goes to sleep: one notification with open windows/doors, locks and lights still on
   escalate_minutes:
     name: Repeat alarms after (minutes)
     description: "Critical notifications nobody marked as 'Seen' are sent to everybody again and announced, at most 3 times. 0 = off."

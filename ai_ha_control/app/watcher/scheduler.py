@@ -14,7 +14,7 @@ from ..notify import Notifier
 from ..tools.base import ToolContext
 from ..i18n import text as text_for
 from ..tools.context import agenda, energy_info
-from .baseline import house_mode
+from .baseline import MODE_SLEEP, house_mode
 from .routines import analyze_routines
 from .rules import Watcher
 
@@ -87,6 +87,7 @@ class Scheduler:
         self.publisher = None
         self.comfort = None
         self.thresholds = None
+        self._previous_mode: str | None = None
         self._agent_task: asyncio.Task | None = None
         self._llm_checked = -1e9
         self.llm_down_since: float | None = None
@@ -171,6 +172,10 @@ class Scheduler:
         mode = house_mode(self._ctx.index, config, now)
         if self.agent is not None:
             self.agent.set_mode(mode)
+        if mode == MODE_SLEEP and self._previous_mode not in (None, MODE_SLEEP) and not settling \
+                and config.bedtime_check:
+            await self._watcher.bedtime_round()
+        self._previous_mode = mode
         if self.baseline is not None and not settling:
             for anomaly in self.baseline.sample(now) + self.baseline.offline():
                 await self._watcher.report_anomaly(anomaly)

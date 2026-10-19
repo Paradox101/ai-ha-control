@@ -17,6 +17,7 @@ from ..notify import (
     ACTION_PREFIX_CONFIRM,
     ACTION_PREFIX_FEEDBACK_DOWN,
     ACTION_PREFIX_FEEDBACK_UP,
+    ACTION_PREFIX_LIGHTS_OFF,
     ACTION_PREFIX_REJECT,
     ACTION_PREFIX_UNDO,
     Notifier,
@@ -96,6 +97,7 @@ class Watcher:
         self._grace_until = 0.0
         self._last_arrival = -1e9
         self._rang: dict[str, float] = {}  # camera key -> when the doorbell last rang
+        self._bedtime_lights: dict[int, list[str]] = {}  # bedtime notification -> lights that were on
         self.linger_seconds = LINGER_SECONDS
         # Optional collaborators, wired up by the app (tests may leave them out).
         self.agent = None       # AutonomousAgent: receives observations
@@ -468,6 +470,9 @@ class Watcher:
         if action.startswith(ACTION_PREFIX_ACK):
             self._notifier.acknowledge(int(action[len(ACTION_PREFIX_ACK):]))
             return
+        if action.startswith(ACTION_PREFIX_LIGHTS_OFF):
+            await self._lights_off(int(action[len(ACTION_PREFIX_LIGHTS_OFF):]))
+            return
         if action.startswith(ACTION_PREFIX_UNDO):
             result = await undo_action(self._ctx, int(action[len(ACTION_PREFIX_UNDO):]))
             text = "↩️ Teruggedraaid" if result.get("status") == "ok" else f"❌ {result.get('error', result.get('status'))}"
@@ -550,6 +555,66 @@ class Watcher:
                 f"{'Op slot doen' if domain == 'lock' else 'Sluiten'}? ({describe_service(domain, service, [ent.entity_id], {})})",
                 f"niemand is al {int(away_minutes)} minuten thuis",
             )
+
+
+    # --- Bedtime round ---------------------------------------------------------------
+
+    async def bedtime_round(self) -> str:
+        """Going to sleep: one overview of what is still open or on, instead of loose warnings later."""
+        index = self._ctx.index
+        open_items, unsecured, lights = [], [], []
+        for ent in list(index.entities.values()):
+            if ent.domain == "binary_sensor" and ent.device_class in OPENING_CLASSES and ent.state == "on":
+                open_items.append(ent)
+            elif is_unsecured(ent):
+                unsecured.append(ent)
+            elif ent.domain == "light" and ent.state == "on":
+                lights.append(ent)
+        if not (open_items or unsecured or lights):
+            return ""
+
+        def names(items: list[EntityInfo]) -> str:
+            listed = ", ".join(f"{e.name}" + (f" ({e.area})" if e.area else "") for e in items[:8])
+            return listed + (f" en nog {len(items) - 8}" if len(items) > 8 else "")
+
+        lines = []
+        if open_items:
+            lines.append(f"🪟 Open: {names(open_items)}")
+        if unsecured:
+            lines.append(f"🔓 Niet op slot of dicht: {names(unsecured)}")
+        if lights:
+            lines.append(f"💡 Nog aan: {names(lights)}")
+        text = "\n".join(lines)
+        if self.agent is not None:
+            self.agent.observe(f"Nachtronde: {text}")
+        event_id = await self._notifier.send(
+            "🌙 Nachtronde", text, kind="bedtime", respect_quiet_hours=False,
+            actions=[{"action": f"{ACTION_PREFIX_LIGHTS_OFF}{{event_id}}", "title": "💡 Lampen uit"}] if lights else None)
+        if lights:
+            self._bedtime_lights[event_id] = [e.entity_id for e in lights]
+            for old in sorted(self._bedtime_lights)[:-10]:
+                del self._bedtime_lights[old]
+        for ent in unsecured:  # doors and garage: only ever a question on the phone, never by itself
+            domain, service = ("lock", "lock") if ent.domain == "lock" else ("cover", "close_cover")
+            await queue_confirmation(
+                self._ctx, "service", {"domain": domain, "service": service, "entity_ids": [ent.entity_id],
+                                       "data": {}},
+                f"{ent.name} staat nog open. {'Op slot doen' if domain == 'lock' else 'Sluiten'}? "
+                f"({describe_service(domain, service, [ent.entity_id], {})})", "nachtronde")
+        return text
+
+    async def _lights_off(self, event_id: int) -> None:
+        lights = [e for e in self._bedtime_lights.pop(event_id, [])
+                  if (ent := self._ctx.index.get(e)) is not None and ent.state == "on"]
+        if not lights:
+            return
+        ctx = replace(self._ctx, source="watcher", reason="nachtronde: lampen uit op verzoek")
+        result = await execute(ctx, "light", "turn_off", lights, {}, confirmed=True)
+        status = result.get("status")
+        text = {"ok": "💡 Lampen uit", "dry_run": "🧪 Testmodus: lampen niet uitgezet"}.get(
+            status, f"❌ {result.get('error', status)}")
+        await self._notifier.send(text, describe_service("light", "turn_off", lights, {}),
+                                  kind="confirmation_result", respect_quiet_hours=False)
 
 
 def apply_feedback(db, event_id: int, value: int) -> None:
