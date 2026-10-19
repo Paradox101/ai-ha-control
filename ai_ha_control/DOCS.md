@@ -232,7 +232,7 @@ Gebruik de officiële Reolink-integratie. De add-on koppelt detectiesensoren (pe
 
 ## Entiteiten delen
 
-De knop **⬇ Excel** bovenaan de web-UI downloadt alle entiteiten die de add-on ziet (naam, ruimte, apparaat, status, eigenschappen) en een tweede blad met hoe de detectiesensoren per camera gegroepeerd zijn. Handig om mee te sturen als een vraag verkeerd beantwoord wordt.
+De knop **⬇ Excel** bovenaan de web-UI downloadt alle entiteiten die de add-on ziet (naam, ruimte, apparaat, status, eigenschappen) en een tweede blad met hoe de detectiesensoren per camera gegroepeerd zijn. Handig om mee te sturen als een vraag verkeerd beantwoord wordt. In de Home Assistant-app kan downloaden soms niet: gebruik dan *Delen…* of *Kopieer als tekst* en plak het in een chat.
 
 ## Modellen vergelijken
 
