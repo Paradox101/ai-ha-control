@@ -83,8 +83,10 @@ class Autonomy:
         level = min((self.level(d) for d in domains), key=LEVEL_ORDER.__getitem__)
         if level == OBSERVE:
             return level, f"alleen observeren voor {sorted(domains)}"
+        if not entity_ids:
+            return ASK, "actie zonder specifieke entiteit"
         sensitive = security_entities(self._index, entity_ids)
-        if sensitive or domain in MAX_LEVEL or not entity_ids:
+        if sensitive or domain in MAX_LEVEL:
             what = sensitive[0] if sensitive else domain
             return ASK, f"{what} raakt deuren of alarm: dat doet de agent nooit zelf"
         indirect = [e for e in entity_ids if e.split(".", 1)[0] in INDIRECT_DOMAINS or domain in INDIRECT_DOMAINS]

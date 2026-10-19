@@ -20,7 +20,7 @@ from ..notify import (
     ACTION_PREFIX_UNDO,
     Notifier,
 )
-from ..tools.actions import describe_service, execute, queue_confirmation, resolve_confirmation
+from ..tools.actions import describe_service, execute, followed, queue_confirmation, resolve_confirmation
 from ..tools.base import ToolContext
 from .baseline import MODE_AWAY, MODE_SLEEP, MODE_VACATION, house_mode
 from .vision import QUIET_CATEGORIES, SUSPICIOUS, UNKNOWN, classify
@@ -196,13 +196,15 @@ class Watcher:
         if origin not in (RESIDENT, DEVICE) or ent.domain not in COMFORT_DOMAINS:
             return
         db, now = self._ctx.db, time.time()
+        action = db.last_action_on(ent.entity_id, now - REVERSAL_SECONDS)
+        if action and followed(ent, action["domain"], action["service"], action["data"]):
+            return  # the device reporting the agent's own change (e.g. a polling thermostat), not a person
         mode = house_mode(self._ctx.index, self.config, self._now())
         if ent.domain == "climate" and setpoint_changed and origin == RESIDENT:
             setpoint = (new.get("attributes") or {}).get("temperature")
             db.add_manual_change(ent.entity_id, mode, float(setpoint) if setpoint is not None else None)
         db.set_override(ent.entity_id, now + self.config.override_minutes * 60, f"aangepast door {origin}")
-        action = db.last_action_on(ent.entity_id, now - REVERSAL_SECONDS)
-        if action and not action["shadow"]:
+        if action:
             db.set_action_feedback(action["id"], -1)
             if self.agent is not None:
                 self.agent.observe(f"De bewoner heeft je actie {action['domain']}.{action['service']} op {ent.name} "

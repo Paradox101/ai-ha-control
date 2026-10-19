@@ -81,7 +81,8 @@ def test_security_entities_by_device_and_name():
          {"entity_id": "cover.garage", "state": "closed",
           "attributes": {"friendly_name": "Kanteldeur", "device_class": "garage"}}],
         devices=[{"id": "d1", "name": "Nuki Opener"}],
-        entities=[{"entity_id": "lock.nuki", "device_id": "d1"}, {"entity_id": "switch.nuki_relais", "device_id": "d1"}],
+        entities=[{"entity_id": "lock.nuki", "device_id": "d1"},
+                  {"entity_id": "switch.nuki_relais", "device_id": "d1"}],
     )
     assert is_security_entity(idx, "switch.nuki_relais")  # same device as a lock
     assert is_security_entity(idx, "switch.poort_opener")
@@ -463,3 +464,14 @@ async def test_doorbell_goes_to_who_is_home_and_digest_bundles(ctx):
 
 def test_verify_delay_is_patched_in_tests():
     assert actions.VERIFY_DELAY == 3600.0
+
+
+async def test_device_confirming_the_agents_change_is_not_a_reversal(ctx, notifier):
+    await act_everything(ctx)
+    ctx.contexts = ContextTracker()
+    await perform(ctx, "climate", "set_temperature", ["climate.thermostaat"], {"temperature": 21})
+    watcher = Watcher(ctx, notifier)
+    # A cloud thermostat reports the new setpoint later, without our context
+    await watcher.handle_state_changed(event(ctx.index, "climate.thermostaat", "heat", "heat", temperature=21))
+    assert ctx.db.recent_actions()[0]["feedback"] is None
+    assert ctx.db.active_overrides() == {}

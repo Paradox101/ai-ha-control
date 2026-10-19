@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.0 — Nauwkeuriger, veiliger en comfort
+
+### Beveiliging
+- **Deuren en alarm nooit zelf**, ook niet als een deur- of poortopener als schakelaar, knop, scène of script in HA staat. Gevoelig is alles op hetzelfde apparaat als een slot, alarmpaneel of garage/poort, plus namen met deur, poort, garage, slot, alarm, gate, door… Sloten en alarm kunnen in de instellingen niet meer op *Zelf doen*.
+- **Scènes en scripts** start de agent alleen zelf als je ze vrijgeeft (`autonomous_scenes`).
+- **Niet via spraak bevestigen**: "ja" tegen een spraakassistent bevestigt geen sloten, alarm of poorten meer; dat kan alleen op je telefoon of in de web-UI.
+- **Directe inbraakmelding**: gaat een deur of raam open terwijl iedereen weg is of het alarm aan staat, dan komt er meteen een kritieke melding met snapshot van de dichtstbijzijnde camera, zonder op de AI te wachten. 's Nachts (slapen) een waarschuwing bij deuren; 👎 = normaal. Net thuisgekomen telt niet. Ook *alarm afgegaan* wordt direct kritiek gemeld.
+- **Noodgevallen**: bij lekkage de hoofdkraan dicht (`leak_valve`), bij rook/gas/CO alle lampen aan en ventilatie uit. Met ongedaan maken.
+- **API-sleutel** geeft alleen nog toegang tot het gesprek (Assist); instellingen, noodknop enz. alleen via het HA-paneel.
+- Bevestigingen blijven bewaard na een herstart van de add-on.
+- Camerabeschrijvingen gaan gemarkeerd («…») en ingekort naar de agent, zodat tekst in beeld geen opdracht kan worden.
+
+### Nauwkeuriger
+- **Wie deed het?** Elke wijziging in het situatierapport staat met wie het deed: bewoner, automatisering (met naam), de agent, de AI op verzoek of het apparaat zelf. Op basis van de context van Home Assistant, niet meer geraden.
+- **Niet vechten met de bewoner**: past iemand zelf een lamp, thermostaat of rolluik aan, dan blijft de agent er `override_minutes` (standaard 2 uur) vanaf. Draait iemand een actie van de agent terug, dan telt dat als 👎.
+- **Controle na een actie**: na ~45 s kijkt de agent of het apparaat echt reageerde, probeert het één keer opnieuw en meldt anders "reageert niet".
+- **Hartslag apart**: een trage AI houdt de regels, de patrouille en de basislijn niet meer op.
+- **Rijker situatierapport**: per ruimte temperatuur (met doel en trend), vocht en CO₂; zon en weer.
+- **Basislijn per soort dag**: werkdagen en weekend apart, en oude metingen tellen langzaam minder (seizoenen).
+- **Schaduwmodus** per domein: de agent legt vast wat hij zou doen zonder het te doen. Beoordeel met 👍/👎 in het tabblad *Agent* en zet het domein daarna op *Zelf doen*.
+- **Replay**: situatierapporten worden bewaard; met `scripts/replay.py` vergelijk je modellen op je eigen huis. 👍/👎 op een controle in het tabblad *Agent* telt daarbij als beoordeling.
+- **Dodemansknop**: `sensor.ai_huis_status` heeft nu `last_tick`, `last_agent_run` en `ollama`. Is de AI-server langer dan `llm_down_minutes` weg, dan krijg je één melding (en een als hij terug is).
+
+### Comfort
+- **Comfortprofielen** (nieuw tabblad *Comfort*, of in de chat: "'s nachts wil ik 17 graden in de slaapkamer"): per ruimte de temperatuur per huismodus, lampen bij schemer, ventilatie bij hoog CO₂/vocht en zonwering bij felle zon. Uitgevoerd door vaste regels, niet door de AI, en alleen bij een veranderde wens.
+- **Voorverwarmen** voor de verwachte thuiskomst: als iemand onderweg is (proximity-integratie) of op basis van de geleerde thuiskomsttijd per weekdag; bij kou eerder.
+- **Leren van correcties**: zet je de thermostaat vaak met de hand anders dan het profiel, dan stelt de add-on voor het profiel aan te passen.
+- **Meldingen per persoon** (`person_notify`): de deurbel en comfortmeldingen gaan naar wie thuis is, alarmen naar iedereen. Optioneel een **avondoverzicht** (`digest_time`) voor niet-dringende meldingen.
+
 ## 0.5.2 — Camera-analyse zonder GPU-geheugenfouten
 
 - Camerabeelden worden verkleind (max. 1280 px) voordat ze naar het beeldmodel gaan, en het beeldmodel draait met een kleine context (4096). Dat scheelt veel VRAM.

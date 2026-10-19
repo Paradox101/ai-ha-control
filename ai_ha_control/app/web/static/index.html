@@ -497,8 +497,9 @@
     ks.parentElement.title = a.kill_switch.entity_id ? `Zelf handelen (${a.kill_switch.entity_id})` : "Geen noodknop ingesteld";
 
     const h = a.health || {};
-    $("agent-health").textContent = h.last_tick ? `Laatste ronde ${h.last_tick.slice(11, 16)}`
-      + (h.last_agent_run ? ` · laatste hartslag ${h.last_agent_run.slice(11, 16)}` : "")
+    const isoTime = iso => new Date(iso).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+    $("agent-health").textContent = h.last_tick ? `Laatste ronde ${isoTime(h.last_tick)}`
+      + (h.last_agent_run ? ` · laatste hartslag ${isoTime(h.last_agent_run)}` : "")
       + ` · AI-server ${h.ollama === "ok" ? "bereikbaar" : "⚠️ onbereikbaar"}` : "";
     const sh = $("agent-shadow"); sh.replaceChildren();
     for (const d of a.shadow || []) {

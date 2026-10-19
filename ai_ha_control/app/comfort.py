@@ -163,7 +163,8 @@ class ComfortController:
         if self._applied.get(eid) == target:
             return []  # already acted on (or asked for) this wish; don't fight a manual change
         self._applied[eid] = target
-        result = await self._act("climate", "set_temperature", [eid], {"temperature": target}, f"{reason} = {target:g} °C")
+        result = await self._act("climate", "set_temperature", [eid], {"temperature": target},
+                                 f"{reason} = {target:g} °C")
         return [f"{ent.name} → {target:g} °C ({result.get('status')})"]
 
     def arriving_soon(self, now: datetime, minutes: int) -> str:
