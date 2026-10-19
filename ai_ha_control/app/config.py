@@ -115,6 +115,9 @@ class Config:
     leak_flow_hours: float = 2.0
     # Monday morning: broken automations, updates, dead devices (only when there is something)
     health_report: bool = True
+    # Security: remind when everybody left and the alarm is still off (0 = off); Sunday evening a weekly report
+    alarm_reminder_minutes: int = 20
+    security_report: bool = True
     # Offline warnings: never for these areas, and only for devices in a room (or locks, cameras, climate)
     offline_ignore_areas: list[str] = field(default_factory=lambda: ["Server"])
     offline_house_only: bool = True

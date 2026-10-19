@@ -149,6 +149,18 @@ Kritieke meldingen (inbraak, rook, gas, lekkage, alarm afgegaan) hebben een knop
 - HA-back-ups bevatten een consistente kopie van de database (gemaakt vlak voor de back-up), zonder camera-snapshots.
 - Elke actie wordt gelogd in het *Actielog*.
 
+### Beveiligingsregels
+
+Vaste regels, zonder taalmodel. Ze melden alleen: de agent zet het alarm nooit zelf aan of uit en doet nooit zelf een slot open of dicht.
+
+- **Alarm aan met iets open**: bij het inschakelen (afwezig/vakantie) elke open deur, raam of open slot; bij thuis/nacht alleen deuren.
+- **Alarm vergeten**: iedereen is weg en het alarm staat na `alarm_reminder_minutes` nog uit. In de nachtronde staat ook of het alarm uit staat.
+- **Sabotage**: met het alarm aan is een geopende behuizing of een doorgeknipt extern contact (Ajax "Behuizing sabotage", "Extern contact verbroken", "Deksel geopend") kritiek, trilling en kanteling een waarschuwing. Met het alarm uit alleen behuizing, contact en een rookmelder die van zijn voet is gehaald, als waarschuwing (👎 = normaal, bijv. batterij wisselen).
+- **Camera offline** terwijl het alarm aan staat of niemand thuis is (alle streams van een camera, 10 minuten). Camera's die nooit werkten tellen niet.
+- **Alarm zonder verbinding**: de verbinding met de meldkamer of het mobiele netwerk valt 5 minuten weg, of Home Assistant bereikt het alarmpaneel niet meer. Kritiek als het alarm aan stond.
+- **Iemand loopt rond het huis**: als je weg bent of het alarm aan staat en dezelfde persoon binnen 10 minuten bij twee camera's waarvan één privé (achtertuin), of bij drie camera's wordt gezien. Deurbel en oprit samen (de bezorger) tellen niet.
+- **Beveiligingsrapport** op zondagavond (`security_report`). In de chat beantwoordt "Staat het alarm aan?" of "Is het huis beveiligd?" zich direct uit de sensoren.
+
 ## Installatie
 
 ### 1. Ollama (homeserver)
@@ -260,6 +272,8 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 | `appliance_quiet` | – | Apparaten waarvan je eigen automatisering al meldt dat ze klaar zijn, bijv. `wasmachine` |
 | `leak_flow_hours` | `2` | Waarschuwing als een watermeter zo lang zonder pauze telt ('s nachts/weg; overdag 3×), 0 = uit |
 | `health_report` | `true` | Huisdokter: maandagochtend kapotte automatiseringen, updates, dode apparaten, rookmelder-tests, dubbele entiteiten en instellingen die je kunt invullen |
+| `alarm_reminder_minutes` | `20` | Iedereen weg (huismodus weg/vakantie) en het alarm staat na zoveel minuten nog uit: één melding. De agent zet het alarm nooit zelf aan; 👎 = nooit meer. 0 = uit |
+| `security_report` | `true` | Beveiligingsrapport op zondagavond: alarm afgegaan, sabotage- en inbraakmeldingen, personen bij camera's, alarm vergeten, camera's offline, verbinding van het alarm en lege batterijen van alarmsensoren |
 | `offline_ignore_areas` | `Server` | Ruimtes zonder offline-meldingen |
 | `offline_house_only` | `true` | Offline-meldingen alleen voor apparaten in een ruimte en sloten, camera's, thermostaten en alarm |
 | `presence_simulation` | `false` | Op vakantie 's avonds lampen aan/uit zoals het huis normaal gebruikt wordt |

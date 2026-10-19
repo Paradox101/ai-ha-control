@@ -1,5 +1,5 @@
 name: AI HA Control
-version: "0.6.31"
+version: "0.6.32"
 slug: ai_ha_control
 description: Lokale AI (Ollama) die je huis helpt beheren via Home Assistant
 url: https://github.com/paradox101/ai-ha-control
@@ -103,6 +103,8 @@ options:
   appliance_quiet: []
   leak_flow_hours: 2
   health_report: true
+  alarm_reminder_minutes: 20
+  security_report: true
   offline_ignore_areas:
     - Server
   offline_house_only: true
@@ -179,6 +181,8 @@ schema:
     - str
   leak_flow_hours: float(0,24)
   health_report: bool
+  alarm_reminder_minutes: int(0,240)
+  security_report: bool
   offline_ignore_areas:
     - str
   offline_house_only: bool

@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from ..ha.index import NON_ROOM_AREAS, normalize
 from ..answers import status_answer
 from ..house import car_status, climate_text, fmt_number, is_car, outside_temperature, readings_text, room_readings, weather_text
+from ..watcher.guard import security_answer
 from ..llm.ollama import PRIORITY_CHAT, DeltaCallback
 from ..watcher.baseline import house_mode
 from ..tools.actions import resolve_confirmation
@@ -385,6 +386,10 @@ class Agent:
             # and a wrong earlier answer in the history kept coming back.
             shortcut = AgentResult(answer=facts)
             shortcut.actions.append({"tool": "status", "arguments": {}, "result": facts})
+        if shortcut is None and ctx.config.language == "nl" and (secure := security_answer(ctx, user_text)):
+            # "Staat het alarm aan?": straight from the panels and contacts, not the model's guess.
+            shortcut = AgentResult(answer=secure)
+            shortcut.actions.append({"tool": "security_status", "arguments": {}, "result": secure})
         if shortcut is not None:
             db.add_message(conversation_id, "user", user_text)
             db.add_message(conversation_id, "assistant", shortcut.answer)

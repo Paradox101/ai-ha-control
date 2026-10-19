@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.32
+
+Beveiliging uitgebreid, met vaste regels (geen taalmodel). De agent bedient het alarm en de sloten nog steeds nooit zelf.
+
+- **Alarm aan met iets open**: zet je het alarm aan terwijl een raam, deur of slot nog open is, dan krijg je meteen een melding met wat er open staat. In de stand thuis/nacht tellen alleen deuren.
+- **Alarm vergeten**: is iedereen 20 minuten weg (instelbaar, `alarm_reminder_minutes`) en staat het alarm nog uit, dan komt er één herinnering. De nachtronde zegt ook of het alarm uit staat.
+- **Sabotage beter herkend** (Ajax): met het alarm aan is een geopende behuizing, een geopend deksel van de centrale of een doorgeknipt extern contact nu kritiek; trilling en kanteling blijven een waarschuwing. Met het alarm uit krijg je een waarschuwing bij een geopende behuizing, een los contact of een rookmelder die van zijn voet is gehaald (👎 als dat normaal is, bijv. bij het batterij wisselen).
+- **Camera offline terwijl het alarm aan staat** of niemand thuis is: na 10 minuten één melding per camera (alle streams weg), met de vermelding als de stroom is uitgevallen.
+- **Alarm zonder verbinding**: valt de verbinding met de meldkamer of het mobiele netwerk weg, of is het alarmpaneel onbereikbaar, dan komt er na 5 minuten een melding (kritiek als het alarm aan stond).
+- **Iemand loopt rond het huis**: als je weg bent of het alarm aan staat en iemand binnen 10 minuten bij de voorkant en de achtertuin (of bij drie camera's) wordt gezien, opent dat één incident met de route ("Oprit → Achtertuin"). Kritiek als het alarm aan staat.
+- **Beveiligingsrapport** op zondagavond: hoe vaak het alarm afging, sabotage- en inbraakmeldingen, personen bij camera's, keren dat het alarm uit stond terwijl niemand thuis was, camera's die nu offline zijn, de verbinding van het alarm en lege batterijen van alarmsensoren (`security_report`).
+- **"Staat het alarm aan?"** en "Is het huis beveiligd?" worden direct uit de alarmpanelen en sensoren beantwoord, met wat er open staat. De agent heeft ook een nieuwe tool `security_status`.
+
 ## 0.6.31
 
 - **"Staat de airco aan?" komt rechtstreeks uit Home Assistant**: een vraag naar de stand van een apparaat bij naam ("Staat de keukenlamp aan?", "Is de voordeur op slot?", "Staat de tv aan?", "Is het alarmsysteem aan?") krijgt direct het antwoord, zonder het taalmodel. De ruimte mag je weglaten ("de airco" vindt "Woonkamer Airco" en "Slaapkamer Airco"). Heeft een apparaat meerdere entiteiten met dezelfde naam (een tv als mediaspeler en als schakelaar), dan telt die die het best zegt wat hij doet, en nooit een die niet bereikbaar is. Bij meer dan vier treffers of een onbekende naam gaat de vraag naar de agent.

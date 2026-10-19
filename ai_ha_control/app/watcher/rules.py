@@ -122,6 +122,7 @@ class Watcher:
         self.snapshots = None   # SnapshotStore: keeps images for incident timelines
         self.thresholds = None  # ThresholdMonitor: the user's watch rules
         self.signals = None     # HouseSignals: tampering while armed
+        self.guard = None       # SecurityGuard: alarm left off, armed with a window open, walking around the house
 
     @property
     def config(self):
@@ -208,6 +209,9 @@ class Watcher:
             self.agent.note_state_change(ent, old.get("state"), new.get("state"), origin, label)
         if ent.domain == "alarm_control_panel" and new.get("state") == "triggered":
             await self._alarm_triggered(ent)
+            return
+        if ent.domain == "alarm_control_panel" and self.guard is not None and not self.in_grace:
+            await self.guard.on_state(ent, old.get("state"), new.get("state"))
             return
         if ent.domain != "binary_sensor" or ent.state != "on":
             return
@@ -461,6 +465,9 @@ class Watcher:
 
         context = "Er werd net aangebeld." if doorbell else f"De sensor '{ent.name}' ging net af."
         category, description, snapshot, failure = await self._look(camera, context)
+        if self.guard is not None and not doorbell and (category == SUSPICIOUS or (
+                category == VISITOR and profile != "street")):
+            await self.guard.person_seen(camera, where, profile, description, snapshot)
 
         if category in QUIET_CATEGORIES and not doorbell:
             # Nothing, or people passing by on the street: keep it in the history, don't disturb.
@@ -647,7 +654,11 @@ class Watcher:
     async def bedtime_round(self) -> str:
         """Going to sleep: one overview of what is still open or on, instead of loose warnings later."""
         index = self._ctx.index
+        from .guard import alarm_active, alarm_panels
+
         open_items, unsecured, lights = [], [], []
+        panels = [p for p in alarm_panels(index) if p.state not in ("unavailable", "unknown")]
+        alarm_off = bool(panels) and not any(alarm_active(p) for p in panels)
         for ent in list(index.entities.values()):
             if ent.state == "on" and index.is_opening(ent):
                 open_items.append(ent)
@@ -656,7 +667,7 @@ class Watcher:
             elif ent.domain == "light" and ent.state == "on":
                 lights.append(ent)
         if not (open_items or unsecured or lights):
-            return ""
+            return ""  # the alarm alone is no reason for a push every night: not everybody arms it when asleep
 
         def names(items: list[EntityInfo]) -> str:
             listed = ", ".join(f"{house_label(e)}" + (f" ({e.area})" if e.area and not is_car(e) else "")
@@ -670,6 +681,8 @@ class Watcher:
             lines.append(f"🔓 Niet op slot of dicht: {names(unsecured)}")
         if lights:
             lines.append(f"💡 Nog aan: {names(lights)}")
+        if alarm_off:
+            lines.append(f"🛡️ Alarm staat uit: {', '.join(p.name for p in panels)} (zelf aanzetten, ik doe dat nooit)")
         text = "\n".join(lines)
         if self.agent is not None:
             self.agent.observe(f"Nachtronde: {text}")
