@@ -90,6 +90,9 @@ configuration:
   sleep_hours:
     name: Sleep hours
     description: Period for house mode 'sleeping', e.g. 23:00-07:00
+  camera_profiles:
+    name: Cameras
+    description: "camera=type. door = front door (only report lingering), private = back garden/private (every person, critical with alarm on), street = street (only suspicious), off = ignore, auto = by name"
   camera_patrol:
     name: Camera patrol
     description: Regularly compare camera images - off, away (when nobody is home or everyone sleeps) or always

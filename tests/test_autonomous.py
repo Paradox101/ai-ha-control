@@ -347,6 +347,9 @@ def test_vision_categories():
     assert parse("**VOORBIJGANGER** - twee fietsers op straat")[0] == PASSERBY
     assert parse("VERDACHT. Iemand klimt over het hek")[0] == SUSPICIOUS
     assert parse("Er staat een pakketje.") == (UNKNOWN, "Er staat een pakketje.")
+    # Newline after the category, and scenery that isn't needed in a notification
+    assert parse("VOORBIJGANGER\nEen persoon rijdt een fiets voorbij. De omgeving toont huizen en auto's.") == (
+        PASSERBY, "Een persoon rijdt een fiets voorbij.")
 
 
 # --- HA entities, kill switch, migration ------------------------------------------------------

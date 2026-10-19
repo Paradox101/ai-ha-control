@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, time as dtime
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -129,7 +130,8 @@ class Notifier:
             domain, name = "notify", domain
         data: dict[str, Any] = {"tag": tag}
         if image_entity:
-            data["image"] = f"/api/camera_proxy/{image_entity}"
+            # Cache buster: otherwise the phone may show an older picture of the same camera.
+            data["image"] = f"/api/camera_proxy/{image_entity}?t={int(time.time())}"
             data["entity_id"] = image_entity
         if actions:
             data["actions"] = actions

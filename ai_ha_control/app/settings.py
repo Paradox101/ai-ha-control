@@ -101,6 +101,11 @@ SECTIONS: list[dict[str, Any]] = [
         _f("camera_alerts", "Bij detectie het beeld bekijken", "segmented",
            "Weg = alleen als niemand thuis is. Aanbellen wordt altijd gemeld.",
            options=[["off", "Uit"], ["away", "Als ik weg ben"], ["always", "Altijd"]]),
+        _f("camera_profiles", "Wat wil je per camera horen?", "cameras",
+           "Voordeur: alleen als iemand blijft rondhangen. Privé: elke persoon, kritiek als het alarm aan staat. "
+           "Straat: alleen iets verdachts. Voorbijgangers en geparkeerde auto's worden nooit gemeld.",
+           options=[["auto", "Automatisch"], ["door", "🚪 Voordeur"], ["private", "🔒 Privé"],
+                    ["street", "🛣️ Straat"], ["off", "Negeren"]]),
         _f("camera_patrol", "Patrouille", "segmented",
            "Regelmatig alle camera's vergelijken met het vorige beeld.",
            options=[["off", "Uit"], ["away", "Weg of slapen"], ["always", "Altijd"]]),
@@ -175,6 +180,15 @@ def _coerce(spec: dict[str, Any], current: Any, value: Any) -> Any:
         if bad:
             raise ValueError(f"ongeldig: {', '.join(bad)}")
         return items
+    if kind == "cameras":
+        if not isinstance(value, list):
+            raise ValueError("ongeldige lijst")
+        allowed = {o[0] for o in spec["options"]}
+        items = [str(v) for v in value]
+        bad = [v for v in items if not re.match(r"^camera\.[a-z0-9_]+=", v) or v.split("=", 1)[1] not in allowed]
+        if bad:
+            raise ValueError(f"ongeldig: {', '.join(bad)}")
+        return [v for v in items if not v.endswith("=auto")]
     if kind == "autonomy":
         if not isinstance(value, list):
             raise ValueError("ongeldige lijst")
@@ -252,4 +266,7 @@ async def choices(index: EntityIndex, llm: OllamaClient) -> dict[str, Any]:
                           | {"shell_command", "hassio", "recorder", "python_script"}),
         "entities": {d: entities(d) for d in ("input_boolean", "tts", "media_player")},
         "levels": list(LEVEL_ORDER),
+        "cameras": sorted(({"value": c.entity_id, "label": index.camera_label(c),
+                            "guess": "private" if index.is_backyard(c) else "door"} for c in index.cameras(limit=100)),
+                          key=lambda c: c["label"].lower()),
     }

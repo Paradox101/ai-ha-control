@@ -66,6 +66,83 @@ async def test_camera_detection_only_when_away(ctx, notifier):
     assert ctx.db.events()[0]["entity_id"] == "camera.voordeur_clear"  # clear stream preferred
 
 
+async def test_camera_push_is_short_fresh_and_once_per_camera(ctx, notifier):
+    ctx.config.notify_service = "notify.mobile_app_telefoon"
+    ctx.config.camera_alerts = "always"
+    watcher = Watcher(ctx, notifier)
+    await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.voordeur_person"))
+    await watcher.wait_idle()
+    # Same physical camera via a sensor that isn't linked to the device: no second analysis or push
+    ctx.index.get("binary_sensor.voordeur_person").device_id = None
+    set_state(ctx.index, "binary_sensor.voordeur_person", "off")
+    await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.voordeur_person"))
+    await watcher.wait_idle()
+    (_, _, data, _), = pushes(ctx)
+    assert data["data"]["image"].startswith("/api/camera_proxy/camera.voordeur_clear?t=")
+    assert "Clear" not in data["title"]
+
+
+async def test_visitor_only_reported_when_lingering(ctx, notifier):
+    answers = ["BEZOEK: persoon bij de voordeur", "NIETS: lege stoep"]
+    async def describe(image, question, priority=1):
+        return answers.pop(0)
+    ctx.llm.describe_image = describe
+    ctx.config.camera_alerts = "always"
+    watcher = Watcher(ctx, notifier)
+    watcher.linger_seconds = 0
+    await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.voordeur_person"))
+    await watcher.wait_idle()
+    assert pushes(ctx) == []  # gone again
+
+    answers[:] = ["BEZOEK: persoon bij de voordeur", "BEZOEK: persoon staat nog bij de deur"]
+    watcher._cooldowns.clear()
+    set_state(ctx.index, "binary_sensor.voordeur_person", "off")
+    await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.voordeur_person"))
+    await watcher.wait_idle()
+    (_, _, data, _), = pushes(ctx)
+    assert "rondhangen" in data["title"] and "nog bij de deur" in data["message"]
+
+
+async def test_person_in_backyard_with_alarm_on_is_critical(ctx, notifier):
+    async def describe(image, question, priority=1):
+        return "BEZOEK: persoon in de tuin"
+    ctx.llm.describe_image = describe
+    ctx.config.notify_service = "notify.mobile_app_telefoon"
+    ctx.config.quiet_hours = "00:00-23:59"
+    for entity_id in ("camera.voordeur_clear", "camera.voordeur_fluent"):
+        ctx.index.get(entity_id).name = "Achtertuin"
+    ctx.index.alarm_armed = lambda: True
+    watcher = Watcher(ctx, notifier)  # camera_alerts=away and someone home: the alarm still counts
+    await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.voordeur_person"))
+    await watcher.wait_idle()
+    (_, _, data, _), = pushes(ctx)
+    assert "alarm" in data["title"] and data["data"]["priority"] == "high"
+
+
+async def test_camera_profiles(ctx, notifier):
+    async def describe(image, question, priority=1):
+        return "BEZOEK: persoon bij de deur"
+    ctx.llm.describe_image = describe
+    ctx.config.camera_alerts = "always"
+    index = ctx.index
+    cam = index.get("camera.voordeur_fluent")
+    assert index.camera_profile(cam, []) == "door"
+    # set on one stream, applies to the whole camera
+    assert index.camera_profile(cam, ["camera.voordeur_clear=private"]) == "private"
+
+    ctx.config.camera_profiles = ["camera.voordeur_clear=off"]
+    watcher = Watcher(ctx, notifier)
+    await watcher.handle_state_changed(turn_on_event(index, "binary_sensor.voordeur_person"))
+    await watcher.wait_idle()
+    assert ctx.db.events() == []  # ignored, not even analysed
+
+    ctx.config.camera_profiles = ["camera.voordeur_clear=private"]  # every person, right away
+    set_state(index, "binary_sensor.voordeur_person", "off")
+    await watcher.handle_state_changed(turn_on_event(index, "binary_sensor.voordeur_person"))
+    await watcher.wait_idle()
+    assert len(pushes(ctx)) == 1
+
+
 async def test_camera_nothing_seen_is_not_pushed(ctx, notifier):
     async def nothing(image, question, priority=1):
         return "NIETS: alleen een lege oprit."
