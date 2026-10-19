@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from ..ha.index import DETECTION_CLASSES, OPENING_CLASSES, EntityInfo
+from ..ha.index import DETECTION_CLASSES, OPENING_CLASSES, EntityInfo, normalize
 from ..notify import in_quiet_hours
 
 if TYPE_CHECKING:
@@ -86,6 +86,18 @@ def scene_mode(index: EntityIndex) -> tuple[str, datetime] | None:
     return latest
 
 
+def calendar_mode(index: EntityIndex) -> str | None:
+    """Vacation or guests from a calendar event that is going on right now (its title)."""
+    for ent in index.entities.values():
+        if ent.domain != "calendar" or ent.state != "on":
+            continue
+        words = set(normalize(str(ent.attributes.get("message") or "")).split())
+        for mode in (MODE_VACATION, MODE_GUEST):
+            if words & set(MODE_SCENE_WORDS[mode]):
+                return mode
+    return None
+
+
 def house_mode(index: EntityIndex, config: Config, now: datetime) -> str:
     from_scene = scene_mode(index)
     if from_scene:
@@ -93,12 +105,17 @@ def house_mode(index: EntityIndex, config: Config, now: datetime) -> str:
         if mode == MODE_AWAY and (time.time() - activated.timestamp()) / 3600 >= VACATION_HOURS:
             return MODE_VACATION
         return mode
+    from_calendar = calendar_mode(index) if config.calendar_context else None
     people = [e for e in index.entities.values() if e.domain == "person"]
     if people and all(p.state != "home" for p in people):
         away_hours = min(minutes_since(p.last_changed) for p in people) / 60
+        if from_calendar == MODE_VACATION:
+            return MODE_VACATION
         return MODE_VACATION if away_hours >= VACATION_HOURS else MODE_AWAY
     if in_quiet_hours(config.sleep_hours, now):
         return MODE_SLEEP
+    if from_calendar == MODE_GUEST:
+        return MODE_GUEST
     return MODE_HOME
 
 

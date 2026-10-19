@@ -34,11 +34,71 @@ jobs:
           pip install -r ha-reqs.txt
       - run: pytest -q -c tests_integration/pytest.ini tests_integration
 
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt playwright
+      - run: python -m playwright install --with-deps chromium
+      - run: pytest -q -c tests_ui/pytest.ini tests_ui
+
+  real-home-assistant:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Start Home Assistant
+        run: |
+          mkdir -p /tmp/haconfig
+          docker run -d --name ha --network host -e TZ=Europe/Amsterdam \
+            -v /tmp/haconfig:/config -v "$PWD/custom_components:/config/custom_components:ro" \
+            homeassistant/home-assistant:stable
+          for i in $(seq 1 90); do
+            curl -sf http://127.0.0.1:8123/api/onboarding >/dev/null && exit 0
+            sleep 2
+          done
+          docker logs ha; exit 1
+      - run: pytest -q -c tests_realha/pytest.ini tests_realha
+        env:
+          REAL_HA_URL: http://127.0.0.1:8123
+      - if: failure()
+        run: docker logs ha
+
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build add-on image (amd64)
-        run: docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.20 -t ai-ha-control ai_ha_control
+        run: |
+          base=$(grep 'amd64:' ai_ha_control/build.yaml | awk '{print $2}')
+          docker build --build-arg BUILD_FROM="$base" -t ai-ha-control ai_ha_control
       - name: Import check
         run: docker run --rm --entrypoint sh ai-ha-control -c "cd /opt/ai_ha_control && python3 -c 'import app.main'"
+      - name: AppArmor profile matches the image's Python
+        run: |
+          py=$(docker run --rm --entrypoint sh ai-ha-control -c 'readlink -f /usr/bin/python3')
+          grep -q "^  $py cx -> ai_ha_control_app," ai_ha_control/apparmor.txt \
+            || { echo "apparmor.txt names another Python than the image ($py)"; exit 1; }
+      - name: Run the add-on under its AppArmor profile
+        run: |
+          sudo apparmor_parser -r -W ai_ha_control/apparmor.txt
+          docker run -d --name addon --security-opt apparmor=ai_ha_control -p 8099:8099 \
+            -e HA_URL=http://127.0.0.1:9 -e HA_TOKEN=x -v addon-data:/data ai-ha-control
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8099/api/health && break; sleep 1; done
+          curl -sf http://127.0.0.1:8099/api/health
+          docker exec addon ai-ha-backup
+          docker exec addon test -s /data/ai_ha_control.backup.db
+          docker exec addon test -s /data/api_key
+          if docker exec addon python3 -c "open('/opt/ai_ha_control/x', 'w')"; then
+            echo "profile allowed writing the code directory"; exit 1
+          fi
+          if docker exec addon python3 -c "open('/etc/passwd', 'a')"; then
+            echo "profile allowed writing /etc"; exit 1
+          fi
+          docker logs addon

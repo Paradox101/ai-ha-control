@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -17,6 +18,9 @@ STATUS_ENTITY = "sensor.ai_huis_status"
 MODE_ENTITY = "sensor.ai_huismodus"
 CONCERN_ENTITY = "binary_sensor.ai_bezorgd"
 LAST_INCIDENT_ENTITY = "sensor.ai_laatste_incident"
+LEGACY_ENTITIES = (STATUS_ENTITY, MODE_ENTITY, CONCERN_ENTITY, LAST_INCIDENT_ENTITY)
+# While the integration polls us it provides real entities; the state-only ones are then removed.
+INTEGRATION_TIMEOUT = 300
 
 
 async def ensure_kill_switch(ha: HAClient, index: EntityIndex, entity_id: str) -> None:
@@ -38,27 +42,56 @@ class StatusPublisher:
         self._db = db
         self._autonomy = autonomy
         self._last: dict[str, Any] = {}
+        self.integration_seen = 0.0  # monotonic time of the last poll by the integration
+        self._legacy_removed = False
 
-    async def publish(self, mode: str, last_summary: str = "", health: dict[str, Any] | None = None) -> None:
+    def integration_polled(self) -> None:
+        self.integration_seen = time.monotonic()
+
+    @property
+    def integration_active(self) -> bool:
+        return bool(self.integration_seen) and time.monotonic() - self.integration_seen < INTEGRATION_TIMEOUT
+
+    def state(self, mode: str, last_summary: str = "") -> dict[str, Any]:
+        """Everything the dashboard entities show, for the integration and for publish()."""
         incidents = self._db.incidents(status="active")
         worst = max((i["severity"] for i in incidents), key=["info", "warning", "critical"].index, default=None)
-        status = {"critical": "alarm", "warning": "aandacht"}.get(worst or "", "rustig")
         latest = self._db.incidents(limit=1)
+        return {
+            "status": {"critical": "alarm", "warning": "aandacht"}.get(worst or "", "rustig"),
+            "mode": mode,
+            "concern": worst in ("warning", "critical"),
+            "open_incidents": len(incidents),
+            "incidents": [i["title"] for i in incidents[:5]],
+            "last_incident": latest[0]["title"][:250] if latest else None,
+            "last_incident_severity": latest[0]["severity"] if latest else None,
+            "last_incident_status": latest[0]["status"] if latest else None,
+            "autonomous": self._autonomy.enabled,
+            "last_check": last_summary[:250],
+        }
+
+    async def publish(self, mode: str, last_summary: str = "", health: dict[str, Any] | None = None) -> None:
+        if self.integration_active:
+            await self._remove_legacy()
+            return
+        self._legacy_removed = False
+        st = self.state(mode, last_summary)
+        status, incidents, worst = st["status"], st["incidents"], st["concern"]
         updates = {
             STATUS_ENTITY: (status, {
                 "friendly_name": "AI huis status", "icon": "mdi:shield-home",
-                "open_incidents": len(incidents), "mode": mode,
-                "autonomous": self._autonomy.enabled, "last_check": last_summary[:250], **(health or {}),
+                "open_incidents": st["open_incidents"], "mode": mode,
+                "autonomous": st["autonomous"], "last_check": st["last_check"], **(health or {}),
             }),
             MODE_ENTITY: (mode, {"friendly_name": "AI huismodus", "icon": "mdi:home-account"}),
-            CONCERN_ENTITY: ("on" if worst in ("warning", "critical") else "off", {
+            CONCERN_ENTITY: ("on" if worst else "off", {
                 "friendly_name": "AI bezorgd", "device_class": "problem",
-                "incidents": [i["title"] for i in incidents[:5]],
+                "incidents": incidents,
             }),
-            LAST_INCIDENT_ENTITY: (latest[0]["title"][:250] if latest else "geen", {
+            LAST_INCIDENT_ENTITY: (st["last_incident"] or "geen", {
                 "friendly_name": "AI laatste incident", "icon": "mdi:alert-circle-outline",
-                "severity": latest[0]["severity"] if latest else None,
-                "status": latest[0]["status"] if latest else None,
+                "severity": st["last_incident_severity"],
+                "status": st["last_incident_status"],
             }),
         }
         for entity_id, (state, attributes) in updates.items():
@@ -69,6 +102,17 @@ class StatusPublisher:
                 self._last[entity_id] = (state, attributes)
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Could not publish %s: %s", entity_id, err)
+
+    async def _remove_legacy(self) -> None:
+        if self._legacy_removed:
+            return
+        for entity_id in LEGACY_ENTITIES:
+            try:
+                await self._ha.delete_state(entity_id)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Could not remove %s: %s", entity_id, err)
+        self._legacy_removed = True
+        self._last.clear()
 
     def reset(self) -> None:
         """Force republishing (after a reconnect HA has forgotten these states)."""

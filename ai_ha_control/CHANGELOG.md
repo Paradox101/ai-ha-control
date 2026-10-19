@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.2 — Hardening, snellere Assist en echte entiteiten
+
+### Beveiliging en betrouwbaarheid
+- **AppArmor-profiel**: de add-on zelf mag alleen nog `/data` schrijven; code, HA-config, back-ups en media zijn afgeschermd.
+- **Health-check** meldt een probleem als Home Assistant >5 min niet verbonden is of de scheduler vastzit; de Supervisor-watchdog herstart de add-on dan.
+- **Database**: WAL-modus, indexen en nachtelijke opschoning (gesprekken 30 dagen, meldingen 180 dagen, audit en acties 1 jaar).
+- **Back-ups**: vóór een HA-back-up wordt een consistente kopie van de database gemaakt; snapshots en het live-bestand gaan niet meer mee. Na terugzetten wordt die kopie automatisch gebruikt.
+- Beveiligingsheaders (CSP, nosniff), limiet op mislukte API-sleutelpogingen, maximale berichtlengte en een API-sleutelbestand dat alleen de add-on kan lezen.
+
+### Assist
+- **Ruimte van de spraaksatelliet** gaat mee: "doe het licht aan" in de keuken betekent de keuken.
+- **Streaming**: het antwoord komt woord voor woord binnen, zodat de satelliet eerder begint te praten.
+- Tip in de documentatie: laat HA simpele commando's zelf afhandelen ("Prefer handling commands locally").
+
+### Integratie
+- Echte entiteiten met unique_id: huisstatus, huismodus, laatste incident, open incidenten, wacht op bevestiging, AI-reactietijd, bezorgd, add-on-probleem en een schakelaar *Zelf handelen*. De oude losse statussensoren verdwijnen zodra de integratie actief is.
+- Event `ai_ha_control_incident` bij een nieuw of verergerd incident, voor eigen automatiseringen.
+
+### Slimmer
+- Camera-analyse vraagt het model om JSON (categorie + beschrijving) in plaats van vrije tekst.
+- **AI-prestaties** in het tabblad Agent: duur, tokens, wachttijd en modelwissels per model.
+- **Agenda**: afspraken in de ochtendsamenvatting en via de chat; een lopende afspraak met "vakantie" of "gasten" zet de huismodus.
+- **Energie**: stroomprijs, goedkoopste tijdvak en zonneverwachting in de samenvatting en via de chat (alleen informatie).
+- Ochtendsamenvatting en routinemelding in het Engels als de taal op `en` staat.
+
+### Onderhoud
+- aiohttp 3.13.5, basisimage Alpine 3.22, Dependabot, en een workflow die kant-en-klare images naar ghcr publiceert.
+- CI: browsertest van de web-UI, test tegen een echte Home Assistant, en de add-on draaiend onder zijn AppArmor-profiel.
+
 ## 0.6.0 — Nauwkeuriger, veiliger en comfort
 
 ### Beveiliging

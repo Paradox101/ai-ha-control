@@ -1,6 +1,7 @@
 """End-to-end: real web app + HA client against a fake HA websocket and a fake Ollama."""
 
 import asyncio
+import json
 import time
 
 from aiohttp import web
@@ -64,9 +65,22 @@ def fake_ollama(requests: list, replies: list | None = None) -> web.Application:
     ]
 
     async def chat(request):
-        requests.append(await request.json())
+        body = await request.json()
+        requests.append(body)
         reply = replies.pop(0) if len(replies) > 1 else replies[0]  # the last reply repeats
-        return web.json_response({"message": reply})
+        if not body.get("stream"):
+            return web.json_response({"message": reply, "eval_count": 5, "prompt_eval_count": 50})
+        resp = web.StreamResponse()
+        await resp.prepare(request)
+        if reply.get("tool_calls"):
+            await resp.write(json.dumps({"message": reply, "done": False}).encode() + b"\n")
+        else:
+            for word in (reply.get("content") or "").split(" "):
+                await resp.write(json.dumps({"message": {"role": "assistant", "content": word + " "},
+                                             "done": False}).encode() + b"\n")
+        await resp.write(json.dumps({"message": {"role": "assistant", "content": ""}, "done": True,
+                                     "eval_count": 5, "prompt_eval_count": 50}).encode() + b"\n")
+        return resp
 
     async def tags(_request):
         return web.json_response({"models": [{"name": "qwen3:8b"}]})

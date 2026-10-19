@@ -91,7 +91,7 @@ async def test_too_large_image_retries_smaller(tmp_path):
 
 
 async def test_camera_shown_even_if_analysis_fails(ctx):
-    async def broken(image, question, priority=1):
+    async def broken(image, question, priority=1, schema=None):
         raise RuntimeError(f"Ollama returned 500: {OOM}")
     ctx.llm.describe_image = broken
     result = json.loads(await build_registry().run(ctx, "analyze_camera", {"entity_id": "camera.voordeur_fluent"}))

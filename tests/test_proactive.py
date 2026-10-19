@@ -85,7 +85,7 @@ async def test_camera_push_is_short_fresh_and_once_per_camera(ctx, notifier):
 
 async def test_visitor_only_reported_when_lingering(ctx, notifier):
     answers = ["BEZOEK: persoon bij de voordeur", "NIETS: lege stoep"]
-    async def describe(image, question, priority=1):
+    async def describe(image, question, priority=1, schema=None):
         return answers.pop(0)
     ctx.llm.describe_image = describe
     ctx.config.camera_alerts = "always"
@@ -105,7 +105,7 @@ async def test_visitor_only_reported_when_lingering(ctx, notifier):
 
 
 async def test_person_in_backyard_with_alarm_on_is_critical(ctx, notifier):
-    async def describe(image, question, priority=1):
+    async def describe(image, question, priority=1, schema=None):
         return "BEZOEK: persoon in de tuin"
     ctx.llm.describe_image = describe
     ctx.config.notify_service = "notify.mobile_app_telefoon"
@@ -121,7 +121,7 @@ async def test_person_in_backyard_with_alarm_on_is_critical(ctx, notifier):
 
 
 async def test_camera_profiles(ctx, notifier):
-    async def describe(image, question, priority=1):
+    async def describe(image, question, priority=1, schema=None):
         return "BEZOEK: persoon bij de deur"
     ctx.llm.describe_image = describe
     ctx.config.camera_alerts = "always"
@@ -145,7 +145,7 @@ async def test_camera_profiles(ctx, notifier):
 
 
 async def test_camera_nothing_seen_is_not_pushed(ctx, notifier):
-    async def nothing(image, question, priority=1):
+    async def nothing(image, question, priority=1, schema=None):
         return "NIETS: alleen een lege oprit."
     ctx.llm.describe_image = nothing
     ctx.config.camera_alerts = "always"
@@ -270,7 +270,7 @@ async def test_startup_grace_ignores_detections_and_ticks(ctx, notifier):
 
 
 async def test_failed_camera_analysis_is_explained(ctx, notifier):
-    async def broken(image, question, priority=1):
+    async def broken(image, question, priority=1, schema=None):
         raise RuntimeError('model "qwen3-vl:4b" not found')
     ctx.llm.describe_image = broken
     watcher = Watcher(ctx, notifier)

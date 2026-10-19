@@ -1,3 +1,7 @@
 build_from:
-  aarch64: ghcr.io/home-assistant/aarch64-base:3.20
-  amd64: ghcr.io/home-assistant/amd64-base:3.20
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.22
+  amd64: ghcr.io/home-assistant/amd64-base:3.22
+labels:
+  org.opencontainers.image.title: "AI HA Control"
+  org.opencontainers.image.description: "Lokale AI (Ollama) die je huis helpt beheren via Home Assistant"
+  org.opencontainers.image.source: "https://github.com/paradox101/ai-ha-control"

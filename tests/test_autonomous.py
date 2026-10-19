@@ -328,7 +328,7 @@ async def test_patrol_reports_only_changed_and_relevant(auto, tmp_path):
     async def snapshot(entity_id):
         return next(images)
     auto.ha.camera_snapshot = snapshot
-    async def describe(image, question, priority=1):
+    async def describe(image, question, priority=1, schema=None):
         return "VERDACHT: iemand met een capuchon bij de schuur"
     auto.llm.describe_image = describe
     auto.index.cameras = lambda: [auto.index.get("camera.voordeur_clear")]

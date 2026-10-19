@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import TYPE_CHECKING
 
@@ -26,6 +27,16 @@ PROMPT = (
     "'Persoon op fiets rijdt voorbij' of 'Bezorger met pakket bij de deur'. "
     "Beschrijf de omgeving (straat, huizen, auto's, beplanting, weer) niet."
 )
+# Ollama structured output: the model must answer with exactly these fields (more reliable than parsing text).
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "categorie": {"type": "string", "enum": list(CATEGORIES)},
+        "beschrijving": {"type": "string"},
+    },
+    "required": ["categorie", "beschrijving"],
+}
+JSON_HINT = "\nAntwoord als JSON met de velden 'categorie' en 'beschrijving'."
 
 # Sentences about the surroundings, which the user doesn't need in a notification.
 _SCENERY = re.compile(r"^(de|het|op de achtergrond|in de achtergrond|verder)\b.*\b(omgeving|achtergrond|woonwijk|straatbeeld)\b",
@@ -40,8 +51,17 @@ def _short(text: str) -> str:
 
 
 def parse(text: str) -> tuple[str, str]:
-    """Split 'BEZOEK: een bezorger bij de deur' into (category, description)."""
+    """Read {"categorie": ..., "beschrijving": ...}, or split 'BEZOEK: een bezorger bij de deur'."""
     text = text.strip()
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            category = CATEGORIES.get(str(data.get("categorie", "")).strip().upper())
+            description = _short(str(data.get("beschrijving") or ""))
+            return (category or UNKNOWN), description or text
     match = re.match(r"[\W_]*([A-Za-z]+)[\W_]*", text)  # also '**VOORBIJGANGER**\nEen persoon ...'
     category = CATEGORIES.get(match.group(1).upper()) if match else None
     if category is None:
@@ -51,5 +71,6 @@ def parse(text: str) -> tuple[str, str]:
 
 async def classify(llm: OllamaClient, image: bytes, camera: str, context: str = "",
                    priority: int = PRIORITY_SAFETY) -> tuple[str, str]:
-    reply = await llm.describe_image(image, PROMPT.format(camera=camera, context=context), priority=priority)
+    reply = await llm.describe_image(image, PROMPT.format(camera=camera, context=context) + JSON_HINT,
+                                     priority=priority, schema=SCHEMA)
     return parse(reply)

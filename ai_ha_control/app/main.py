@@ -7,6 +7,7 @@ import ipaddress
 import logging
 import os
 import secrets
+import time
 import uuid
 from pathlib import Path
 
@@ -47,7 +48,21 @@ DISCOVERY_SERVICE = "ai_ha_control"
 REGISTRY_EVENTS = ("entity_registry_updated", "device_registry_updated", "area_registry_updated")
 REFRESH_DELAY = 5  # seconds; registry changes often come in bursts
 # What the Assist integration may reach with its API key; everything else only through Ingress (the HA panel).
-INTEGRATION_PATHS = {"/api/conversation", "/api/status", "/api/health"}
+INTEGRATION_PATHS = {"/api/conversation", "/api/conversation/stream", "/api/status", "/api/integration/state"}
+# The Supervisor watchdog restarts the add-on when /api/health fails.
+HEALTH_HA_DISCONNECTED = 300  # seconds without a Home Assistant connection
+HEALTH_SCHEDULER_STALE = 45 * 60  # a heartbeat may take long (tool loop), but not this long
+PUBLIC_PATHS = {"/api/health"}
+MAX_TEXT_LENGTH = 4000  # characters per chat/Assist message
+AUTH_FAILURE_LIMIT = 10  # failed API-key attempts per address per minute before answering 429
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    # The UI runs in Home Assistant's ingress iframe: only same-origin framing, no external resources.
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                               "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                               "connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'",
+}
 
 
 def query_int(request: web.Request, name: str, default: int, maximum: int) -> int:
@@ -76,6 +91,7 @@ def load_api_key(config: Config) -> str:
     key = secrets.token_urlsafe(24)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(key)
+    path.chmod(0o600)
     return key
 
 
@@ -130,6 +146,7 @@ class App:
         self.patrol.on_observation = lambda text: self.guardian.observe(text, urgent=True)
         self.publisher = StatusPublisher(self.ha, self.db, self.autonomy)
         self.comfort = ComfortController(self.ctx)
+        self.incidents.on_event = lambda data: self.ha.fire_event("ai_ha_control_incident", data)
         self.watcher.agent, self.watcher.incidents = self.guardian, self.incidents
         self.watcher.baseline, self.watcher.snapshots = self.baseline, self.snapshots
         s = self.scheduler
@@ -249,7 +266,7 @@ class App:
     async def chat(self, request: web.Request) -> web.Response:
         assert self.agent
         body = await json_body(request)
-        message = (body.get("message") or "").strip()
+        message = (body.get("message") or "").strip()[:MAX_TEXT_LENGTH]
         if not message:
             return web.json_response({"error": "empty message"}, status=400)
         conversation_id = body.get("conversation_id") or uuid.uuid4().hex
@@ -270,7 +287,7 @@ class App:
         """Endpoint for the Assist conversation agent integration."""
         assert self.agent
         body = await json_body(request)
-        text = (body.get("text") or "").strip()
+        text = (body.get("text") or "").strip()[:MAX_TEXT_LENGTH]
         conversation_id = body.get("conversation_id") or uuid.uuid4().hex
         if not text:
             return web.json_response({"error": "empty text"}, status=400)
@@ -279,13 +296,48 @@ class App:
         self.db.audit("assist", {"user_id": body.get("user_id"), "text": text[:200]}, "received", None,
                       conversation_id)
         try:
-            result = await self.agent.run(text, conversation_id, source="assist")
+            result = await self.agent.run(text, conversation_id, source="assist", area=body.get("area"))
             speech = result.answer
         except LLMError as err:
             _LOGGER.warning("Assist request failed: %s", err)
-            speech = ("Sorry, ik kan de AI-server nu niet bereiken." if self.config.language == "nl"
-                      else "Sorry, I cannot reach the AI server right now.")
+            speech = self._unreachable()
         return web.json_response({"conversation_id": conversation_id, "speech": speech})
+
+    def _unreachable(self) -> str:
+        return ("Sorry, ik kan de AI-server nu niet bereiken." if self.config.language == "nl"
+                else "Sorry, I cannot reach the AI server right now.")
+
+    async def conversation_stream(self, request: web.Request) -> web.StreamResponse:
+        """Like /api/conversation, but streams the answer as NDJSON: {"delta": ...} lines, then {"done": true}."""
+        assert self.agent
+        body = await json_body(request)
+        text = (body.get("text") or "").strip()[:MAX_TEXT_LENGTH]
+        conversation_id = body.get("conversation_id") or uuid.uuid4().hex
+        if not text:
+            return web.json_response({"error": "empty text"}, status=400)
+        resp = web.StreamResponse(headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-store"})
+        await resp.prepare(request)
+
+        async def send(data: dict) -> None:
+            await resp.write((json.dumps(data, ensure_ascii=False) + "\n").encode())
+
+        streamed = False
+
+        async def on_delta(piece: str) -> None:
+            nonlocal streamed
+            streamed = True
+            await send({"delta": piece})
+
+        try:
+            result = await self.agent.run(text, conversation_id, source="assist", area=body.get("area"),
+                                          on_delta=on_delta)
+            speech = result.answer
+        except LLMError as err:
+            _LOGGER.warning("Assist request failed: %s", err)
+            speech = self._unreachable()
+        await send({"done": True, "conversation_id": conversation_id, "speech": speech, "streamed": streamed})
+        await resp.write_eof()
+        return resp
 
     async def pending(self, _request: web.Request) -> web.Response:
         return web.json_response([p.as_dict() for p in self.confirmations.list()])
@@ -483,8 +535,39 @@ class App:
         url = ((await json_body(request)).get("url") or "").strip()
         return web.json_response(await self.llm.status(url or None))
 
+    async def integration_state(self, _request: web.Request) -> web.Response:
+        """Polled by the Home Assistant integration, which turns it into real entities."""
+        assert self.guardian and self.llm
+        self.publisher.integration_polled()
+        switch = self.index.get(self.config.kill_switch) if self.config.kill_switch else None
+        perf = self.llm.performance()
+        return web.json_response({
+            **self.publisher.state(self.guardian.mode, self.guardian.last_summary),
+            "kill_switch": switch.state == "on" if switch else None,
+            "kill_switch_entity": switch.entity_id if switch else None,
+            "llm_avg_seconds": perf["avg_seconds"],
+            "llm_queue": perf["queue"],
+            "pending_confirmations": len(self.confirmations.list()),
+            "health_problems": self.health_problems(),
+        })
+
+    def health_problems(self) -> list[str]:
+        now = time.monotonic()
+        problems = []
+        if self.ha is not None and self.ha.disconnected_since is not None \
+                and now - self.ha.disconnected_since > HEALTH_HA_DISCONNECTED:
+            problems.append("home_assistant_disconnected")
+        if self.scheduler is not None and now - self.scheduler.loop_tick > HEALTH_SCHEDULER_STALE:
+            problems.append("scheduler_stalled")
+        return problems
+
+    async def llm_performance(self, _request: web.Request) -> web.Response:
+        assert self.llm
+        return web.json_response(self.llm.performance())
+
     async def health(self, _request: web.Request) -> web.Response:
-        return web.json_response({"ok": True})
+        problems = self.health_problems()
+        return web.json_response({"ok": not problems, "problems": problems}, status=503 if problems else 200)
 
     async def camera(self, request: web.Request) -> web.Response:
         assert self.ha
@@ -516,17 +599,35 @@ class App:
 
 def access_middleware(api_key: str, supervised: bool):
     """Ingress requests are trusted; everything else (the Assist integration) needs the API key."""
+    failures: dict[str, list[float]] = {}
+
+    def blocked(remote: str) -> bool:
+        now = time.monotonic()
+        recent = [t for t in failures.get(remote, []) if now - t < 60]
+        failures[remote] = recent
+        if not recent:
+            failures.pop(remote, None)
+        return len(recent) >= AUTH_FAILURE_LIMIT
 
     @web.middleware
     async def middleware(request: web.Request, handler):
+        if request.path in PUBLIC_PATHS:
+            return await handler(request)
+        remote = request.remote or ""
         auth = request.headers.get("Authorization", "")
-        valid_key = auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].encode(), api_key.encode())
+        valid_key = False
+        if auth.startswith("Bearer "):
+            if blocked(remote):
+                raise web.HTTPTooManyRequests()
+            valid_key = hmac.compare_digest(auth[7:].encode(), api_key.encode())
+            if not valid_key:
+                failures.setdefault(remote, []).append(time.monotonic())
         if valid_key and request.path in INTEGRATION_PATHS:
             return await handler(request)
         if not supervised:
             return await handler(request)
         try:
-            addr = ipaddress.ip_address(request.remote or "")
+            addr = ipaddress.ip_address(remote)
         except ValueError:
             raise web.HTTPUnauthorized()
         if addr == INGRESS_PROXY:
@@ -539,10 +640,16 @@ def access_middleware(api_key: str, supervised: bool):
     return middleware
 
 
+async def security_headers(_request: web.Request, resp: web.StreamResponse) -> None:
+    for name, value in SECURITY_HEADERS.items():
+        resp.headers.setdefault(name, value)
+
+
 def create_app(config: Config) -> web.Application:
     state = App(config)
     supervised = bool(supervisor_token())
-    app = web.Application(middlewares=[access_middleware(state.api_key, supervised)])
+    app = web.Application(middlewares=[access_middleware(state.api_key, supervised)], client_max_size=256 * 1024)
+    app.on_response_prepare.append(security_headers)
     app["state"] = state
     app.on_startup.append(state.startup)
     app.on_cleanup.append(state.shutdown)
@@ -552,6 +659,7 @@ def create_app(config: Config) -> web.Application:
             web.get("/api/status", state.status),
             web.post("/api/chat", state.chat),
             web.post("/api/conversation", state.conversation),
+            web.post("/api/conversation/stream", state.conversation_stream),
             web.get("/api/pending", state.pending),
             web.post(r"/api/pending/{action_id}/{decision:confirm|reject}", state.confirm),
             web.get("/api/audit", state.audit),
@@ -564,6 +672,8 @@ def create_app(config: Config) -> web.Application:
             web.post(r"/api/jobs/{job:summary|routines}", state.run_job),
             web.get("/api/entities", state.entities),
             web.get("/api/integration", state.integration),
+            web.get("/api/integration/state", state.integration_state),
+            web.get("/api/llm/performance", state.llm_performance),
             web.get("/api/agent", state.agent_status),
             web.post("/api/agent/run", state.agent_run),
             web.post("/api/agent/kill-switch", state.kill_switch),
