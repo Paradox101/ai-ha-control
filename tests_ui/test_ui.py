@@ -3,6 +3,7 @@
 import asyncio
 import os
 import time
+from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestServer
@@ -17,6 +18,7 @@ from tests.test_e2e import fake_home_assistant, fake_ollama
 RUNNING = {}  # the add-on state of the running test server
 # Markdown as the model writes it, plus HTML that must stay text.
 ANSWER = "**Alles** is rustig thuis.\n\n**Personen**\n- Vincent: *thuis*\n  - sinds `10:00`\n- <img src=x onerror=alert(1)>"
+SHOTS = Path(os.environ["UI_SHOTS"]) if os.environ.get("UI_SHOTS") else None
 TABS = ["incidents", "agent", "events", "rules", "routines", "memory", "log", "settings", "pair", "chat"]
 
 
@@ -102,6 +104,10 @@ async def test_ui_tabs_chat_and_settings(addon):
         await page.click("#nav button[data-tab='settings']")
         await page.wait_for_selector("text=Agenda gebruiken")
         await page.wait_for_selector("text=Energieprijzen gebruiken")
+        await page.wait_for_selector("text=Herinnering als het alarm uit staat na vertrek")
+        await page.wait_for_selector("text=Beveiligingsrapport")
+        if SHOTS:
+            await page.screenshot(path=str(SHOTS / "settings.png"), full_page=True)
         assert not await page.evaluate("document.documentElement.scrollWidth > window.innerWidth")
         await browser.close()
     assert not errors, errors

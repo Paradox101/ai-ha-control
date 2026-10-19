@@ -35,7 +35,7 @@ HOME_KINDS = {"doorbell", "energy", "comfort", "appliance"}
 
 # Kinds where 👍/👎 feedback makes sense (things the AI decided to tell you).
 FEEDBACK_KINDS = {"camera", "motion", "energy", "anomaly", "agent", "autonomous", "presence", "security", "summary",
-                  "comfort"}
+                  "comfort", "tamper"}
 
 
 def parse_quiet_hours(value: str | None) -> tuple[dtime, dtime] | None:

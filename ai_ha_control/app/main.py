@@ -45,6 +45,7 @@ from .watcher.routines import accept_suggestion
 from .watcher.rules import Watcher, apply_feedback
 from .watcher.scheduler import Scheduler
 from .watcher.simulation import PresenceSimulator
+from .watcher.guard import SecurityGuard
 from .watcher.signals import HouseSignals
 
 _LOGGER = logging.getLogger("ai_ha_control")
@@ -165,15 +166,18 @@ class App:
         self.appliances = ApplianceMonitor(self.ctx, self.notifier, self.incidents)
         self.simulation = PresenceSimulator(self.ctx)
         self.signals = HouseSignals(self.ctx, self.notifier, self.incidents)
+        self.guard = SecurityGuard(self.ctx, self.notifier, self.incidents)
+        self.guard.on_observation = lambda text, urgent: self.guardian.observe(text, urgent=urgent)
         self.incidents.on_event = lambda data: self.ha.fire_event("ai_ha_control_incident", data)
         self.watcher.agent, self.watcher.incidents = self.guardian, self.incidents
         self.watcher.baseline, self.watcher.snapshots = self.baseline, self.snapshots
         self.watcher.thresholds, self.watcher.signals = self.thresholds, self.signals
+        self.watcher.guard = self.guard
         s = self.scheduler
         s.agent, s.baseline, s.patrol = self.guardian, self.baseline, self.patrol
         s.incidents, s.snapshots, s.publisher = self.incidents, self.snapshots, self.publisher
         s.comfort, s.thresholds, s.appliances = self.comfort, self.thresholds, self.appliances
-        s.simulation, s.signals = self.simulation, self.signals
+        s.simulation, s.signals, s.guard = self.simulation, self.signals, self.guard
         self.ha.on_connect(self.watcher.on_connected)  # grace first: the refresh takes a while
         self.ha.on_connect(self.refresh_index)
         self.ha.on_event("homeassistant_started", self.watcher.on_ha_started)

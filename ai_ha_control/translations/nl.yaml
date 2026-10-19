@@ -157,6 +157,12 @@ configuration:
   health_report:
     name: Huisdokter
     description: Maandagochtend een overzicht van kapotte automatiseringen, updates en dode apparaten
+  alarm_reminder_minutes:
+    name: Herinnering als het alarm uit staat na vertrek (minuten)
+    description: "Iedereen weg en het alarm staat na zoveel minuten nog uit: één melding. De agent zet het alarm nooit zelf aan. 0 = uit."
+  security_report:
+    name: Beveiligingsrapport
+    description: "Zondagavond: alarmmeldingen, sabotage, camera's offline en lege batterijen van alarmsensoren"
   presence_simulation:
     name: Aanwezigheid nabootsen op vakantie
     description: In de huismodus vakantie 's avonds lampen aan en uit zoals het huis normaal gebruikt wordt (alleen lampen)

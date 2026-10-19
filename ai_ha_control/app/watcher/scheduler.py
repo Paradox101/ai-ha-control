@@ -23,6 +23,7 @@ _LOGGER = logging.getLogger(__name__)
 
 TICK_SECONDS = 60
 HEALTH_REPORT_WEEKDAY, HEALTH_REPORT_TIME = 0, "10:00"  # Monday morning
+SECURITY_REPORT_WEEKDAY, SECURITY_REPORT_TIME = 6, "19:00"  # Sunday evening
 ROUTINE_ANALYSIS_TIME = "03:30"
 LLM_CHECK_SECONDS = 300
 
@@ -108,6 +109,7 @@ class Scheduler:
         self.appliances = None
         self.simulation = None
         self.signals = None
+        self.guard = None
         self._agent_task: asyncio.Task | None = None
         self._llm_checked = -1e9
         self.llm_down_since: float | None = None
@@ -204,6 +206,9 @@ class Scheduler:
             from ..doctor import send_health_report
 
             await self._stage("doctor", send_health_report(self._ctx), "doctor")
+        if self.guard is not None and config.security_report and now.weekday() == SECURITY_REPORT_WEEKDAY and \
+                self._due("security_report", SECURITY_REPORT_TIME, now):
+            await self._stage("security_report", self.guard.send_weekly_report(), "security_report")
 
     async def _autonomous_round(self, now: datetime) -> None:
         config = self._ctx.config
@@ -230,6 +235,8 @@ class Scheduler:
             await self._stage("simulation", self.simulation.tick(mode, now))
         if self.signals is not None and not settling:
             await self._stage("signals", self.signals.tick(now))
+        if self.guard is not None and not settling and config.proactive:
+            await self._stage("guard", self.guard.tick(now))
         if self.patrol is not None and not settling and self.patrol.due(mode):
             await self._stage("patrol", self.patrol.run())
         if self.incidents is not None:
