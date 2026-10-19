@@ -20,6 +20,8 @@ _LOGGER = logging.getLogger(__name__)
 ENTITY_COLUMNS = ["entity_id", "naam", "domein", "ruimte", "apparaat", "device_class", "status",
                   "status (leesbaar)", "eenheid", "laatst gewijzigd", "aliassen", "eigenschappen"]
 PLACE_COLUMNS = ["plek", "camera (beste stream)", "sensor", "naam", "soort detectie", "status"]
+CLEANUP_COLUMNS = ["entity_id", "naam", "reden", "ruimte", "apparaat", "status", "laatst gewijzigd"]
+DEAD_DAYS = 30
 
 
 def _text(value: Any) -> str:
@@ -55,6 +57,26 @@ def place_rows(index: EntityIndex) -> list[list[Any]]:
             rows.append([_text(v) for v in (
                 place.label, place.camera.entity_id if place.camera else "", sensor.entity_id, sensor.name,
                 KIND_LABELS[sensor_kind(index, sensor)], sensor.readable_state)])
+    return rows
+
+
+def cleanup_rows(index: EntityIndex) -> list[list[Any]]:
+    """Candidates to remove in Home Assistant: old copies (_2/_3) and entities that have been dead for a month."""
+    from .house import duplicates
+    from .watcher.baseline import minutes_since
+
+    rows, seen = [], set()
+    for original, dup in duplicates(index):
+        seen.add(dup.entity_id)
+        rows.append([_text(v) for v in (dup.entity_id, dup.name, f"kopie van {original.entity_id}", dup.area,
+                                        dup.device, dup.state, dup.last_changed)])
+    for ent in sorted(index.entities.values(), key=lambda e: e.entity_id):
+        if ent.entity_id in seen or ent.state not in ("unavailable", "unknown") or ent.domain == "automation":
+            continue
+        days = minutes_since(ent.last_changed) / 1440
+        if days >= DEAD_DAYS:
+            rows.append([_text(v) for v in (ent.entity_id, ent.name, f"al {int(days)} dagen {ent.state}", ent.area,
+                                            ent.device, ent.state, ent.last_changed)])
     return rows
 
 
@@ -151,7 +173,8 @@ def workbook(sheets: list[tuple[str, list[str], list[list[Any]]]]) -> bytes:
 
 def sheets(index: EntityIndex) -> list[tuple[str, list[str], list[list[Any]]]]:
     return [("Entiteiten", ENTITY_COLUMNS, entity_rows(index)),
-            ("Camera's en detectie", PLACE_COLUMNS, place_rows(index))]
+            ("Camera's en detectie", PLACE_COLUMNS, place_rows(index)),
+            ("Opruimen", CLEANUP_COLUMNS, cleanup_rows(index))]
 
 
 def entities_xlsx(index: EntityIndex) -> bytes:

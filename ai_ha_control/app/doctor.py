@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .house import duplicates, house_fan, mode_helper, words
 from .tools.automations import _entity_ids_in
 from .tools.base import Tool, ToolContext
 from .watcher.rules import minutes_since
@@ -16,6 +17,7 @@ DEAD_ENTITY_DAYS = 3
 DISK_WARN_PERCENT = 85
 MAX_CONFIGS = 100   # automations whose config is read per report
 MAX_ITEMS = 8
+DEVICE_DOMAINS = {"camera", "light", "lock", "climate", "cover", "media_player", "remote", "siren", "fan"}
 
 
 def _names(items: list[str]) -> str:
@@ -87,7 +89,58 @@ async def health_findings(ctx: ToolContext) -> dict[str, list[str]]:
     from .watcher.scheduler import low_batteries
 
     findings["Batterij bijna leeg"] = low_batteries(ctx)
+    findings["Rook-, gas- en CO-melders"] = detector_problems(index)
+    findings["Instellingen die je kunt invullen"] = setting_suggestions(ctx)
+    pairs = duplicates(index)
+    findings["Dubbele entiteiten (oude kopie met _2/_3, volledige lijst in de export)"] = [
+        dup.entity_id for _, dup in pairs if dup.domain in DEVICE_DOMAINS or (dup.area and dup.area.lower() not in
+                                                                              {a.lower() for a in ctx.config.offline_ignore_areas})]
     return {title: items for title, items in findings.items() if items}
+
+
+def detector_problems(index) -> list[str]:
+    """Failed self tests and problems of smoke/gas/CO detectors (a detector that fails a test may not go off)."""
+    detector_devices = {e.device_id for e in index.entities.values() if e.device_id and e.domain == "binary_sensor"
+                        and e.device_class in ("smoke", "gas", "carbon_monoxide")}
+    problems = []
+    for ent in index.entities.values():
+        if ent.device_id not in detector_devices:
+            continue
+        if ent.domain == "binary_sensor" and ent.device_class == "problem" and ent.state == "on":
+            problems.append(f"{ent.name}: probleem")
+        elif ent.domain == "sensor" and "self_test" in ent.entity_id and ent.state in ("not_completed", "failed",
+                                                                                        "fault"):
+            problems.append(f"{ent.name}: {'zelftest nog niet gedaan' if ent.state == 'not_completed' else 'zelftest mislukt'}")
+    return problems
+
+
+def setting_suggestions(ctx: ToolContext) -> list[str]:
+    """Options that are empty while the house has what they need."""
+    index, config = ctx.index, ctx.config
+    entities = list(index.entities.values())
+    tips = []
+    valve = next((e for e in entities if e.domain == "valve" and words(e) & {"water", "waterafsluiter", "hoofdkraan",
+                                                                          "kraan"}), None)
+    if not config.leak_valve and valve is not None:
+        tips.append(f"Hoofdkraan bij lekkage: {valve.entity_id}")
+    tts = sorted(e.entity_id for e in entities if e.domain == "tts")
+    if not config.tts_entity and tts:
+        tips.append(f"Spraakdienst: {next((t for t in tts if 'nl' in t), tts[0])}")
+    people = [e for e in entities if e.domain == "person"]
+    phones = [n for n in index.services.get("notify", {}) if n.startswith("mobile_app_")]
+    if not config.person_notify and len(people) > 1 and phones:
+        tips.append("Telefoon per persoon (Meldingen): de deurbel gaat dan alleen naar wie thuis is")
+    private = [c.entity_id for c in entities if c.domain == "camera" and index.guess_profile(c) == "off"
+               and not any(p.startswith(f"{c.entity_id}=") for p in config.camera_profiles)]
+    if private:
+        tips.append(f"Camera's die automatisch genegeerd worden (controleer bij Camera's): {_names(private)}")
+    fan = house_fan(index)
+    if fan is not None and not config.ventilation_entity:
+        tips.append(f"Centrale ventilatie: {fan.entity_id} (nu laat de agent ventileren aan je automatiseringen)")
+    helper = mode_helper(index, config)
+    if helper is not None and not config.mode_entity:
+        tips.append(f"Huismodus wordt gelezen uit {helper.entity_id}")
+    return tips
 
 
 def format_report(findings: dict[str, list[str]]) -> str:

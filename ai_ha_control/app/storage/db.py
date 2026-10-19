@@ -234,7 +234,8 @@ MIGRATIONS = {
                "escalate_at": "REAL", "escalations": "INTEGER NOT NULL DEFAULT 0", "acked": "REAL"},
     "actions": {"shadow": "INTEGER NOT NULL DEFAULT 0", "feedback": "INTEGER", "verified": "TEXT"},
     "agent_runs": {"report": "TEXT", "feedback": "INTEGER"},
-    "comfort_profiles": {"backup_entity": "TEXT NOT NULL DEFAULT ''", "backup": "TEXT NOT NULL DEFAULT '{}'"},
+    "comfort_profiles": {"backup_entity": "TEXT NOT NULL DEFAULT ''", "backup": "TEXT NOT NULL DEFAULT '{}'",
+                         "temperature_sensor": "TEXT NOT NULL DEFAULT ''", "pause_entity": "TEXT NOT NULL DEFAULT ''"},
 }
 PROFILE_JSON = ("targets", "lights", "shade_covers", "backup")
 BASELINE_MEMORY = 200  # samples per bucket before older ones start to fade
@@ -772,18 +773,21 @@ class Database:
                   json.dumps(profile.get("targets") or {}), int(profile.get("preheat_minutes") or 0),
                   json.dumps(profile.get("lights") or []), profile.get("ventilation_entity") or "",
                   json.dumps(profile.get("shade_covers") or []), int(profile.get("enabled", True)),
-                  profile.get("backup_entity") or "", json.dumps(profile.get("backup") or {}))
+                  profile.get("backup_entity") or "", json.dumps(profile.get("backup") or {}),
+                  profile.get("temperature_sensor") or "", profile.get("pause_entity") or "")
         if profile.get("id"):
             self._conn.execute(
                 "UPDATE comfort_profiles SET area = ?, climate_entity = ?, targets = ?, preheat_minutes = ?, "
-                "lights = ?, ventilation_entity = ?, shade_covers = ?, enabled = ?, backup_entity = ?, backup = ? "
+                "lights = ?, ventilation_entity = ?, shade_covers = ?, enabled = ?, backup_entity = ?, backup = ?, "
+                "temperature_sensor = ?, pause_entity = ? "
                 "WHERE id = ?",
                 (*values, int(profile["id"])))
             self._conn.commit()
             return int(profile["id"])
         return self._insert(
             "INSERT INTO comfort_profiles (area, climate_entity, targets, preheat_minutes, lights, "
-            "ventilation_entity, shade_covers, enabled, backup_entity, backup) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "ventilation_entity, shade_covers, enabled, backup_entity, backup, temperature_sensor, pause_entity) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             values)
 
     def delete_profile(self, profile_id: int) -> bool:

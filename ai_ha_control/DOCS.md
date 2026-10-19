@@ -243,7 +243,12 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 | `autonomous_scenes` | – | Scènes/scripts die de agent zelf mag starten |
 | `override_minutes` | `120` | Na een handmatige aanpassing blijft de agent zo lang van dat apparaat af |
 | `comfort` | `true` | Comfortprofielen uitvoeren |
-| `preheat_distance_km` | `15` | Voorverwarmen als iemand onderweg is en dichterbij is dan dit |
+| `preheat_distance_km` | `15` | Voorverwarmen als iemand onderweg is en dichterbij is dan dit. Een zone met "voorloop"/"thuiskomst" in de naam telt ook |
+| `outdoor_sensor` | – | Buitentemperatuursensor (cv-backup, zonwering); leeg = de weerentiteit |
+| `ventilation_entity` | – | Centrale ventilatie (fan/switch/script) die aangaat als een ruimte benauwd is. Leeg en er is een ventilatie-unit: geen raam-open-advies, je eigen automatiseringen regelen het |
+| `shade_max_wind` | `25` | Zonneschermen (awning) gaan niet uit boven deze windsnelheid (km/u) |
+| `mode_entity` | – | Eigen huismodus-helper (bijv. `input_text.actieve_scene` met afwezig/slapen/thuis/gast); leeg = zoeken op naam |
+| `presence_extra` | – | Extra entiteiten die "iemand thuis" betekenen (`on`/`home`), naast personen |
 | `leak_valve` | – | Kraan (`valve.*` of `switch.*`) die bij lekkage dicht gaat |
 | `emergency_lights` | `true` | Alle lampen aan bij rook/gas/CO |
 | `emergency_fans_off` | – | Ventilatie die bij rook uit gaat |
@@ -251,9 +256,12 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 | `digest_time` | – | Avondoverzicht van niet-dringende meldingen, bijv. `20:00` |
 | `llm_down_minutes` | `30` | Melding als de AI-server zo lang onbereikbaar is |
 | `bedtime_check` | `true` | Nachtronde: bij het slapengaan één melding met wat nog open of aan staat |
-| `appliance_alerts` | `true` | Melding als wasmachine, droger of vaatwasser klaar is (stroommeter met die naam) |
+| `appliance_alerts` | `true` | Melding als wasmachine, droger of vaatwasser klaar is (stroommeter met die naam; één per apparaat, ook als de meter per fase meet) |
+| `appliance_quiet` | – | Apparaten waarvan je eigen automatisering al meldt dat ze klaar zijn, bijv. `wasmachine` |
 | `leak_flow_hours` | `2` | Waarschuwing als een watermeter zo lang zonder pauze telt ('s nachts/weg; overdag 3×), 0 = uit |
-| `health_report` | `true` | Huisdokter: maandagochtend kapotte automatiseringen, updates en dode apparaten |
+| `health_report` | `true` | Huisdokter: maandagochtend kapotte automatiseringen, updates, dode apparaten, rookmelder-tests, dubbele entiteiten en instellingen die je kunt invullen |
+| `offline_ignore_areas` | `Server` | Ruimtes zonder offline-meldingen |
+| `offline_house_only` | `true` | Offline-meldingen alleen voor apparaten in een ruimte en sloten, camera's, thermostaten en alarm |
 | `presence_simulation` | `false` | Op vakantie 's avonds lampen aan/uit zoals het huis normaal gebruikt wordt |
 | `escalate_minutes` | `5` | Kritieke melding zonder *Gezien* na zoveel minuten opnieuw naar iedereen en omroepen (max. 3 keer, 0 = uit) |
 | `calendar_context` | `true` | Agenda in de ochtendsamenvatting; lopende afspraak met "vakantie"/"gasten" zet de huismodus |

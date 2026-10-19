@@ -129,12 +129,14 @@ async def test_ui_comfort_backup_heating(addon):
         await card.locator("details.backup select").select_option("climate.thermostaat")
         await card.locator("input[name='backup_below']").fill("-3")
         await card.locator("input[name='backup_after_minutes']").fill("45")
+        await card.locator("select[name='temperature_sensor']").select_option("sensor.woonkamer_temperatuur")
         await card.locator("button:has-text('Opslaan')").click()
         await page.wait_for_selector("text=Profiel opgeslagen")
         data = await page.evaluate("fetch('api/profiles').then(r => r.json())")
         (profile,) = data["profiles"]
         assert profile["backup_entity"] == "climate.thermostaat"
         assert profile["backup"] == {"below": -3, "after_minutes": 45}
+        assert profile["temperature_sensor"] == "sensor.woonkamer_temperatuur"
         await page.wait_for_selector("#profiles details.backup[open]")
         assert not await page.evaluate("document.documentElement.scrollWidth > window.innerWidth")
         if os.environ.get("UI_SCREENSHOT"):

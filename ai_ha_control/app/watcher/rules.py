@@ -11,6 +11,8 @@ from typing import Any
 
 from ..ha.context import DEVICE, RESIDENT
 from ..ha.index import OPENING_CLASSES, SAFETY_CLASSES, EntityInfo
+from ..house import is_car
+from ..house import label as house_label
 from ..autonomy import undo_action
 from ..notify import (
     ACTION_PREFIX_ACK,
@@ -105,6 +107,7 @@ class Watcher:
         self.baseline = None    # Baseline: learns activity patterns
         self.snapshots = None   # SnapshotStore: keeps images for incident timelines
         self.thresholds = None  # ThresholdMonitor: the user's watch rules
+        self.signals = None     # HouseSignals: tampering while armed
 
     @property
     def config(self):
@@ -200,6 +203,8 @@ class Watcher:
             anomaly = self.baseline.activity(ent, self._now())
             if anomaly:
                 await self.report_anomaly(anomaly)
+        if self.signals is not None and not self.in_grace:
+            await self.signals.on_state(ent)
         if ent.device_class in SAFETY_CLASSES:
             await self._safety_alert(ent)
         elif self._ctx.index.is_detection_sensor(ent) and not self.in_grace:
@@ -306,6 +311,14 @@ class Watcher:
             return
         label = SAFETY_LABELS.get(ent.device_class or "", "een alarm")
         where = f" in {ent.area}" if ent.area else ""
+        if ent.device_class == "safety" and not self._ctx.index.alarm_armed():
+            # A generic "unsafe" contact (e.g. an alarm system's external input) while the alarm is off: worth
+            # a warning, not a siren on every speaker. Smoke, gas, CO, heat and water stay critical.
+            if self.incidents is not None:
+                await self.incidents.report(f"safety:{ent.entity_id}", f"Melding: {label}",
+                                            f"{ent.name}{where} meldt {label}.", severity="warning",
+                                            entity_id=ent.entity_id)
+            return
         if self.agent is not None:
             self.agent.observe(f"ALARM: {ent.name}{where} detecteert {label}", urgent=True)
         if self.incidents is not None:
@@ -560,14 +573,14 @@ class Watcher:
             if not is_unsecured(ent) or not self._once(f"away:{ent.entity_id}:{left_at}"):
                 continue
             if self.agent is not None:
-                self.agent.observe(f"{ent.name} staat open terwijl niemand thuis is ({int(away_minutes)} min)")
+                self.agent.observe(f"{house_label(ent)} staat open terwijl niemand thuis is ({int(away_minutes)} min)")
             domain, service = ("lock", "lock") if ent.domain == "lock" else ("cover", "close_cover")
             args = {"domain": domain, "service": service, "entity_ids": [ent.entity_id], "data": {}}
             await queue_confirmation(
                 self._ctx,
                 "service",
                 args,
-                f"{ent.name} staat open terwijl niemand thuis is. "
+                f"{house_label(ent)} staat open terwijl niemand thuis is. "
                 f"{'Op slot doen' if domain == 'lock' else 'Sluiten'}? ({describe_service(domain, service, [ent.entity_id], {})})",
                 f"niemand is al {int(away_minutes)} minuten thuis",
             )
@@ -590,7 +603,8 @@ class Watcher:
             return ""
 
         def names(items: list[EntityInfo]) -> str:
-            listed = ", ".join(f"{e.name}" + (f" ({e.area})" if e.area else "") for e in items[:8])
+            listed = ", ".join(f"{house_label(e)}" + (f" ({e.area})" if e.area and not is_car(e) else "")
+                               for e in items[:8])
             return listed + (f" en nog {len(items) - 8}" if len(items) > 8 else "")
 
         lines = []
@@ -615,7 +629,7 @@ class Watcher:
             await queue_confirmation(
                 self._ctx, "service", {"domain": domain, "service": service, "entity_ids": [ent.entity_id],
                                        "data": {}},
-                f"{ent.name} staat nog open. {'Op slot doen' if domain == 'lock' else 'Sluiten'}? "
+                f"{house_label(ent)} staat nog open. {'Op slot doen' if domain == 'lock' else 'Sluiten'}? "
                 f"({describe_service(domain, service, [ent.entity_id], {})})", "nachtronde")
         return text
 

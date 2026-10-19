@@ -59,6 +59,11 @@ async def build_daily_summary(ctx: ToolContext, notifier: Notifier) -> str:
                                     if e["kind"] not in ("summary", "confirmation", "confirmation_result")],
         "routine_suggesties": len(ctx.db.suggestions()),
     }
+    from ..house import waste_today_tomorrow
+
+    waste = waste_today_tomorrow(ctx.index)
+    if waste:
+        data["afval"] = waste
     if ctx.config.calendar_context:
         data["agenda_vandaag"] = await agenda(ctx)
     if ctx.config.energy_context:
@@ -92,6 +97,7 @@ class Scheduler:
         self._previous_mode: str | None = None
         self.appliances = None
         self.simulation = None
+        self.signals = None
         self._agent_task: asyncio.Task | None = None
         self._llm_checked = -1e9
         self.llm_down_since: float | None = None
@@ -212,6 +218,8 @@ class Scheduler:
             await self._stage("appliances", self.appliances.tick(mode))
         if self.simulation is not None and not settling:
             await self._stage("simulation", self.simulation.tick(mode, now))
+        if self.signals is not None and not settling:
+            await self._stage("signals", self.signals.tick(now))
         if self.patrol is not None and not settling and self.patrol.due(mode):
             await self._stage("patrol", self.patrol.run())
         if self.incidents is not None:

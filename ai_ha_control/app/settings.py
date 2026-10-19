@@ -38,7 +38,14 @@ AUTONOMY_DOMAINS = [
 ]
 
 
-COMBINED = ("scene_script", "valve_switch", "fan_switch")  # entity pickers over two domains
+COMBINED = ("scene_script", "valve_switch", "fan_switch", "fan_switch_script")  # entity pickers over several domains
+# Pickers that are no plain domain: which entities they list.
+SPECIAL_PICKERS = {
+    "temperature": lambda e: e.domain == "sensor" and e.device_class == "temperature",
+    "mode_helper": lambda e: e.domain in ("input_text", "input_select"),
+    "presence": lambda e: e.domain in ("binary_sensor", "device_tracker", "input_boolean")
+    and (e.domain != "binary_sensor" or e.device_class in ("presence", "occupancy", "running")),
+}
 
 
 def _f(key: str, label: str, kind: str, help: str = "", **extra: Any) -> dict[str, Any]:
@@ -100,8 +107,17 @@ SECTIONS: list[dict[str, Any]] = [
            "Temperatuur, schemerverlichting, ventilatie en zonwering per ruimte volgens de profielen "
            "(tabblad Comfort). Volgt de autonomie-instellingen hierboven."),
         _f("preheat_distance_km", "Voorverwarmen vanaf", "number",
-           "Iemand komt naar huis (proximity-integratie) en is dichterbij dan dit.", min=1, max=100, step=1,
-           unit="km"),
+           "Iemand komt naar huis (proximity-integratie) en is dichterbij dan dit. Een zone met 'voorloop' of "
+           "'thuiskomst' in de naam telt ook.", min=1, max=100, step=1, unit="km"),
+        _f("outdoor_sensor", "Buitentemperatuur", "entity",
+           "Sensor buiten (voor cv-backup en zonwering). Leeg = de weersverwachting.", domain="temperature",
+           optional=True),
+        _f("ventilation_entity", "Centrale ventilatie", "entity",
+           "Bijv. de WTW of mechanische ventilatie: gaat aan als het in een ruimte benauwd is. Leeg en er is een "
+           "ventilatie-unit: die laat de agent aan je eigen automatiseringen over.", domain="fan_switch_script",
+           optional=True),
+        _f("shade_max_wind", "Geen zonwering boven", "number",
+           "Zonneschermen gaan niet uit bij meer wind of bij vorst.", min=0, max=150, step=1, unit="km/u"),
     ]},
     {"id": "playbooks", "title": "Noodgevallen", "icon": "🧯", "fields": [
         _f("leak_valve", "Hoofdkraan bij lekkage", "entity",
@@ -132,11 +148,17 @@ SECTIONS: list[dict[str, Any]] = [
            "Bij het slapengaan één melding met wat nog open of aan staat. Sloten en garage alleen als vraag."),
         _f("appliance_alerts", "Apparaat klaar", "toggle",
            "Melding als de wasmachine, droger of vaatwasser klaar is (via een stroommeter met die naam)."),
+        _f("appliance_quiet", "Apparaten met een eigen melding", "chips",
+           "Bijv. wasmachine of vaatwasser: je eigen automatisering meldt al dat hij klaar is.", free=True),
         _f("leak_flow_hours", "Waarschuwen als water blijft lopen na", "number",
            "Watermeter die zo lang zonder pauze telt ('s nachts en als je weg bent; overdag 3× zo lang). 0 = uit.",
            min=0, max=24, step=0.5, unit="uur"),
         _f("health_report", "Huisdokter", "toggle",
            "Maandagochtend een overzicht van kapotte automatiseringen, updates en dode apparaten (alleen als er iets is)."),
+        _f("offline_house_only", "Offline-meldingen alleen voor het huis", "toggle",
+           "Alleen apparaten in een ruimte, sloten, camera's en thermostaten. Containers en serverstatistieken niet."),
+        _f("offline_ignore_areas", "Geen offline-meldingen voor ruimtes", "chips", "Bijv. Server.", free=True,
+           suggestions="areas"),
         _f("presence_simulation", "Aanwezigheid nabootsen op vakantie", "toggle",
            "In de huismodus vakantie 's avonds lampen aan en uit zoals het huis normaal gebruikt wordt. Alleen lampen."),
         _f("escalate_minutes", "Alarm herhalen als niemand 'Gezien' drukt na", "number",
@@ -159,6 +181,11 @@ SECTIONS: list[dict[str, Any]] = [
     ]},
     {"id": "house", "title": "Huis", "icon": "🏠", "fields": [
         _f("sleep_hours", "Slaaptijden", "timerange", "Bepaalt de huismodus 'slapen'.", optional=True),
+        _f("mode_entity", "Eigen huismodus-helper", "entity",
+           "Houd je de huismodus zelf bij (bijv. input_text.actieve_scene met afwezig/slapen/thuis), dan volgt de "
+           "agent die. Leeg = zelf zoeken.", domain="mode_helper", optional=True),
+        _f("presence_extra", "Ook 'iemand thuis'", "entities",
+           "Naast personen: bijv. de Tado-aanwezigheid of een sleutelhanger-tag.", domain="presence"),
         _f("calendar_context", "Agenda gebruiken", "toggle",
            "Afspraken in de ochtendsamenvatting; een lopende afspraak met 'vakantie' of 'gasten' zet de huismodus."),
         _f("energy_context", "Energieprijzen gebruiken", "toggle",
@@ -225,7 +252,7 @@ def _coerce(spec: dict[str, Any], current: Any, value: Any) -> Any:
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ValueError("ongeldige lijst")
         items = [v.strip() for v in value if v.strip()]
-        bad = [v for v in items if not DOMAIN_RE.match(v)]
+        bad = [] if spec.get("free") else [v for v in items if not DOMAIN_RE.match(v)]
         if bad:
             raise ValueError(f"ongeldig: {', '.join(bad)}")
         return items
@@ -313,8 +340,10 @@ async def choices(index: EntityIndex, llm: OllamaClient) -> dict[str, Any]:
 
     def entities(domain: str) -> list[dict[str, str]]:
         domains = set(domain.split("_")) if domain in COMBINED else {domain}
-        return sorted(({"value": e.entity_id, "label": e.name} for e in index.entities.values()
-                       if e.domain in domains), key=lambda e: e["label"].lower())
+        pick = SPECIAL_PICKERS.get(domain, lambda e: e.domain in domains)
+        return sorted(({"value": e.entity_id, "label": e.name + (f" · {e.area}" if e.area and domain in SPECIAL_PICKERS
+                                                                  else "")}
+                       for e in index.entities.values() if pick(e)), key=lambda e: e["label"].lower())
 
     return {
         "models": await llm.models(),
@@ -322,9 +351,11 @@ async def choices(index: EntityIndex, llm: OllamaClient) -> dict[str, Any]:
                    for name in sorted(index.services.get("notify", {})) if name not in ("notify", "send_message")],
         "domains": sorted({e.domain for e in index.entities.values()} | {d for d, _ in AUTONOMY_DOMAINS}
                           | {"shell_command", "hassio", "recorder", "python_script"}),
-        "entities": {d: entities(d) for d in ("input_boolean", "tts", "media_player", "person", *COMBINED)},
+        "entities": {d: entities(d) for d in ("input_boolean", "tts", "media_player", "person", *COMBINED,
+                                              *SPECIAL_PICKERS)},
+        "areas": sorted(index.areas.values()),
         "levels": list(LEVEL_ORDER),
         "cameras": sorted(({"value": c.entity_id, "label": index.camera_label(c),
-                            "guess": "private" if index.is_backyard(c) else "door"} for c in index.cameras(limit=100)),
+                            "guess": index.camera_profile(c, [])} for c in index.cameras(limit=100)),
                           key=lambda c: c["label"].lower()),
     }
