@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..policy import Policy
     from ..storage.db import Database
     from ..autonomy import Autonomy
+    from ..ha.context import ContextTracker
     from ..watcher.incidents import IncidentManager
     from .actions import ConfirmationStore
 
@@ -41,6 +42,7 @@ class ToolContext:
     autonomy: Autonomy | None = None
     incidents: IncidentManager | None = None
     reason: str = ""  # why the autonomous agent is acting (shown with its actions)
+    contexts: ContextTracker | None = None  # who caused a state change
 
 
 Handler = Callable[..., Awaitable[Any]]

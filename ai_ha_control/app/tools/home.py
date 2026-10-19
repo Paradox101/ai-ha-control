@@ -428,7 +428,9 @@ AUTONOMOUS_AUTOMATION_TOOLS = {"list_automations", "get_automation", "related_au
 
 
 def build_registry() -> ToolRegistry:
-    return ToolRegistry(TOOLS + AUTOMATION_TOOLS + HOUSE_RULE_TOOLS)
+    from ..comfort import comfort_tools  # comfort imports the agent package, which imports tools
+
+    return ToolRegistry(TOOLS + AUTOMATION_TOOLS + HOUSE_RULE_TOOLS + comfort_tools())
 
 
 def build_autonomous_registry() -> ToolRegistry:

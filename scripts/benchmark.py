@@ -81,7 +81,7 @@ def make_context(config: Config, llm: OllamaClient, data_dir: str) -> ToolContex
     index = EntityIndex()
     index.load(STATES, AREAS, DEVICES, ENTITIES, SERVICES)
     index.location_name = "Thuis"
-    return ToolContext(config=config, ha=FakeHA(), index=index, llm=llm, policy=Policy(config),
+    return ToolContext(config=config, ha=FakeHA(), index=index, llm=llm, policy=Policy(config, index),
                        db=Database(data_dir), confirmations=ConfirmationStore(), timezone="Europe/Amsterdam")
 
 

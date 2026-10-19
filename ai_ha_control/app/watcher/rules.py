@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
+from ..ha.context import DEVICE, RESIDENT
 from ..ha.index import OPENING_CLASSES, SAFETY_CLASSES, EntityInfo
 from ..autonomy import undo_action
 from ..notify import (
@@ -19,8 +20,9 @@ from ..notify import (
     ACTION_PREFIX_UNDO,
     Notifier,
 )
-from ..tools.actions import describe_service, queue_confirmation, resolve_confirmation
+from ..tools.actions import describe_service, execute, queue_confirmation, resolve_confirmation
 from ..tools.base import ToolContext
+from .baseline import MODE_AWAY, MODE_SLEEP, MODE_VACATION, house_mode
 from .vision import QUIET_CATEGORIES, SUSPICIOUS, UNKNOWN, classify
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +38,17 @@ SAFETY_LABELS = {
 # After (re)connecting, Home Assistant may still be starting: entities, areas and states settle over
 # a minute or two and sensors flip on. Ignore detections and periodic rules during that time.
 STARTUP_GRACE_SECONDS = 120
+# Devices a resident controls; a manual change keeps the agent's hands off them for a while.
+COMFORT_DOMAINS = {"light", "climate", "cover", "fan", "media_player", "switch", "humidifier", "water_heater"}
+REVERSAL_SECONDS = 1800   # a resident changing an entity within this time after the agent did = "undo"
+ARRIVAL_GRACE = 600       # a door opening this soon after someone came home is not an intrusion
+ARMED = ("armed_away", "armed_home", "armed_night", "armed_vacation", "armed_custom_bypass")
+
+
+def quote(text: str, limit: int = 200) -> str:
+    """Camera descriptions are data for the agent, never instructions: mark and shorten them."""
+    text = " ".join((text or "").split())
+    return f"«{text[:limit]}{'…' if len(text) > limit else ''}»"
 
 
 def minutes_since(iso: str | None) -> float:
@@ -79,6 +92,7 @@ class Watcher:
         self._done: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
         self._grace_until = 0.0
+        self._last_arrival = 0.0
         # Optional collaborators, wired up by the app (tests may leave them out).
         self.agent = None       # AutonomousAgent: receives observations
         self.incidents = None   # IncidentManager: groups notifications into incidents
@@ -138,20 +152,34 @@ class Watcher:
     # --- Event driven rules ------------------------------------------------------
 
     async def handle_state_changed(self, data: dict[str, Any]) -> None:
-        if not self.config.proactive:
-            return
         new, old = data.get("new_state"), data.get("old_state")
-        if not new or not old or new.get("state") == old.get("state"):
+        if not new or not old or old.get("state") in ("unavailable", "unknown"):
             return
-        if old.get("state") in ("unavailable", "unknown"):
+        setpoint = (new.get("attributes") or {}).get("temperature")
+        setpoint_changed = (new["entity_id"].startswith("climate.")
+                            and setpoint != (old.get("attributes") or {}).get("temperature"))
+        if new.get("state") == old.get("state") and not setpoint_changed:
             return
         ent = self._ctx.index.get(new["entity_id"])
         if ent is None:
             return
+        contexts = self._ctx.contexts
+        origin, label = contexts.classify(new.get("context")) if contexts else (DEVICE, "")
+        if not self.in_grace:
+            await self._note_manual(ent, origin, old, new, setpoint_changed)
+        if ent.domain == "person":
+            self._note_arrival(ent, old.get("state"), new.get("state"))
+        if not self.config.proactive or new.get("state") == old.get("state"):
+            return
         if self.agent is not None and not self.in_grace:
-            self.agent.note_state_change(ent, old.get("state"), new.get("state"))
+            self.agent.note_state_change(ent, old.get("state"), new.get("state"), origin, label)
+        if ent.domain == "alarm_control_panel" and new.get("state") == "triggered":
+            await self._alarm_triggered(ent)
+            return
         if ent.domain != "binary_sensor" or ent.state != "on":
             return
+        if ent.device_class in OPENING_CLASSES and not self.in_grace:
+            await self._opening_while_away(ent)
         if self.baseline is not None and not self.in_grace:
             anomaly = self.baseline.activity(ent, self._now())
             if anomaly:
@@ -160,6 +188,94 @@ class Watcher:
             await self._safety_alert(ent)
         elif self._ctx.index.is_detection_sensor(ent) and not self.in_grace:
             self._spawn(self._detection(ent))
+
+    # --- Who did it: manual overrides and arrivals --------------------------------------
+
+    async def _note_manual(self, ent: EntityInfo, origin: str, old: dict, new: dict, setpoint_changed: bool) -> None:
+        """A resident (or the device itself) changed something: the agent backs off from it for a while."""
+        if origin not in (RESIDENT, DEVICE) or ent.domain not in COMFORT_DOMAINS:
+            return
+        db, now = self._ctx.db, time.time()
+        mode = house_mode(self._ctx.index, self.config, self._now())
+        if ent.domain == "climate" and setpoint_changed and origin == RESIDENT:
+            setpoint = (new.get("attributes") or {}).get("temperature")
+            db.add_manual_change(ent.entity_id, mode, float(setpoint) if setpoint is not None else None)
+        db.set_override(ent.entity_id, now + self.config.override_minutes * 60, f"aangepast door {origin}")
+        action = db.last_action_on(ent.entity_id, now - REVERSAL_SECONDS)
+        if action and not action["shadow"]:
+            db.set_action_feedback(action["id"], -1)
+            if self.agent is not None:
+                self.agent.observe(f"De bewoner heeft je actie {action['domain']}.{action['service']} op {ent.name} "
+                                   f"zelf teruggedraaid of aangepast; laat {ent.name} voorlopig met rust.")
+
+    def _note_arrival(self, ent: EntityInfo, old: str | None, new: str | None) -> None:
+        """First person home after everyone was away: remember the time (for preheating)."""
+        if new != "home" or old == "home":
+            return
+        self._last_arrival = time.monotonic()
+        others = [p for p in self._ctx.index.entities.values()
+                  if p.domain == "person" and p.entity_id != ent.entity_id]
+        if any(p.state == "home" for p in others):
+            return
+        now = self._now()
+        self._ctx.db.add_arrival(now.weekday(), now.hour * 60 + now.minute)
+
+    # --- Security rules (no LLM in the loop) ---------------------------------------------
+
+    def _alarm_armed(self) -> bool:
+        return any(e.domain == "alarm_control_panel" and e.state in ARMED for e in self._ctx.index.entities.values())
+
+    async def _opening_while_away(self, ent: EntityInfo) -> None:
+        """A door or window opens while nobody should be there: report at once, don't wait for the heartbeat."""
+        mode = house_mode(self._ctx.index, self.config, self._now())
+        armed = self._alarm_armed()
+        if not armed and mode not in (MODE_AWAY, MODE_VACATION, MODE_SLEEP):
+            return
+        if time.monotonic() - self._last_arrival < ARRIVAL_GRACE and not armed:
+            return  # someone just came home
+        if mode == MODE_SLEEP and not armed and ent.device_class == "window":
+            return  # windows open at night for fresh air
+        if not self._allowed(f"intrusion:{ent.entity_id}", 300):
+            return
+        night = mode == MODE_SLEEP and not armed
+        ref = f"anomaly:{ent.entity_id}:sleep-open" if night else None  # 👎 = "this is normal at night"
+        if ref and self._ctx.db.is_muted(ref):
+            return
+        where = f" ({ent.area})" if ent.area else ""
+        why = "het alarm staat aan" if armed else ("iedereen slaapt" if night else "niemand is thuis")
+        text = f"{ent.name}{where} ging open terwijl {why}."
+        if self.agent is not None:
+            self.agent.observe(f"BEVEILIGING: {text}", urgent=True)
+        camera = self._ctx.index.camera_for(ent)
+        snapshot = None
+        if camera is not None and self.snapshots is not None:
+            try:
+                snapshot = self.snapshots.save(camera.entity_id, await self._ctx.ha.camera_snapshot(camera.entity_id))
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Snapshot for %s failed: %s", ent.entity_id, err)
+        severity = "warning" if night else "critical"
+        if self.incidents is not None:
+            await self.incidents.report(
+                "security", "Mogelijke inbraak" if not night else "Deur open in de nacht", text, severity=severity,
+                entity_id=ent.entity_id, snapshot=snapshot, image_entity=camera.entity_id if camera else None,
+                critical=not night, respect_quiet_hours=False, correlate_seconds=900, ref=ref)
+            return
+        await self._notifier.send("🚨 Mogelijke inbraak", text, kind="security", entity_id=ent.entity_id,
+                                  image_entity=camera.entity_id if camera else None, critical=not night,
+                                  respect_quiet_hours=False, ref=ref)
+
+    async def _alarm_triggered(self, ent: EntityInfo) -> None:
+        if not self._allowed(f"alarm:{ent.entity_id}", 600):
+            return
+        text = f"{ent.name}: het alarm is afgegaan!"
+        if self.agent is not None:
+            self.agent.observe(f"ALARM: {text}", urgent=True)
+        if self.incidents is not None:
+            await self.incidents.report("security", "Alarm afgegaan", text, severity="critical",
+                                        entity_id=ent.entity_id, critical=True, announce=text)
+            return
+        await self._notifier.send("🚨 Alarm afgegaan", text, kind="security", entity_id=ent.entity_id, critical=True,
+                                  announce=text)
 
     async def report_anomaly(self, anomaly) -> None:
         """Something outside the learned normal: one incident (👎 = 'this is normal') and tell the agent."""
@@ -182,7 +298,11 @@ class Watcher:
                 severity="critical", entity_id=ent.entity_id, critical=True,
                 announce=f"Let op! {ent.name}{where} detecteert {label}.",
             )
-            return
+        else:
+            await self._send_safety(ent, label, where)
+        await self._playbook(ent)
+
+    async def _send_safety(self, ent: EntityInfo, label: str, where: str) -> None:
         await self._notifier.send(
             f"⚠️ Alarm: {label}",
             f"{ent.name}{where} detecteert {label}!",
@@ -191,6 +311,42 @@ class Watcher:
             critical=True,
             announce=f"Let op! {ent.name}{where} detecteert {label}.",
         )
+
+    async def _playbook(self, ent: EntityInfo) -> list[str]:
+        """Steps the user approved in advance for emergencies. Never doors or the alarm."""
+        from ..security import is_security_entity
+
+        config, index = self.config, self._ctx.index
+        if self._ctx.autonomy is not None and not self._ctx.autonomy.enabled:
+            return []
+        steps: list[tuple[str, str, list[str], dict]] = []
+        if ent.device_class == "moisture" and config.leak_valve:
+            domain = config.leak_valve.split(".", 1)[0]
+            steps.append(("valve", "close_valve", [config.leak_valve], {}) if domain == "valve"
+                         else (domain, "turn_off", [config.leak_valve], {}))
+        if ent.device_class in ("smoke", "gas", "carbon_monoxide", "heat"):
+            if config.emergency_lights:
+                lights = [e.entity_id for e in index.entities.values() if e.domain == "light" and e.state == "off"]
+                if lights:
+                    steps.append(("light", "turn_on", lights, {}))
+            for fan in config.emergency_fans_off:
+                steps.append((fan.split(".", 1)[0], "turn_off", [fan], {}))
+        done = []
+        ctx = replace(self._ctx, source="playbook", reason=f"draaiboek: {ent.name} detecteert "
+                      f"{SAFETY_LABELS.get(ent.device_class or '', 'een alarm')}")
+        for domain, service, entity_ids, data in steps:
+            entity_ids = [e for e in entity_ids if not is_security_entity(index, e)]
+            if not entity_ids:
+                continue
+            previous = ctx.autonomy.snapshot(entity_ids) if ctx.autonomy else {}
+            result = await execute(ctx, domain, service, entity_ids, data)
+            if result.get("status") == "ok":
+                action_id = ctx.db.add_action(domain, service, entity_ids, data, previous, ctx.reason)
+                description = describe_service(domain, service, entity_ids, data)
+                done.append(description)
+                if ctx.notifier is not None:
+                    await ctx.notifier.action_done(action_id, description, ctx.reason)
+        return done
 
     async def _detection(self, ent: EntityInfo) -> None:
         mode = self.config.camera_alerts
@@ -238,7 +394,7 @@ class Watcher:
         message = description or f"{ent.name} ging af.{failure}"
         severity = "warning" if category in (SUSPICIOUS, UNKNOWN) else "info"
         if self.agent is not None and not doorbell:
-            self.agent.observe(f"{title.lstrip('📷 ')} ({ent.name}): {message}", urgent=True)
+            self.agent.observe(f"{title.lstrip('📷 ')} ({ent.name}): {quote(message)}", urgent=True)
         if self.incidents is not None:
             await self.incidents.report(
                 "doorbell" if doorbell else "presence",
@@ -269,7 +425,7 @@ class Watcher:
                 return
         for prefix, approve in ((ACTION_PREFIX_CONFIRM, True), (ACTION_PREFIX_REJECT, False)):
             if action.startswith(prefix):
-                result = await resolve_confirmation(self._ctx, action[len(prefix):], approve)
+                result = await resolve_confirmation(self._ctx, action[len(prefix):], approve, via="phone")
                 status = result.get("status")
                 text = {
                     "ok": "✅ Uitgevoerd",

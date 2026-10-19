@@ -43,7 +43,10 @@ class AIHAConversationEntity(ConversationEntity):
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
         conversation_id = user_input.conversation_id or ulid.ulid_now()
         try:
-            result = await self._entry.runtime_data.converse(user_input.text, conversation_id, user_input.language)
+            user_id = user_input.context.user_id if user_input.context else None
+            result = await self._entry.runtime_data.converse(
+                user_input.text, conversation_id, user_input.language, user_id
+            )
             speech = result.get("speech") or "…"
         except AIHAError as err:
             speech = f"Sorry, de AI is niet bereikbaar ({err})."

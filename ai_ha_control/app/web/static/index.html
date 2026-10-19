@@ -185,6 +185,7 @@
     <button data-tab="incidents">🚨 Incidenten<span id="incident-badge" class="badge bad hidden"></span></button>
     <button data-tab="agent">🤖 Agent</button>
     <button data-tab="events">🔔 Meldingen</button>
+    <button data-tab="comfort">🌡️ Comfort<span id="comfort-badge" class="badge hidden"></span></button>
     <button data-tab="rules">📜 Huisregels</button>
     <button data-tab="routines">💡 Routines<span id="routine-badge" class="badge hidden"></span></button>
     <button data-tab="memory">🧠 Geheugen</button>
@@ -217,13 +218,25 @@
     </div>
     <div class="row"><button class="btn" id="agent-run">🔍 Nu controleren</button>
       <span class="meta grow" id="agent-run-out"></span></div>
-    <h2>Zelf gedaan</h2><div id="agent-actions"></div>
+    <div class="meta" id="agent-health"></div>
+    <h2>Zelf gedaan</h2><div id="agent-shadow"></div><div id="agent-actions"></div>
+    <h2>Handmatig aangepast (agent blijft eraf)</h2><div id="agent-overrides"></div>
     <h2>Gepland om te controleren</h2><div id="agent-followups"></div>
     <h2>Logboek van de agent</h2><div id="agent-runs"></div>
     <h2>Gedempt ("dit is normaal")</h2><div id="agent-mutes"></div>
   </section>
 
   <section id="tab-events" class="hidden"><div id="events"></div></section>
+
+  <section id="tab-comfort" class="hidden">
+    <p class="meta">Per ruimte wat je wilt; de agent regelt het zelf volgens de autonomie-instellingen (verwarming,
+      verlichting, ventilatie, zonwering). Pas je iets met de hand aan, dan blijft hij er een tijd vanaf.
+      Je kunt het ook in de chat zeggen, bijv. "'s nachts wil ik 17 graden in de slaapkamer".</p>
+    <div id="comfort-off" class="card hidden">Comfortprofielen staan uit bij Instellingen → Comfort.</div>
+    <div id="comfort-suggestions"></div>
+    <div id="profiles"></div>
+    <div class="row"><button class="btn primary" id="profile-add" type="button">➕ Ruimte toevoegen</button></div>
+  </section>
 
   <section id="tab-rules" class="hidden">
     <p class="meta">Regels in gewone taal waar de autonome agent zich bij elke controle aan houdt.</p>
@@ -349,6 +362,7 @@
     const box = el("div", "confirm"); box.id = "p-" + p.id;
     box.appendChild(el("div", "", "⚠️ Bevestiging nodig: " + p.description));
     box.appendChild(el("div", "meta", p.reason));
+    if (p.sensitive) box.appendChild(el("div", "meta", "🔒 Deuren en alarm: alleen hier of op je telefoon te bevestigen, niet via spraak."));
     const row = el("div", "row");
     const decide = async decision => {
       row.querySelectorAll("button").forEach(b => b.disabled = true);
@@ -482,15 +496,34 @@
     ks.disabled = !a.enabled || !a.kill_switch.entity_id || a.kill_switch.state === null;
     ks.parentElement.title = a.kill_switch.entity_id ? `Zelf handelen (${a.kill_switch.entity_id})` : "Geen noodknop ingesteld";
 
+    const h = a.health || {};
+    $("agent-health").textContent = h.last_tick ? `Laatste ronde ${h.last_tick.slice(11, 16)}`
+      + (h.last_agent_run ? ` · laatste hartslag ${h.last_agent_run.slice(11, 16)}` : "")
+      + ` · AI-server ${h.ollama === "ok" ? "bereikbaar" : "⚠️ onbereikbaar"}` : "";
+    const sh = $("agent-shadow"); sh.replaceChildren();
+    for (const d of a.shadow || []) {
+      sh.appendChild(el("div", "card", `🕶️ Schaduwmodus ${d.domain}: ${d.total} keer zou hij iets doen · `
+        + `👍 ${d.good || 0} · 👎 ${d.bad || 0}. Beoordeel hieronder; tevreden? Zet het domein op 'Zelf doen'.`));
+    }
     const acts = $("agent-actions"); acts.replaceChildren();
     if (!a.actions.length) empty(acts, "De agent heeft nog niets zelf gedaan.");
     for (const x of a.actions) {
       const c = el("div", "card spread");
       const info = el("div", "grow");
-      info.append(el("div", "", `${x.domain}.${x.service} → ${x.entity_ids.join(", ")}`),
-                  el("div", "meta", `${fmt(x.ts)}${x.reason ? " · " + x.reason : ""}`));
+      info.append(el("div", "", `${x.domain}.${x.service} → ${x.entity_ids.join(", ")}`
+                     + (x.data && Object.keys(x.data).length ? " " + JSON.stringify(x.data) : "")),
+                  el("div", "meta", `${fmt(x.ts)}${x.reason ? " · " + x.reason : ""}`
+                     + (x.verified === "failed" ? " · ⚠️ apparaat reageerde niet" : "")));
       c.appendChild(info);
-      if (x.undone) c.appendChild(el("span", "tag", "teruggedraaid"));
+      if (x.shadow) {
+        c.appendChild(el("span", "tag", "schaduw"));
+        for (const [value, label] of [[1, "👍"], [-1, "👎"]]) {
+          const b = btn(label, "small" + (x.feedback === value ? " primary" : ""), async () => {
+            await post(`api/actions/${x.id}/feedback`, { value }); refreshAgent();
+          });
+          b.title = value > 0 ? "Goed besluit" : "Had hij niet moeten doen"; c.appendChild(b);
+        }
+      } else if (x.undone) c.appendChild(el("span", "tag", "teruggedraaid"));
       else c.appendChild(btn("↩️ Ongedaan maken", "small", async ev => {
         ev.target.disabled = true;
         try { const r = await post(`api/actions/${x.id}/undo`); toast(r.status === "ok" ? "Teruggedraaid" : r.message || r.status); }
@@ -498,6 +531,15 @@
         refreshAgent();
       }));
       acts.appendChild(c);
+    }
+    const ov = $("agent-overrides"); ov.replaceChildren();
+    if (!(a.overrides || []).length) empty(ov, "Niets. Zet je zelf een lamp of de thermostaat anders, dan blijft de agent daar een tijd vanaf.");
+    for (const o of a.overrides || []) {
+      const c = el("div", "card spread");
+      c.append(el("div", "grow", `${o.name} · tot ${fmtTime(o.until)}`), btn("Agent mag weer", "small", async () => {
+        await del(`api/overrides/${encodeURIComponent(o.entity_id)}`); refreshAgent();
+      }));
+      ov.appendChild(c);
     }
     const fu = $("agent-followups"); fu.replaceChildren();
     if (!a.followups.length) empty(fu, "Niets gepland.");
@@ -508,7 +550,15 @@
     for (const r of a.runs) {
       const c = el("div", "card");
       c.append(el("div", "meta", `${fmt(r.ts)} · ${r.trigger}`), el("div", "", r.summary));
-      if (r.tools.length) { const row = el("div", "row"); r.tools.forEach(t => row.appendChild(el("span", "tag", t))); c.appendChild(row); }
+      const row = el("div", "row"); r.tools.forEach(t => row.appendChild(el("span", "tag", t)));
+      if (r.report) for (const [value, label] of [[1, "👍"], [-1, "👎"]]) {
+        const b = btn(label, "small" + (r.feedback === value ? " primary" : ""), async () => {
+          await post(`api/runs/${r.id}/feedback`, { value }); refreshAgent();
+        });
+        b.title = value > 0 ? "Goede beslissing" : "Verkeerde beslissing (wordt gebruikt om modellen te vergelijken)";
+        row.appendChild(b);
+      }
+      if (row.children.length) c.appendChild(row);
       runs.appendChild(c);
     }
     const mutes = $("agent-mutes"); mutes.replaceChildren();
@@ -533,6 +583,109 @@
     try { $("agent-run-out").textContent = (await post("api/agent/run")).summary; }
     catch (e) { $("agent-run-out").textContent = "❌ " + e.message; }
     finally { $("agent-run").disabled = false; refreshAgent(); }
+  };
+
+  /* ---------------- Comfort ---------------- */
+  const PROFILE_MODES = [["thuis", "🏠 Thuis"], ["slapen", "🌙 Slapen"], ["weg", "🚪 Weg"], ["vakantie", "🧳 Vakantie"]];
+  let comfortData = null, comfortEntities = null;
+  async function loadComfortEntities() {
+    const get = d => api(`api/entities?domain=${d}&limit=500&format=pick`);
+    const [climate, light, fans, covers] = await Promise.all([get("climate"), get("light"), get("fan,switch"), get("cover")]);
+    comfortEntities = { climate, light, fans, covers };
+  }
+  function entitySelect(list, value, onchange) {
+    const s = el("select"); s.appendChild(new Option("(geen)", ""));
+    list.forEach(x => s.appendChild(new Option(`${x.name}${x.area ? " · " + x.area : ""}`, x.id)));
+    if (value && !list.some(x => x.id === value)) s.appendChild(new Option(value, value));
+    s.value = value || ""; s.onchange = () => onchange(s.value); return s;
+  }
+  function entityChecks(list, chosen, area, onchange) {
+    const set = new Set(chosen || []);
+    const ordered = [...list].sort((a, b) => (b.area === area) - (a.area === area) || a.name.localeCompare(b.name));
+    const box = el("div", "checklist");
+    for (const x of ordered) {
+      const l = el("label"); const c = el("input"); c.type = "checkbox"; c.checked = set.has(x.id);
+      c.onchange = () => { c.checked ? set.add(x.id) : set.delete(x.id); onchange([...set]); };
+      l.append(c, el("span", "", `${x.name}${x.area ? " · " + x.area : ""}`)); box.appendChild(l);
+    }
+    return box;
+  }
+  function profileCard(p) {
+    const draftP = structuredClone(p);
+    const card = el("div", "card");
+    const head = el("div", "row spread");
+    const area = el("select");
+    (comfortData.areas || []).forEach(a => area.appendChild(new Option(a, a)));
+    if (draftP.area && !(comfortData.areas || []).includes(draftP.area)) area.appendChild(new Option(draftP.area, draftP.area));
+    area.value = draftP.area || ""; area.onchange = () => { draftP.area = area.value; };
+    const enabled = el("label", "switch"); const ei = el("input"); ei.type = "checkbox"; ei.checked = draftP.enabled !== false;
+    ei.setAttribute("aria-label", "Profiel actief"); ei.onchange = () => { draftP.enabled = ei.checked; }; enabled.append(ei, el("span"));
+    head.append(area, enabled); card.appendChild(head);
+    const grid = el("div", "autonomy-grid"); grid.style.marginTop = "10px";
+    grid.append(el("div", "", "Thermostaat"), entitySelect(comfortEntities.climate, draftP.climate_entity, v => { draftP.climate_entity = v; }));
+    draftP.targets = draftP.targets || {};
+    for (const [mode, label] of PROFILE_MODES) {
+      const wrap = el("div", "unit"); const i = el("input"); i.type = "number"; i.min = 5; i.max = 30; i.step = 0.5;
+      i.value = draftP.targets[mode] ?? ""; i.placeholder = "—";
+      i.oninput = () => { if (i.value === "") delete draftP.targets[mode]; else draftP.targets[mode] = Number(i.value); };
+      wrap.append(i, el("span", "meta", "°C")); grid.append(el("div", "", label), wrap);
+    }
+    const ph = el("div", "unit"); const pi = el("input"); pi.type = "number"; pi.min = 0; pi.max = 240; pi.step = 5;
+    pi.value = draftP.preheat_minutes || 0; pi.oninput = () => { draftP.preheat_minutes = Number(pi.value || 0); };
+    ph.append(pi, el("span", "meta", "min voor thuiskomst"));
+    grid.append(el("div", "", "Voorverwarmen"), ph);
+    grid.append(el("div", "", "Ventilatie"), entitySelect(comfortEntities.fans, draftP.ventilation_entity, v => { draftP.ventilation_entity = v; }));
+    card.appendChild(grid);
+    const more = el("details"); more.appendChild(el("summary", "", "Lampen bij schemer en zonwering"));
+    more.append(el("div", "meta", "Lampen die aangaan als de zon ondergaat en er iemand thuis is:"),
+                entityChecks(comfortEntities.light, draftP.lights, draftP.area, v => { draftP.lights = v; }),
+                el("div", "meta", `Zonwering die op ${30}% gaat bij felle zon en warm weer:`),
+                entityChecks(comfortEntities.covers, draftP.shade_covers, draftP.area, v => { draftP.shade_covers = v; }));
+    card.appendChild(more);
+    const row = el("div", "row");
+    row.append(btn("Opslaan", "primary small", async ev => {
+      ev.target.disabled = true;
+      try { renderComfort(await post("api/profiles", draftP)); toast("Profiel opgeslagen"); }
+      catch (e) { toast("❌ " + e.message); ev.target.disabled = false; }
+    }));
+    if (p.id) row.append(btn("Verwijderen", "small", async () => {
+      if (!confirm(`Profiel ${p.area} verwijderen?`)) return;
+      renderComfort(await del(`api/profiles/${p.id}`));
+    }));
+    card.appendChild(row);
+    return card;
+  }
+  function renderComfort(data) {
+    comfortData = data;
+    $("comfort-off").classList.toggle("hidden", data.enabled);
+    const badge = $("comfort-badge"); badge.textContent = data.suggestions.length || "";
+    badge.classList.toggle("hidden", !data.suggestions.length);
+    const sug = $("comfort-suggestions"); sug.replaceChildren();
+    for (const x of data.suggestions) {
+      const c = el("div", "card spread");
+      c.append(el("div", "grow", `💡 ${x.area}: je zet de verwarming bij '${x.mode}' ${x.count}× met de hand op ${x.value} °C`
+        + (x.current != null ? ` (profiel: ${x.current} °C)` : "") + ". Overnemen?"),
+        btn("Overnemen", "primary small", async () => {
+          const p = data.profiles.find(q => q.id === x.profile_id);
+          renderComfort(await post("api/profiles", { ...p, targets: { ...p.targets, [x.mode]: x.value } }));
+          toast("Profiel aangepast");
+        }));
+      sug.appendChild(c);
+    }
+    const box = $("profiles"); box.replaceChildren();
+    if (!data.profiles.length) empty(box, "Nog geen profielen. Voeg een ruimte toe of vertel het in de chat.");
+    data.profiles.forEach(p => box.appendChild(profileCard(p)));
+  }
+  async function refreshComfort() {
+    if (!comfortEntities) await loadComfortEntities();
+    renderComfort(await api("api/profiles"));
+  }
+  $("profile-add").onclick = () => {
+    if (!comfortData) return;
+    const used = new Set(comfortData.profiles.map(p => p.area));
+    const area = (comfortData.areas || []).find(a => !used.has(a)) || "";
+    $("profiles").querySelector(".empty")?.remove();
+    $("profiles").appendChild(profileCard({ area, targets: {}, lights: [], shade_covers: [], enabled: true }));
   };
 
   /* ---------------- Events ---------------- */
@@ -653,7 +806,7 @@
   };
 
   /* ---------------- Settings ---------------- */
-  const LEVELS = [["observe", "👀 Kijken"], ["ask", "❓ Vragen"], ["act", "✅ Zelf doen"]];
+  const LEVELS = [["observe", "👀 Kijken"], ["shadow", "🕶️ Schaduw"], ["ask", "❓ Vragen"], ["act", "✅ Zelf doen"]];
   let settings = null, original = {}, draft = {}, fieldEls = {};
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const changedKeys = () => Object.keys(draft).filter(k => !same(draft[k], original[k]));
@@ -773,6 +926,20 @@
       }
       return box;
     },
+    people(spec, v, set) {
+      const persons = (settings.choices.entities || {}).person || [];
+      if (!persons.length) return el("div", "meta", "Geen personen gevonden in Home Assistant.");
+      const map = Object.fromEntries((v || []).map(x => x.split("=")));
+      const grid = el("div", "autonomy-grid");
+      const emit = () => set(Object.entries(map).filter(([, s]) => s).map(([p, s]) => `${p}=${s}`));
+      for (const p of persons) {
+        const s = el("select"); s.appendChild(new Option("(geen)", ""));
+        (settings.choices.notify || []).forEach(x => s.appendChild(new Option(x.label, x.value)));
+        s.value = map[p.value] || ""; s.onchange = () => { map[p.value] = s.value; emit(); };
+        grid.append(el("div", "", p.label), s);
+      }
+      return grid;
+    },
     chips(spec, v, set) {
       const box = el("div", "chips"); const items = [...(v || [])];
       const input = el("input"); input.placeholder = "Typ en druk op Enter";
@@ -819,8 +986,10 @@
     autonomy(spec, v, set) {
       const levels = Object.fromEntries((v || []).map(x => x.split("=")));
       const grid = el("div", "autonomy-grid");
+      const capped = spec.capped || {};
       for (const [domain, label] of spec.domains) {
-        grid.append(el("div", "", label), segmented(LEVELS, levels[domain] || "ask", lvl => {
+        const options = capped[domain] ? LEVELS.slice(0, LEVELS.findIndex(l => l[0] === capped[domain]) + 1) : LEVELS;
+        grid.append(el("div", "", label + (capped[domain] ? " 🔒" : "")), segmented(options, levels[domain] || "ask", lvl => {
           levels[domain] = lvl; set(Object.entries(levels).map(([d, l]) => `${d}=${l}`));
         }));
       }
@@ -880,6 +1049,7 @@
 
   /* ---------------- Navigation ---------------- */
   const loaders = { incidents: refreshIncidents, agent: refreshAgent, events: refreshEvents, rules: renderRules,
+                    comfort: refreshComfort,
                     routines: refreshRoutines, memory: refreshMemories, log: refreshLog, settings: loadSettings, pair: refreshPair };
   let currentTab = "chat";
   function showTab(tab) {

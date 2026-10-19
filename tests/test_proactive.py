@@ -41,6 +41,7 @@ def test_quiet_hours():
 
 async def test_safety_alert_is_critical(ctx, notifier):
     ctx.config.notify_service = "notify.mobile_app_telefoon"
+    ctx.config.emergency_lights = False
     watcher = Watcher(ctx, notifier)
     await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.rookmelder_zolder"))
     (domain, service, data, _), = pushes(ctx)
@@ -177,6 +178,7 @@ async def test_one_notification_per_device(ctx, notifier):
 
 async def test_startup_grace_ignores_detections_and_ticks(ctx, notifier):
     ctx.config.camera_alerts = "always"
+    ctx.config.emergency_lights = False
     watcher = Watcher(ctx, notifier)
     watcher.start_grace()
     await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.voordeur_visitor"))

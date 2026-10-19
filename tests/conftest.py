@@ -124,6 +124,17 @@ class FakeLLM:
         return "Er staat een pakketje voor de deur."
 
 
+@pytest.fixture(autouse=True)
+async def no_background_verification(monkeypatch):
+    """Autonomous actions are verified ~45 s later; in tests that check is run explicitly."""
+    from app.tools import actions
+
+    monkeypatch.setattr(actions, "VERIFY_DELAY", 3600.0)
+    yield
+    for task in list(actions._background):
+        task.cancel()
+
+
 @pytest.fixture
 def index() -> EntityIndex:
     idx = EntityIndex()
@@ -143,7 +154,7 @@ def ctx(config, index) -> ToolContext:
         ha=FakeHA(),
         index=index,
         llm=FakeLLM(),
-        policy=Policy(config),
+        policy=Policy(config, index),
         db=Database(config.data_dir),
         confirmations=ConfirmationStore(),
         conversation_id="test",

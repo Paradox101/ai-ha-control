@@ -137,9 +137,31 @@ async def test_voice_yes_confirms_pending(ctx, notifier):
     # From Assist the confirmation is also pushed to the phone
     assert any(c[0] == "notify" for c in ctx.ha.calls)
     second = await agent.run("Ja", "voice1", source="assist")
-    assert second.answer.startswith("Gedaan")
-    assert ("lock", "unlock", {}, {"entity_id": ["lock.voordeur"]}) in ctx.ha.calls
+    # Anyone near a speaker can say "ja": a door is only confirmed on the phone or in the web UI
+    assert second.answer.startswith("Niet uitgevoerd") and "telefoon" in second.answer
+    assert ("lock", "unlock", {}, {"entity_id": ["lock.voordeur"]}) not in ctx.ha.calls
     assert len(ctx.llm.requests) == 2  # "ja" handled without the LLM
+    pending = ctx.confirmations.list("voice1")
+    assert len(pending) == 1 and pending[0].sensitive
+    result = await resolve_confirmation(ctx, pending[0].id, True, via="phone")
+    assert result["status"] == "ok"
+    assert ("lock", "unlock", {}, {"entity_id": ["lock.voordeur"]}) in ctx.ha.calls
+
+
+async def test_voice_yes_confirms_non_security_action(ctx, notifier):
+    ctx.index.update_state({"entity_id": "cover.rolluik_woonkamer", "state": "open",
+                            "attributes": {"friendly_name": "Rolluik woonkamer", "device_class": "shutter"}})
+    ctx.llm = FakeLLM([
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {
+            "name": "call_service",
+            "arguments": {"domain": "cover", "service": "close_cover", "entity_ids": ["cover.rolluik_woonkamer"]}}}]},
+        {"role": "assistant", "content": "Zal ik het rolluik sluiten? Zeg ja."},
+    ])
+    agent = Agent(ctx, registry)
+    await agent.run("Doe het rolluik dicht", "voice2", source="assist")
+    second = await agent.run("Ja", "voice2", source="assist")
+    assert second.answer.startswith("Gedaan")
+    assert ("cover", "close_cover", {}, {"entity_id": ["cover.rolluik_woonkamer"]}) in ctx.ha.calls
 
 
 async def test_recent_events_tool(ctx, notifier):

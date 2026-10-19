@@ -131,6 +131,52 @@ CREATE TABLE IF NOT EXISTS mutes (
     ts REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS overrides (
+    entity_id TEXT PRIMARY KEY,
+    ts REAL NOT NULL,
+    until REAL NOT NULL,
+    note TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS manual_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    entity_id TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    value REAL
+);
+CREATE INDEX IF NOT EXISTS idx_manual_changes ON manual_changes(entity_id, ts);
+
+CREATE TABLE IF NOT EXISTS confirmations (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    description TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    conversation_id TEXT,
+    created REAL NOT NULL,
+    sensitive INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS arrivals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    weekday INTEGER NOT NULL,
+    minute INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS comfort_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    area TEXT NOT NULL,
+    climate_entity TEXT NOT NULL DEFAULT '',
+    targets TEXT NOT NULL DEFAULT '{}',
+    preheat_minutes INTEGER NOT NULL DEFAULT 0,
+    lights TEXT NOT NULL DEFAULT '[]',
+    ventilation_entity TEXT NOT NULL DEFAULT '',
+    shade_covers TEXT NOT NULL DEFAULT '[]',
+    enabled INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS agent_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
@@ -143,7 +189,11 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 # Columns added after the first release; ALTER TABLE for existing databases.
 MIGRATIONS = {
     "events": {"ref": "TEXT", "feedback": "INTEGER", "incident_id": "INTEGER"},
+    "actions": {"shadow": "INTEGER NOT NULL DEFAULT 0", "feedback": "INTEGER", "verified": "TEXT"},
+    "agent_runs": {"report": "TEXT", "feedback": "INTEGER"},
 }
+PROFILE_JSON = ("targets", "lights", "shade_covers")
+BASELINE_MEMORY = 200  # samples per bucket before older ones start to fade
 
 
 class Database:
@@ -377,12 +427,33 @@ class Database:
     # --- Autonomous actions (for undo) -------------------------------------------
 
     def add_action(self, domain: str, service: str, entity_ids: list[str], data: dict[str, Any],
-                   previous: dict[str, Any], reason: str = "") -> int:
+                   previous: dict[str, Any], reason: str = "", shadow: bool = False) -> int:
         return self._insert(
-            "INSERT INTO actions (ts, domain, service, entity_ids, data, previous, reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO actions (ts, domain, service, entity_ids, data, previous, reason, shadow) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (time.time(), domain, service, json.dumps(entity_ids), json.dumps(data, ensure_ascii=False),
-             json.dumps(previous, ensure_ascii=False), reason),
+             json.dumps(previous, ensure_ascii=False), reason, int(shadow)),
         )
+
+    def set_action_feedback(self, action_id: int, value: int) -> None:
+        self._conn.execute("UPDATE actions SET feedback = ? WHERE id = ?", (value, action_id))
+        self._conn.commit()
+
+    def set_action_verified(self, action_id: int, result: str) -> None:
+        self._conn.execute("UPDATE actions SET verified = ? WHERE id = ?", (result, action_id))
+        self._conn.commit()
+
+    def shadow_scores(self) -> list[dict[str, Any]]:
+        """Per domain: how many shadow actions were recorded and how the resident judged them."""
+        return self._rows(
+            "SELECT domain, COUNT(*) AS total, SUM(feedback > 0) AS good, SUM(feedback < 0) AS bad "
+            "FROM actions WHERE shadow = 1 GROUP BY domain ORDER BY domain")
+
+    def last_action_on(self, entity_id: str, since: float) -> dict[str, Any] | None:
+        """The latest real (not shadow) action of the agent on this entity."""
+        rows = self._rows("SELECT id FROM actions WHERE shadow = 0 AND undone = 0 AND ts >= ? AND entity_ids LIKE ? "
+                          "ORDER BY id DESC LIMIT 1", (since, f'%"{entity_id}"%'))
+        return self.get_action(rows[0]["id"]) if rows else None
 
     def get_action(self, action_id: int) -> dict[str, Any] | None:
         rows = self._rows("SELECT * FROM actions WHERE id = ?", (action_id,))
@@ -397,7 +468,8 @@ class Database:
         return [self.get_action(r["id"]) for r in rows]
 
     def count_actions(self, since: float) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM actions WHERE ts >= ?", (since,)).fetchone()[0]
+        return self._conn.execute("SELECT COUNT(*) FROM actions WHERE ts >= ? AND shadow = 0",
+                                  (since,)).fetchone()[0]
 
     def mark_undone(self, action_id: int) -> None:
         self._conn.execute("UPDATE actions SET undone = 1 WHERE id = ?", (action_id,))
@@ -411,6 +483,10 @@ class Database:
                                  (entity_id, bucket)).fetchone()
         n, mean, m2 = (row["n"], row["mean"], row["m2"]) if row else (0, 0.0, 0.0)
         before = (n, mean, m2 / (n - 1) if n > 1 else 0.0)
+        if n >= BASELINE_MEMORY:
+            # Slowly forget: old samples weigh less, so the baseline follows the seasons.
+            m2 = m2 * (BASELINE_MEMORY - 2) / (n - 1)
+            n = BASELINE_MEMORY - 1
         n += 1
         delta = value - mean
         mean += delta / n
@@ -452,9 +528,104 @@ class Database:
 
     # --- Agent log --------------------------------------------------------------------
 
-    def add_agent_run(self, trigger: str, summary: str, tools: list[str]) -> int:
-        return self._insert("INSERT INTO agent_runs (ts, trigger, summary, tools) VALUES (?, ?, ?, ?)",
-                            (time.time(), trigger, summary, json.dumps(tools)))
+    def add_agent_run(self, trigger: str, summary: str, tools: list[str], report: str | None = None) -> int:
+        return self._insert("INSERT INTO agent_runs (ts, trigger, summary, tools, report) VALUES (?, ?, ?, ?, ?)",
+                            (time.time(), trigger, summary, json.dumps(tools), report))
+
+    def set_run_feedback(self, run_id: int, value: int) -> None:
+        self._conn.execute("UPDATE agent_runs SET feedback = ? WHERE id = ?", (value, run_id))
+        self._conn.commit()
+
+    def runs_with_reports(self, limit: int = 200) -> list[dict[str, Any]]:
+        return [{**r, "tools": json.loads(r["tools"])} for r in self._rows(
+            "SELECT * FROM agent_runs WHERE report IS NOT NULL ORDER BY id DESC LIMIT ?", (limit,))]
+
+    # --- Manual overrides -------------------------------------------------------------
+
+    def set_override(self, entity_id: str, until: float, note: str = "") -> None:
+        self._conn.execute("INSERT OR REPLACE INTO overrides (entity_id, ts, until, note) VALUES (?, ?, ?, ?)",
+                           (entity_id, time.time(), until, note))
+        self._conn.commit()
+
+    def active_overrides(self, now: float | None = None) -> dict[str, dict[str, Any]]:
+        return {r["entity_id"]: r for r in self._rows("SELECT * FROM overrides WHERE until > ?",
+                                                       (now or time.time(),))}
+
+    def clear_override(self, entity_id: str) -> None:
+        self._conn.execute("DELETE FROM overrides WHERE entity_id = ?", (entity_id,))
+        self._conn.commit()
+
+    def add_manual_change(self, entity_id: str, mode: str, value: float | None) -> None:
+        self._insert("INSERT INTO manual_changes (ts, entity_id, mode, value) VALUES (?, ?, ?, ?)",
+                     (time.time(), entity_id, mode, value))
+
+    def manual_changes(self, since: float, entity_id: str | None = None) -> list[dict[str, Any]]:
+        if entity_id:
+            return self._rows("SELECT * FROM manual_changes WHERE ts >= ? AND entity_id = ? ORDER BY id",
+                              (since, entity_id))
+        return self._rows("SELECT * FROM manual_changes WHERE ts >= ? ORDER BY id", (since,))
+
+    # --- Pending confirmations ----------------------------------------------------------
+
+    def save_confirmation(self, item: dict[str, Any]) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO confirmations (id, kind, description, reason, payload, conversation_id, created, "
+            "sensitive) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (item["id"], item["kind"], item["description"], item["reason"],
+             json.dumps(item["payload"], ensure_ascii=False), item.get("conversation_id"), item["created"],
+             int(item.get("sensitive", False))))
+        self._conn.commit()
+
+    def delete_confirmation(self, confirmation_id: str) -> None:
+        self._conn.execute("DELETE FROM confirmations WHERE id = ?", (confirmation_id,))
+        self._conn.commit()
+
+    def pending_confirmations(self) -> list[dict[str, Any]]:
+        return [{**r, "payload": json.loads(r["payload"]), "sensitive": bool(r["sensitive"])}
+                for r in self._rows("SELECT * FROM confirmations ORDER BY created")]
+
+    # --- Arrivals (for preheating) ------------------------------------------------------
+
+    def add_arrival(self, weekday: int, minute: int) -> None:
+        self._insert("INSERT INTO arrivals (ts, weekday, minute) VALUES (?, ?, ?)", (time.time(), weekday, minute))
+
+    def arrivals(self, weekday: int, since: float) -> list[int]:
+        return [r["minute"] for r in self._rows(
+            "SELECT minute FROM arrivals WHERE weekday = ? AND ts >= ? ORDER BY minute", (weekday, since))]
+
+    # --- Comfort profiles ---------------------------------------------------------------
+
+    def _profile(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {**row, **{k: json.loads(row[k]) for k in PROFILE_JSON}, "enabled": bool(row["enabled"])}
+
+    def profiles(self, enabled_only: bool = False) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM comfort_profiles" + (" WHERE enabled = 1" if enabled_only else "") + " ORDER BY area"
+        return [self._profile(r) for r in self._rows(sql)]
+
+    def get_profile(self, profile_id: int) -> dict[str, Any] | None:
+        rows = self._rows("SELECT * FROM comfort_profiles WHERE id = ?", (profile_id,))
+        return self._profile(rows[0]) if rows else None
+
+    def save_profile(self, profile: dict[str, Any]) -> int:
+        values = (profile["area"], profile.get("climate_entity") or "",
+                  json.dumps(profile.get("targets") or {}), int(profile.get("preheat_minutes") or 0),
+                  json.dumps(profile.get("lights") or []), profile.get("ventilation_entity") or "",
+                  json.dumps(profile.get("shade_covers") or []), int(profile.get("enabled", True)))
+        if profile.get("id"):
+            self._conn.execute(
+                "UPDATE comfort_profiles SET area = ?, climate_entity = ?, targets = ?, preheat_minutes = ?, "
+                "lights = ?, ventilation_entity = ?, shade_covers = ?, enabled = ? WHERE id = ?",
+                (*values, int(profile["id"])))
+            self._conn.commit()
+            return int(profile["id"])
+        return self._insert(
+            "INSERT INTO comfort_profiles (area, climate_entity, targets, preheat_minutes, lights, "
+            "ventilation_entity, shade_covers, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", values)
+
+    def delete_profile(self, profile_id: int) -> bool:
+        cur = self._conn.execute("DELETE FROM comfort_profiles WHERE id = ?", (profile_id,))
+        self._conn.commit()
+        return cur.rowcount > 0
 
     def agent_runs(self, limit: int = 50) -> list[dict[str, Any]]:
         return [{**r, "tools": json.loads(r["tools"])}

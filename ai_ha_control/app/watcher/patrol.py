@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from ..llm.ollama import PRIORITY_PATROL
 from .baseline import MODE_AWAY, MODE_SLEEP, MODE_VACATION
+from .rules import quote
 from .vision import QUIET_CATEGORIES, SUSPICIOUS, classify
 
 if TYPE_CHECKING:
@@ -91,5 +92,5 @@ class Patrol:
                 entity_id=cam.entity_id, snapshot=snapshot, image_entity=cam.entity_id,
             )
             if self.on_observation:
-                self.on_observation(f"Patrouille: {text}")
+                self.on_observation(f"Patrouille: {cam.name}: {quote(description)}")
         return seen

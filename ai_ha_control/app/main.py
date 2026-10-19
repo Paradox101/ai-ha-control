@@ -17,10 +17,12 @@ import aiohttp
 from aiohttp import web
 
 from .agent.autonomous import AutonomousAgent
+from .comfort import ComfortController, profile_suggestions, save_profile
 from .agent.loop import Agent
 from .autonomy import Autonomy, undo_action
 from .config import Config, container_env, supervisor_token
 from .ha.client import HAClient
+from .ha.context import ContextTracker
 from .ha.index import EntityIndex
 from .ha.status import StatusPublisher, ensure_kill_switch
 from .llm.ollama import LLMError, OllamaClient
@@ -44,6 +46,8 @@ INGRESS_PROXY = ipaddress.ip_address("172.30.32.2")
 DISCOVERY_SERVICE = "ai_ha_control"
 REGISTRY_EVENTS = ("entity_registry_updated", "device_registry_updated", "area_registry_updated")
 REFRESH_DELAY = 5  # seconds; registry changes often come in bursts
+# What the Assist integration may reach with its API key; everything else only through Ingress (the HA panel).
+INTEGRATION_PATHS = {"/api/conversation", "/api/status", "/api/health"}
 
 
 def query_int(request: web.Request, name: str, default: int, maximum: int) -> int:
@@ -81,7 +85,8 @@ class App:
         self.api_key = load_api_key(config)
         self.index = EntityIndex()
         self.db = Database(config.data_dir)
-        self.confirmations = ConfirmationStore()
+        self.confirmations = ConfirmationStore(self.db)
+        self.contexts = ContextTracker()
         self.registry = build_registry()
         self.session: aiohttp.ClientSession | None = None
         self.ha: HAClient | None = None
@@ -107,13 +112,15 @@ class App:
             ha=self.ha,
             index=self.index,
             llm=self.llm,
-            policy=Policy(self.config),
+            policy=Policy(self.config, self.index),
             db=self.db,
             confirmations=self.confirmations,
             notifier=self.notifier,
             autonomy=self.autonomy,
             incidents=self.incidents,
+            contexts=self.contexts,
         )
+        self.notifier.index = self.index
         self.agent = Agent(self.ctx, self.registry)
         self.watcher = Watcher(self.ctx, self.notifier)
         self.scheduler = Scheduler(self.ctx, self.notifier, self.watcher)
@@ -122,11 +129,13 @@ class App:
         self.patrol = Patrol(self.ctx, self.incidents, self.snapshots)
         self.patrol.on_observation = lambda text: self.guardian.observe(text, urgent=True)
         self.publisher = StatusPublisher(self.ha, self.db, self.autonomy)
+        self.comfort = ComfortController(self.ctx)
         self.watcher.agent, self.watcher.incidents = self.guardian, self.incidents
         self.watcher.baseline, self.watcher.snapshots = self.baseline, self.snapshots
         s = self.scheduler
         s.agent, s.baseline, s.patrol = self.guardian, self.baseline, self.patrol
         s.incidents, s.snapshots, s.publisher = self.incidents, self.snapshots, self.publisher
+        s.comfort = self.comfort
         self.ha.on_connect(self.refresh_index)
         self.ha.on_connect(self.watcher.on_connected)
         self.ha.on_event("homeassistant_started", self.watcher.on_ha_started)
@@ -134,6 +143,7 @@ class App:
         self.ha.on_state_changed(self.index.handle_state_changed)
         self.ha.on_state_changed(self.watcher.handle_state_changed)
         self.ha.on_event("mobile_app_notification_action", self.watcher.handle_notification_action)
+        self.ha.on_event("automation_triggered", self.contexts.note_automation)
         self.ha.on_event("automation_triggered", self.guardian.note_automation)
         for event_type in REGISTRY_EVENTS:
             self.ha.on_event(event_type, self.schedule_refresh)
@@ -159,6 +169,7 @@ class App:
         self.notifier.timezone = self.ctx.timezone
         self.watcher.set_timezone(self.ctx.timezone)
         self.guardian.set_timezone(self.ctx.timezone)
+        self.comfort.set_timezone(self.ctx.timezone)
         self.index.location_name = ha_config.get("location_name")
         allowed = await self.ha.exposed_entities() if self.config.only_exposed_entities else None
         self.index.load(
@@ -263,6 +274,10 @@ class App:
         conversation_id = body.get("conversation_id") or uuid.uuid4().hex
         if not text:
             return web.json_response({"error": "empty text"}, status=400)
+        # Who spoke (None for a voice satellite): kept in the audit log; doors and the alarm are never
+        # confirmed by voice anyway (see resolve_confirmation).
+        self.db.audit("assist", {"user_id": body.get("user_id"), "text": text[:200]}, "received", None,
+                      conversation_id)
         try:
             result = await self.agent.run(text, conversation_id, source="assist")
             speech = result.answer
@@ -334,7 +349,38 @@ class App:
             "actions": self.db.recent_actions(limit=30),
             "followups": self.db.pending_followups(),
             "mutes": self.db.mutes(),
+            "shadow": self.db.shadow_scores(),
+            "overrides": [{"entity_id": e, "name": self.index.get(e).name if self.index.get(e) else e, **o}
+                          for e, o in self.db.active_overrides().items()],
+            "health": self.scheduler.health() if self.scheduler else {},
         })
+
+    async def action_feedback(self, request: web.Request) -> web.Response:
+        value = 1 if (await json_body(request)).get("value", 0) > 0 else -1
+        self.db.set_action_feedback(int(request.match_info["action_id"]), value)
+        return web.json_response({"status": "ok", "shadow": self.db.shadow_scores()})
+
+    async def run_feedback(self, request: web.Request) -> web.Response:
+        value = 1 if (await json_body(request)).get("value", 0) > 0 else -1
+        self.db.set_run_feedback(int(request.match_info["run_id"]), value)
+        return web.json_response({"status": "ok"})
+
+    async def clear_override(self, request: web.Request) -> web.Response:
+        self.db.clear_override(request.match_info["entity_id"])
+        return web.json_response({"status": "ok"})
+
+    # --- Comfort profiles -------------------------------------------------------------
+
+    async def profiles(self, request: web.Request) -> web.Response:
+        if request.method == "POST":
+            result = save_profile(self.db, await json_body(request))
+            if result["status"] != "ok":
+                return web.json_response(result, status=400)
+        elif request.method == "DELETE":
+            self.db.delete_profile(int(request.match_info["profile_id"]))
+        return web.json_response({"profiles": self.db.profiles(), "suggestions": profile_suggestions(self.db),
+                                  "areas": sorted(self.index.areas.values()),
+                                  "enabled": self.config.comfort})
 
     async def agent_run(self, _request: web.Request) -> web.Response:
         assert self.guardian
@@ -463,6 +509,8 @@ class App:
             domain=request.query.get("domain"),
             limit=query_int(request, "limit", 50, 500),
         )
+        if request.query.get("format") == "pick":
+            return web.json_response([{"id": e.entity_id, "name": e.name, "area": e.area or ""} for e in results])
         return web.json_response([e.compact(with_attributes=True) for e in results])
 
 
@@ -472,7 +520,8 @@ def access_middleware(api_key: str, supervised: bool):
     @web.middleware
     async def middleware(request: web.Request, handler):
         auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].encode(), api_key.encode()):
+        valid_key = auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].encode(), api_key.encode())
+        if valid_key and request.path in INTEGRATION_PATHS:
             return await handler(request)
         if not supervised:
             return await handler(request)
@@ -482,6 +531,9 @@ def access_middleware(api_key: str, supervised: bool):
             raise web.HTTPUnauthorized()
         if addr == INGRESS_PROXY:
             return await handler(request)
+        if valid_key:
+            # The key is for the Assist integration only; settings, kill switch etc. need the HA panel.
+            raise web.HTTPForbidden(text="de API-sleutel geeft alleen toegang tot het gesprek")
         raise web.HTTPUnauthorized()
 
     return middleware
@@ -516,6 +568,12 @@ def create_app(config: Config) -> web.Application:
             web.post("/api/agent/run", state.agent_run),
             web.post("/api/agent/kill-switch", state.kill_switch),
             web.post(r"/api/actions/{action_id:\d+}/undo", state.undo),
+            web.post(r"/api/actions/{action_id:\d+}/feedback", state.action_feedback),
+            web.post(r"/api/runs/{run_id:\d+}/feedback", state.run_feedback),
+            web.delete("/api/overrides/{entity_id}", state.clear_override),
+            web.get("/api/profiles", state.profiles),
+            web.post("/api/profiles", state.profiles),
+            web.delete(r"/api/profiles/{profile_id:\d+}", state.profiles),
             web.delete("/api/mutes/{key}", state.unmute),
             web.post(r"/api/events/{event_id:\d+}/feedback", state.feedback),
             web.get("/api/incidents", state.incidents_list),

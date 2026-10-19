@@ -73,6 +73,16 @@ options:
   camera_patrol: away
   patrol_minutes: 15
   snapshot_retention_days: 7
+  autonomous_scenes: []
+  override_minutes: 120
+  comfort: true
+  preheat_distance_km: 15
+  leak_valve: ""
+  emergency_lights: true
+  emergency_fans_off: []
+  person_notify: []
+  digest_time: ""
+  llm_down_minutes: 30
   api_key: ""
   log_level: info
 schema:
@@ -105,7 +115,7 @@ schema:
     - str
   autonomous: bool
   autonomy:
-    - match(^[a-z_]+=(observe|ask|act)$)
+    - match(^[a-z_]+=(observe|shadow|ask|act)$)
   kill_switch: str?
   max_climate_change: float(0,10)
   max_autonomous_actions_per_hour: int(0,100)
@@ -115,5 +125,18 @@ schema:
   camera_patrol: list(off|away|always)
   patrol_minutes: int(5,240)
   snapshot_retention_days: int(1,90)
+  autonomous_scenes:
+    - str
+  override_minutes: int(0,1440)
+  comfort: bool
+  preheat_distance_km: float(1,100)
+  leak_valve: str?
+  emergency_lights: bool
+  emergency_fans_off:
+    - str
+  person_notify:
+    - match(^person\.[a-z0-9_]+=[a-z_]+\.[a-z0-9_]+$)
+  digest_time: str?
+  llm_down_minutes: int(5,1440)
   api_key: password?
   log_level: list(debug|info|warning|error)

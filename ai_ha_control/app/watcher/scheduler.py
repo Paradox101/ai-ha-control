@@ -20,6 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 
 TICK_SECONDS = 60
 ROUTINE_ANALYSIS_TIME = "03:30"
+LLM_CHECK_SECONDS = 300
 
 
 def low_batteries(ctx: ToolContext, threshold: float = 20) -> list[str]:
@@ -80,6 +81,13 @@ class Scheduler:
         self.incidents = None
         self.snapshots = None
         self.publisher = None
+        self.comfort = None
+        self._agent_task: asyncio.Task | None = None
+        self._llm_checked = 0.0
+        self.llm_down_since: float | None = None
+        self._llm_reported = False
+        self.last_tick = 0.0
+        self._last_digest = time.time()
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop())
@@ -87,6 +95,25 @@ class Scheduler:
     def stop(self) -> None:
         if self._task:
             self._task.cancel()
+        if self._agent_task:
+            self._agent_task.cancel()
+
+    async def wait_agent(self) -> None:
+        """Wait for a heartbeat started in the background (used in tests)."""
+        if self._agent_task:
+            await asyncio.gather(self._agent_task, return_exceptions=True)
+
+    def _start_agent(self) -> None:
+        """The heartbeat runs on its own: a slow LLM must not stop the rule checks and the patrol."""
+        async def run() -> None:
+            try:
+                await self.agent.run()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Autonomous heartbeat failed")
+
+        self._agent_task = asyncio.create_task(run())
 
     def _due(self, job: str, at: str | None, now: datetime) -> bool:
         if not at:
@@ -121,6 +148,11 @@ class Scheduler:
         await self._watcher.tick()
         now = self._notifier.now()
         await self._autonomous_round(now)
+        await self._check_llm()
+        if config.digest_time and self._due("digest", config.digest_time, now):
+            await self._notifier.send_digest(self._last_digest)
+            self._last_digest = time.time()
+        self.last_tick = time.time()
         if config.proactive and self._due("summary", config.daily_summary_time, now):
             await self.daily_summary()
         if config.routine_learning and self._due("routines", ROUTINE_ANALYSIS_TIME, now):
@@ -135,8 +167,11 @@ class Scheduler:
         if self.baseline is not None and not settling:
             for anomaly in self.baseline.sample(now) + self.baseline.offline():
                 await self._watcher.report_anomaly(anomaly)
-        if self.agent is not None and not settling and self.agent.due():
-            await self.agent.run()
+        if self.agent is not None and not settling and self.agent.due() and \
+                (self._agent_task is None or self._agent_task.done()):
+            self._start_agent()
+        if self.comfort is not None and not settling:
+            await self.comfort.tick(mode, now)
         if self.patrol is not None and not settling and self.patrol.due(mode):
             await self.patrol.run()
         if self.incidents is not None:
@@ -144,7 +179,44 @@ class Scheduler:
         if self.snapshots is not None and self._due("cleanup", "04:00", now):
             self.snapshots.cleanup(config.snapshot_retention_days)
         if self.publisher is not None:
-            await self.publisher.publish(mode, self.agent.last_summary if self.agent else "")
+            await self.publisher.publish(mode, self.agent.last_summary if self.agent else "", self.health())
+
+    def health(self) -> dict[str, Any]:
+        """For the dead man's switch: when we last ran and whether the AI server answers."""
+        tz = self._notifier.now().tzinfo
+        stamp = lambda ts: datetime.fromtimestamp(ts, tz).isoformat(timespec="minutes") if ts else None  # noqa: E731
+        return {
+            "last_tick": stamp(time.time()),
+            "last_agent_run": stamp(self.agent.last_run_ts) if self.agent is not None else None,
+            "ollama": "onbereikbaar" if self.llm_down_since else "ok",
+        }
+
+    async def _check_llm(self) -> None:
+        """Tell the user once when the AI server has been unreachable for a while, and when it is back."""
+        if time.monotonic() - self._llm_checked < LLM_CHECK_SECONDS:
+            return
+        self._llm_checked = time.monotonic()
+        try:
+            reachable = (await self._ctx.llm.status()).get("reachable", False)
+        except Exception:  # noqa: BLE001
+            reachable = False
+        now = time.time()
+        if reachable:
+            if self._llm_reported:
+                await self._notifier.send("✅ AI-server weer bereikbaar", "De autonome agent werkt weer normaal.",
+                                          kind="health", respect_quiet_hours=True)
+            self.llm_down_since, self._llm_reported = None, False
+            return
+        self.llm_down_since = self.llm_down_since or now
+        down_minutes = (now - self.llm_down_since) / 60
+        if not self._llm_reported and down_minutes >= self._ctx.config.llm_down_minutes:
+            self._llm_reported = True
+            since = datetime.fromtimestamp(self.llm_down_since, self._notifier.now().tzinfo)
+            await self._notifier.send(
+                "⚠️ AI-server niet bereikbaar",
+                f"Ollama reageert niet sinds {since:%H:%M}. Rook-, lek- en inbraakmeldingen werken door, "
+                "maar de agent kan niet nadenken en camerabeelden worden niet bekeken.",
+                kind="health", respect_quiet_hours=False)
 
     async def daily_summary(self) -> str:
         text = await build_daily_summary(self._ctx, self._notifier)

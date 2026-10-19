@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
-from .autonomy import LEVEL_ORDER, parse_levels
+from .autonomy import LEVEL_ORDER, MAX_LEVEL, parse_levels
 from .config import Config, supervisor_token
 
 if TYPE_CHECKING:
@@ -28,6 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 INTERNAL = {"ha_url", "ha_token", "data_dir", "port", "api_key"}
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 DOMAIN_RE = re.compile(r"^[a-z_]+(\.[a-z0-9_]+)?$")
+PERSON_NOTIFY_RE = re.compile(r"^person\.[a-z0-9_]+=[a-z_]+\.[a-z0-9_]+$")
 
 AUTONOMY_DOMAINS = [
     ("light", "Verlichting"), ("climate", "Verwarming/airco"), ("fan", "Ventilatoren"), ("switch", "Schakelaars"),
@@ -35,6 +36,9 @@ AUTONOMY_DOMAINS = [
     ("alarm_control_panel", "Alarm"), ("valve", "Kranen"), ("vacuum", "Stofzuiger"), ("scene", "Scènes"),
     ("script", "Scripts"), ("humidifier", "Luchtbevochtiger"), ("water_heater", "Boiler"),
 ]
+
+
+COMBINED = ("scene_script", "valve_switch", "fan_switch")  # entity pickers over two domains
 
 
 def _f(key: str, label: str, kind: str, help: str = "", **extra: Any) -> dict[str, Any]:
@@ -74,8 +78,15 @@ SECTIONS: list[dict[str, Any]] = [
         _f("autonomous", "Autonome agent", "toggle",
            "De AI kijkt zelf regelmatig rond, opent incidenten en volgt ze op.", emphasis=True),
         _f("autonomy", "Wat mag de agent zelf?", "autonomy",
-           "Kijken: alleen melden. Vragen: melding met knop. Zelf doen: direct, met 'ongedaan maken'.",
-           domains=AUTONOMY_DOMAINS),
+           "Kijken: alleen melden. Schaduw: vastleggen wat hij zou doen, zodat je het kunt beoordelen. "
+           "Vragen: melding met knop. Zelf doen: direct, met 'ongedaan maken'. Sloten en alarm nooit zelf.",
+           domains=AUTONOMY_DOMAINS, capped=MAX_LEVEL),
+        _f("autonomous_scenes", "Scènes en scripts die hij zelf mag starten", "entities",
+           "Alle andere scènes en scripts vraagt hij eerst. Scènes die deuren of het alarm raken nooit.",
+           domain="scene_script"),
+        _f("override_minutes", "Na handmatige aanpassing afblijven", "number",
+           "Zet iemand zelf een lamp of de thermostaat anders, dan laat de agent dat apparaat zo lang met rust.",
+           min=0, max=1440, step=15, unit="min"),
         _f("kill_switch", "Noodknop", "entity",
            "Staat deze schakelaar uit, dan doet de agent niets meer zelf (alleen melden).",
            domain="input_boolean", optional=True),
@@ -83,6 +94,20 @@ SECTIONS: list[dict[str, Any]] = [
            min=0, max=10, step=0.5, unit="°C"),
         _f("max_autonomous_actions_per_hour", "Max. eigen acties per uur", "number", "", min=0, max=100, step=1),
         _f("heartbeat_minutes", "Rondkijken elke", "number", "", min=1, max=120, step=1, unit="min"),
+    ]},
+    {"id": "comfort", "title": "Comfort", "icon": "🌡️", "fields": [
+        _f("comfort", "Comfortprofielen uitvoeren", "toggle",
+           "Temperatuur, schemerverlichting, ventilatie en zonwering per ruimte volgens de profielen "
+           "(tabblad Comfort). Volgt de autonomie-instellingen hierboven."),
+        _f("preheat_distance_km", "Voorverwarmen vanaf", "number",
+           "Iemand komt naar huis (proximity-integratie) en is dichterbij dan dit.", min=1, max=100, step=1,
+           unit="km"),
+    ]},
+    {"id": "playbooks", "title": "Noodgevallen", "icon": "🧯", "fields": [
+        _f("leak_valve", "Hoofdkraan bij lekkage", "entity",
+           "Wordt direct dichtgedaan als een lekkagesensor afgaat.", domain="valve_switch", optional=True),
+        _f("emergency_lights", "Alle lampen aan bij rook/gas/CO", "toggle", "Zodat iedereen de weg naar buiten ziet."),
+        _f("emergency_fans_off", "Ventilatie uit bij rook", "entities", "", domain="fan_switch"),
     ]},
     {"id": "notifications", "title": "Meldingen", "icon": "🔔", "fields": [
         _f("notify_service", "Telefoon", "select",
@@ -96,6 +121,13 @@ SECTIONS: list[dict[str, Any]] = [
            domain="tts", optional=True),
         _f("announce_players", "Speakers", "entities", "Waar de deurbel en alarmen worden omgeroepen.",
            domain="media_player"),
+        _f("person_notify", "Per persoon", "people",
+           "Telefoon per bewoner. De deurbel en comfortmeldingen gaan dan alleen naar wie thuis is; "
+           "alarmen naar iedereen. Leeg = alles naar de telefoon hierboven."),
+        _f("digest_time", "Avondoverzicht", "time",
+           "Niet-dringende meldingen (afwijkingen, energie, apparaten) gebundeld in één melding.", optional=True),
+        _f("llm_down_minutes", "Melden als de AI-server weg is na", "number", "", min=5, max=1440, step=5,
+           unit="min"),
     ]},
     {"id": "cameras", "title": "Camera's", "icon": "📷", "fields": [
         _f("camera_alerts", "Bij detectie het beeld bekijken", "segmented",
@@ -175,6 +207,14 @@ def _coerce(spec: dict[str, Any], current: Any, value: Any) -> Any:
         if bad:
             raise ValueError(f"ongeldig: {', '.join(bad)}")
         return items
+    if kind == "people":
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ValueError("ongeldige lijst")
+        items = [v.strip() for v in value if v.strip()]
+        bad = [v for v in items if not PERSON_NOTIFY_RE.match(v)]
+        if bad:
+            raise ValueError(f"gebruik person.naam=notify.dienst: {', '.join(bad)}")
+        return items
     if kind == "autonomy":
         if not isinstance(value, list):
             raise ValueError("ongeldige lijst")
@@ -241,8 +281,9 @@ async def choices(index: EntityIndex, llm: OllamaClient) -> dict[str, Any]:
     """Dynamic options for dropdowns: installed models, notify services, entities."""
 
     def entities(domain: str) -> list[dict[str, str]]:
+        domains = set(domain.split("_")) if domain in COMBINED else {domain}
         return sorted(({"value": e.entity_id, "label": e.name} for e in index.entities.values()
-                       if e.domain == domain), key=lambda e: e["label"].lower())
+                       if e.domain in domains), key=lambda e: e["label"].lower())
 
     return {
         "models": await llm.models(),
@@ -250,6 +291,6 @@ async def choices(index: EntityIndex, llm: OllamaClient) -> dict[str, Any]:
                    for name in sorted(index.services.get("notify", {})) if name not in ("notify", "send_message")],
         "domains": sorted({e.domain for e in index.entities.values()} | {d for d, _ in AUTONOMY_DOMAINS}
                           | {"shell_command", "hassio", "recorder", "python_script"}),
-        "entities": {d: entities(d) for d in ("input_boolean", "tts", "media_player")},
+        "entities": {d: entities(d) for d in ("input_boolean", "tts", "media_player", "person", *COMBINED)},
         "levels": list(LEVEL_ORDER),
     }

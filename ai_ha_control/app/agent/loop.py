@@ -233,8 +233,9 @@ class Agent:
         approve = word in YES_WORDS
         nl = ctx.config.language == "nl"
         answers = []
+        via = "voice" if ctx.source == "assist" else "ui"
         for action in pending:
-            result = await resolve_confirmation(ctx, action.id, approve)
+            result = await resolve_confirmation(ctx, action.id, approve, via=via)
             status = result.get("status")
             if status == "ok":
                 answers.append(("Gedaan: " if nl else "Done: ") + action.description)
@@ -243,6 +244,11 @@ class Agent:
                                + action.description)
             elif status == "rejected":
                 answers.append(("Geannuleerd: " if nl else "Cancelled: ") + action.description)
+            elif via == "voice" and action.sensitive:
+                answers.append(f"Niet uitgevoerd: {action.description}. Deuren en het alarm bevestig ik niet via "
+                               "spraak; bevestig het op je telefoon of in de web-UI." if nl else
+                               f"Not done: {action.description}. Doors and the alarm cannot be confirmed by voice; "
+                               "confirm on your phone or in the web UI.")
             else:
                 answers.append(("Mislukt: " if nl else "Failed: ") + str(result.get("error")))
         result = AgentResult(answer="\n".join(answers))

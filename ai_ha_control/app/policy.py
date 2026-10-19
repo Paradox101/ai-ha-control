@@ -5,8 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from fnmatch import fnmatch
+from typing import TYPE_CHECKING
 
 from .config import Config
+from .security import security_entities
+
+if TYPE_CHECKING:
+    from .ha.index import EntityIndex
 
 
 class Decision(str, Enum):
@@ -26,8 +31,9 @@ class PolicyResult:
 
 
 class Policy:
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, index: EntityIndex | None = None) -> None:
         self._config = config
+        self._index = index
 
     def check(self, domain: str, service: str, entity_ids: list[str]) -> PolicyResult:
         full = f"{domain}.{service}"
@@ -46,6 +52,9 @@ class Policy:
         for eid in entity_ids:
             if any(fnmatch(eid, pattern) for pattern in SENSITIVE_ENTITY_PATTERNS):
                 return PolicyResult(Decision.CONFIRM, f"{eid} is beveiligingsgevoelig")
+        sensitive = security_entities(self._index, entity_ids) if self._index is not None else []
+        if sensitive:
+            return PolicyResult(Decision.CONFIRM, f"{sensitive[0]} is beveiligingsgevoelig")
         if not entity_ids and domain not in ("notify", "persistent_notification"):
             return PolicyResult(Decision.CONFIRM, "actie zonder specifieke entiteit")
         return PolicyResult(Decision.ALLOW)
