@@ -53,6 +53,10 @@ DETECTION_WORDS = ("person", "persoon", "people", "vehicle", "voertuig", "car", 
 # person/vehicle/motion sensors of the same doorbell also carry.
 DOORBELL_WORDS = ("visitor", "bezoeker")
 
+# Reolink (and others) expose each camera as several streams; the snapshot of the main stream is sharper.
+HIGH_STREAM_WORDS = {"clear", "duidelijk", "main", "high", "hoog"}
+LOW_STREAM_WORDS = {"fluent", "vloeiend", "sub", "low", "laag", "balanced", "gebalanceerd"}
+
 SKIP_DOMAINS = {"update", "persistent_notification", "conversation", "tts", "stt", "wake_word", "event"}
 
 
@@ -267,19 +271,51 @@ class EntityIndex:
     def is_doorbell(ent: EntityInfo) -> bool:
         return bool(_object_tokens(ent) & set(DOORBELL_WORDS))
 
+    @staticmethod
+    def stream_rank(cam: EntityInfo) -> int:
+        tokens = _object_tokens(cam)
+        if tokens & HIGH_STREAM_WORDS:
+            return 0
+        return 2 if tokens & LOW_STREAM_WORDS else 1
+
+    @staticmethod
+    def _camera_key(cam: EntityInfo) -> str:
+        words = [w for w in normalize(cam.name).split() if w not in HIGH_STREAM_WORDS | LOW_STREAM_WORDS | {"camera"}]
+        return " ".join(words) or cam.entity_id
+
+    def cameras(self, area: str | None = None, query: str | None = None, limit: int = 20) -> list[EntityInfo]:
+        """Available cameras, one per physical camera (best stream), optionally filtered by area or text."""
+        if query:
+            found = self.search(query, area=area, domain="camera", limit=100)
+        else:
+            found = self.search(area=area, domain="camera", limit=500)
+        best: dict[str, EntityInfo] = {}
+        for cam in found:
+            if cam.state == "unavailable":
+                continue
+            key = self._camera_key(cam)
+            if key not in best or self.stream_rank(cam) < self.stream_rank(best[key]):
+                best[key] = cam
+        return list(best.values())[:limit]
+
+    def best_stream(self, cam: EntityInfo) -> EntityInfo:
+        """The sharpest available stream of the same physical camera."""
+        key = self._camera_key(cam)
+        siblings = [c for c in self.entities.values() if c.domain == "camera" and c.state != "unavailable"
+                    and ((cam.device_id and c.device_id == cam.device_id) or self._camera_key(c) == key)]
+        return min(siblings or [cam], key=lambda c: (self.stream_rank(c), c.entity_id))
+
     def camera_for(self, ent: EntityInfo) -> EntityInfo | None:
         """Camera on the same device (Reolink) or, failing that, in the same area."""
-        cameras = [e for e in self.entities.values() if e.domain == "camera"]
+        cameras = [e for e in self.entities.values() if e.domain == "camera" and e.state != "unavailable"]
         if ent.device_id:
             same_device = [c for c in cameras if c.device_id == ent.device_id]
             if same_device:
-                # Prefer the high-quality "clear" stream over the "fluent" sub stream.
-                same_device.sort(key=lambda c: ("fluent" in c.entity_id, c.entity_id))
-                return same_device[0]
+                return min(same_device, key=lambda c: (self.stream_rank(c), c.entity_id))
         if ent.area:
             same_area = [c for c in cameras if c.area == ent.area]
             if same_area:
-                return same_area[0]
+                return min(same_area, key=lambda c: (self.stream_rank(c), c.entity_id))
         return None
 
     def overview(self) -> dict[str, Any]:
@@ -309,6 +345,6 @@ class EntityIndex:
             "climate": [e.compact(with_attributes=True) for e in self.entities.values() if e.domain == "climate"],
             "unlocked": ids(lambda e: e.domain == "lock" and e.state == "unlocked"),
             "alarms": ids(lambda e: e.domain == "alarm_control_panel"),
-            "cameras": ids(lambda e: e.domain == "camera"),
+            "cameras": [c.compact() for c in self.cameras()],
             "unavailable_count": sum(1 for e in self.entities.values() if e.state == "unavailable"),
         }

@@ -196,10 +196,13 @@
       typing.remove();
       const m = addMessage(r.answer);
       for (const a of r.actions || []) {
-        if (a.tool === "analyze_camera" && a.arguments && a.arguments.entity_id) {
+        if (a.tool !== "analyze_camera") continue;
+        let images = [];
+        try { images = JSON.parse(a.result).images || []; } catch (e) {}
+        for (const entityId of images) {  // only cameras that were actually analysed
           const img = el("img");
-          img.src = `api/camera/${encodeURIComponent(a.arguments.entity_id)}?t=${Date.now()}`;
-          img.alt = a.arguments.entity_id;
+          img.src = `api/camera/${encodeURIComponent(entityId)}?t=${Date.now()}`;
+          img.alt = entityId;
           img.style.cssText = "display:block;max-width:100%;border-radius:8px;margin-top:8px";
           m.appendChild(img);
         }

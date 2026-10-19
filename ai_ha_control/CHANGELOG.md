@@ -5,6 +5,10 @@
 - Opgelost: dubbele meldingen bij het opstarten. De eerste 2 minuten na verbinden (en na een HA-herstart) worden detecties en periodieke regels genegeerd; veiligheidsalarmen komen altijd door.
 - Eén melding per apparaat: persoon-, voertuig- en bewegingssensoren van dezelfde camera geven samen één melding.
 - Als de beeldanalyse mislukt (bijv. vision-model niet geïnstalleerd), staat de reden in de melding.
+- Camera's: `analyze_camera` accepteert een ruimte ("wat gebeurt er in de achtertuin?") en bekijkt alle camera's daar (max. 3).
+- Dubbele streams (Reolink *vloeiend*/*duidelijk*, ook Engelse namen) worden samengevoegd; de scherpe stream wordt gebruikt.
+- Een verzonnen camera-ID wordt opgelost naar de best passende camera in plaats van een fout.
+- In de chat verschijnen alleen beelden van camera's die echt bekeken zijn.
 
 ## 0.3.1
 - Opgelost: "authentication failed: Invalid access" bij het verbinden met Home Assistant. s6-overlay startte de add-on zonder omgevingsvariabelen, waardoor `SUPERVISOR_TOKEN` ontbrak. `run.sh` gebruikt nu `with-contenv`, en het token wordt als vangnet ook uit de s6-omgeving gelezen.

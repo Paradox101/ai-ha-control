@@ -77,7 +77,34 @@ async def test_forecast(ctx):
 
 async def test_camera(ctx):
     result = await run(ctx, "analyze_camera", entity_id="camera.voordeur_fluent", question="Pakketje?")
-    assert "pakketje" in result["description"]
+    assert "pakketje" in result["results"][0]["description"]
+    assert result["images"] == ["camera.voordeur_clear"]  # sharper stream of the same camera
+
+
+def add_garden_cameras(index):
+    """Two physical cameras in the garden, each with a Dutch 'vloeiend' and 'duidelijk' stream."""
+    index.areas["achtertuin"] = "Achtertuin"
+    for eid, name in (("camera.achtertuin_huis_vloeiend", "Achtertuin Huis Vloeiend"),
+                      ("camera.camera_achtertuin_huis_duidelijk", "Camera Achtertuin Huis Duidelijk"),
+                      ("camera.achtertuin_poort_vloeiend", "Achtertuin Poort Vloeiend"),
+                      ("camera.camera_achtertuin_poort_duidelijk", "Camera Achtertuin Poort Duidelijk")):
+        index._registry[eid] = {"entity_id": eid, "area_id": "achtertuin"}
+        index.update_state({"entity_id": eid, "state": "idle", "attributes": {"friendly_name": name}})
+
+
+async def test_camera_by_area_uses_one_clear_stream_per_camera(ctx):
+    add_garden_cameras(ctx.index)
+    result = await run(ctx, "analyze_camera", area="achtertuin")
+    assert sorted(result["images"]) == ["camera.camera_achtertuin_huis_duidelijk",
+                                        "camera.camera_achtertuin_poort_duidelijk"]
+
+
+async def test_camera_guessed_entity_id_is_resolved(ctx):
+    add_garden_cameras(ctx.index)
+    result = await run(ctx, "analyze_camera", entity_id="camera.achtertuin_poort")
+    assert result["images"] == ["camera.camera_achtertuin_poort_duidelijk"]
+    assert "error" in await run(ctx, "analyze_camera")
+    assert "error" in await run(ctx, "analyze_camera", area="maan")
 
 
 async def test_agent_loop(ctx):
