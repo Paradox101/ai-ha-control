@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.6
+
+- Comfort: per ruimte een cv-thermostaat als backup naast de airco. De cv springt alleen bij onder een instelbare buitentemperatuur, als de airco de setpoint niet binnen een instelbare tijd haalt, of bij storing of lang ontdooien; nooit terwijl de airco koelt. Het Comfort-tabblad toont welke bron nu verwarmt.
+
 ## 0.6.5 — "Hoe vaak / wanneer / hoe lang" klopt
 
 - Nieuwe tool **get_detections**: telt exact hoe vaak en wanneer er een persoon, voertuig, dier, pakketje, aanbelling of beweging was, per camera en over een periode (vandaag, gisteren, vannacht, een weekdag, deze week, een datum). Dubbele sensoren van de Duidelijk/Vloeiend-streams, flikkerende sensoren en een korte "onbeschikbaar" tellen als één keer.

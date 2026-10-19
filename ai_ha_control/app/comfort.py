@@ -1,7 +1,10 @@
 """Comfort profiles: per area what the resident wants, carried out by fixed rules instead of the LLM.
 
 A profile says, per house mode, which temperature an area should have, which lights go on at dusk,
-which fan ventilates and which covers shade. The controller checks the profiles every minute and acts
+which fan ventilates and which covers shade. The thermostat is the primary heat source (typically an air
+conditioner / heat pump); an optional backup (typically a gas boiler thermostat) only heats when the primary
+one cannot: below a set outdoor temperature, when the room stays too cold for too long, or when the primary
+is unreachable or defrosting. The backup is never heating while the primary is cooling. The controller checks the profiles every minute and acts
 through the normal autonomy rules (levels, kill switch, overrides, shadow mode). It only acts on a change
 of the desired state, so it never fights a resident who adjusted something by hand.
 """
@@ -38,6 +41,14 @@ ARRIVAL_HISTORY_DAYS = 28
 MIN_ARRIVALS = 3
 SUGGESTION_DAYS = 14
 MIN_CORRECTIONS = 3
+BACKUP_STANDBY = 15.0          # °C the backup is set to while the primary heats on its own
+BACKUP_AFTER_MINUTES = 60      # default: the primary may take this long to reach the setpoint
+BACKUP_MARGIN = 0.5            # °C below the setpoint counts as "not reaching it"
+BACKUP_REACHED = 0.2           # °C below the setpoint counts as "reached" again
+BACKUP_MIN_MINUTES = 30        # once on, the backup runs at least this long (no flapping)
+DEFROST_GRACE_MINUTES = 15     # a short defrost cycle is normal; a long one needs the backup
+PRIMARY_FAULT = ("unavailable", "unknown")
+PRIMARY_NOT_HEATING = ("cool", "dry", "fan_only")
 
 
 def profile_target(profile: dict[str, Any], mode: str) -> float | None:
@@ -67,7 +78,22 @@ def save_profile(db: Database, payload: dict[str, Any]) -> dict[str, Any]:
         if not 5 <= number <= 30:
             return {"status": "error", "error": f"temperatuur voor {mode} moet tussen 5 en 30 °C liggen"}
         targets[mode] = number
-    profile = {**payload, "area": area, "targets": targets,
+    backup_entity = (payload.get("backup_entity") or "").strip()
+    if backup_entity and backup_entity == payload.get("climate_entity"):
+        return {"status": "error", "error": "de backup moet een andere thermostaat zijn dan de airco"}
+    backup = {}
+    for key, low, high in (("below", -25, 15), ("after_minutes", 0, 480), ("standby", 5, 20)):
+        value = (payload.get("backup") or {}).get(key)
+        if value in (None, ""):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return {"status": "error", "error": f"ongeldige waarde voor backup {key}"}
+        if not low <= number <= high:
+            return {"status": "error", "error": f"backup {key} moet tussen {low} en {high} liggen"}
+        backup[key] = int(number) if key == "after_minutes" else number
+    profile = {**payload, "area": area, "targets": targets, "backup_entity": backup_entity, "backup": backup,
                "preheat_minutes": max(0, min(int(payload.get("preheat_minutes") or 0), 240))}
     return {"status": "ok", "profile_id": db.save_profile(profile)}
 
@@ -104,6 +130,10 @@ class ComfortController:
         self._done_today: set[str] = set()
         self._day = ""
         self._last_notice: dict[str, float] = {}
+        self._cold_since: dict[int, float] = {}       # profile -> when the room fell behind its setpoint
+        self._defrost_since: dict[int, float] = {}
+        self._backup_on: dict[int, tuple[float, str]] = {}  # profile -> (since, why)
+        self.heating: dict[int, dict[str, str]] = {}  # profile -> current heat source, for the web UI
 
     @property
     def config(self):
@@ -130,14 +160,23 @@ class ComfortController:
             self._day, self._done_today = now.date().isoformat(), set()
         done: list[str] = []
         air = area_climate(self._ctx.index)
+        backup: dict[str, list[tuple[float, str]]] = {}
         for profile in self._ctx.db.profiles(enabled_only=True):
             try:
                 done += await self._climate(profile, mode, now)
+                wish = self._backup_wish(profile, mode, now, air.get(profile["area"], {}))
+                if wish is not None:
+                    backup.setdefault(profile["backup_entity"], []).append(wish)
                 done += await self._dusk_lights(profile, mode)
                 done += await self._ventilation(profile, air.get(profile["area"], {}))
                 done += await self._shading(profile)
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Comfort profile %s failed", profile.get("area"))
+        for eid, wishes in backup.items():
+            try:
+                done += await self._apply_backup(eid, max(wishes))
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Comfort backup %s failed", eid)
         return done
 
     # --- Temperature -------------------------------------------------------------------
@@ -147,13 +186,7 @@ class ComfortController:
         ent = self._ctx.index.get(eid) if eid else None
         if ent is None or ent.state in ("off", "unavailable", "unknown") or not self._free([eid]):
             return []
-        target = profile_target(profile, mode)
-        reason = f"comfortprofiel {profile['area']}: {mode}"
-        if mode in (MODE_AWAY, MODE_VACATION) and profile.get("preheat_minutes"):
-            arriving = self.arriving_soon(now, profile["preheat_minutes"])
-            home_target = profile_target(profile, MODE_HOME)
-            if arriving and home_target is not None:
-                target, reason = home_target, f"comfortprofiel {profile['area']}: voorverwarmen ({arriving})"
+        target, reason = self._target(profile, mode, now)
         if target is None:
             return []
         current = ent.attributes.get("temperature")
@@ -167,13 +200,110 @@ class ComfortController:
                                  f"{reason} = {target:g} °C")
         return [f"{ent.name} → {target:g} °C ({result.get('status')})"]
 
+    def _target(self, profile: dict[str, Any], mode: str, now: datetime) -> tuple[float | None, str]:
+        target = profile_target(profile, mode)
+        reason = f"comfortprofiel {profile['area']}: {mode}"
+        if mode in (MODE_AWAY, MODE_VACATION) and profile.get("preheat_minutes"):
+            arriving = self.arriving_soon(now, profile["preheat_minutes"])
+            home_target = profile_target(profile, MODE_HOME)
+            if arriving and home_target is not None:
+                target, reason = home_target, f"comfortprofiel {profile['area']}: voorverwarmen ({arriving})"
+        return target, reason
+
+    def _outside(self) -> float | None:
+        weather = next((e for e in self._ctx.index.entities.values() if e.domain == "weather"), None)
+        try:
+            return float(weather.attributes["temperature"]) if weather else None
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    # --- Backup heating (e.g. gas boiler next to an air conditioner) ----------------------
+
+    def _backup_wish(self, profile: dict[str, Any], mode: str, now: datetime,
+                     air: dict[str, float]) -> tuple[float, str] | None:
+        """The setpoint the backup should have for this profile, or None to leave it alone."""
+        pid, cv = profile["id"], profile.get("backup_entity")
+        if not cv or self._ctx.index.get(cv) is None:
+            return None
+        settings = profile.get("backup") or {}
+        standby = float(settings.get("standby", BACKUP_STANDBY))
+        primary = self._ctx.index.get(profile["climate_entity"]) if profile.get("climate_entity") else None
+        target, _ = self._target(profile, mode, now)
+        if primary is not None and primary.state == "off":
+            self.heating[pid] = {"source": "uit", "reason": "airco staat uit"}
+            return None  # the resident switched heating off here: don't heat with the boiler instead
+
+        def standby_wish(why: str) -> tuple[float, str]:
+            self._backup_on.pop(pid, None)
+            self.heating[pid] = {"source": "airco", "reason": why}
+            return standby, f"comfortprofiel {profile['area']}: cv stand-by, {why}"
+
+        if target is None:
+            return standby_wish("geen doeltemperatuur")
+        if primary is not None and (primary.state in PRIMARY_NOT_HEATING
+                                    or primary.attributes.get("hvac_action") == "cooling"):
+            self._cold_since.pop(pid, None)
+            return standby_wish("airco koelt")  # never heat against a cooling air conditioner
+        ts = now.timestamp()
+        room = air.get("temperature")
+        if room is None and primary is not None:
+            room = primary.attributes.get("current_temperature")
+        room = float(room) if room is not None else None
+        why = ""
+        if primary is None or primary.state in PRIMARY_FAULT:
+            why = "airco onbereikbaar"
+        else:
+            if primary.attributes.get("hvac_action") == "defrosting":
+                since = self._defrost_since.setdefault(pid, ts)
+                if ts - since >= DEFROST_GRACE_MINUTES * 60:
+                    why = f"airco ontdooit al {int((ts - since) // 60)} min"
+            else:
+                self._defrost_since.pop(pid, None)
+            outside, below = self._outside(), settings.get("below")
+            if not why and below is not None and outside is not None and outside < float(below):
+                why = f"buiten {outside:g} °C"
+            after = int(settings.get("after_minutes", BACKUP_AFTER_MINUTES) or 0)
+            if room is not None and room < target - BACKUP_MARGIN:
+                since = self._cold_since.setdefault(pid, ts)
+                if not why and after and ts - since >= after * 60:
+                    why = f"airco haalt {target:g} °C niet ({room:.1f} °C na {int((ts - since) // 60)} min)"
+            else:
+                self._cold_since.pop(pid, None)
+        active = self._backup_on.get(pid)
+        if not why and active:
+            reached = room is None or room >= target - BACKUP_REACHED
+            if not reached or ts - active[0] < BACKUP_MIN_MINUTES * 60:
+                why = active[1]
+        if not why:
+            return standby_wish("airco verwarmt zelf")
+        if not active:
+            self._backup_on[pid] = (ts, why)
+        self.heating[pid] = {"source": "cv", "reason": why}
+        return target, f"comfortprofiel {profile['area']}: cv als backup, {why}"
+
+    async def _apply_backup(self, eid: str, wish: tuple[float, str]) -> list[str]:
+        """Several rooms may share one boiler thermostat: the warmest wish wins."""
+        value, reason = wish
+        ent = self._ctx.index.get(eid)
+        if ent is None or ent.state in ("off", "unavailable", "unknown") or not self._free([eid]):
+            return []
+        current = ent.attributes.get("temperature")
+        if current is not None and abs(float(current) - value) < MIN_STEP:
+            self._applied[eid] = value
+            return []
+        if self._applied.get(eid) == value:
+            return []
+        self._applied[eid] = value
+        result = await self._act("climate", "set_temperature", [eid], {"temperature": value},
+                                 f"{reason} = {value:g} °C")
+        return [f"{ent.name} → {value:g} °C ({result.get('status')})"]
+
     def arriving_soon(self, now: datetime, minutes: int) -> str:
         """Why we expect someone home within the preheat time ('' when not)."""
         index = self._ctx.index
         lead = minutes
-        weather = next((e for e in index.entities.values() if e.domain == "weather"), None)
-        outside = weather.attributes.get("temperature") if weather else None
-        if outside is not None and float(outside) < 5:
+        outside = self._outside()
+        if outside is not None and outside < 5:
             lead = int(minutes * 1.5)  # a cold house takes longer to heat
         for ent in index.entities.values():
             if ent.domain != "sensor" or not ent.entity_id.endswith("_direction_of_travel") or ent.state != "towards":
