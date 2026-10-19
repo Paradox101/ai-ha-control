@@ -95,10 +95,16 @@ jobs:
           docker exec addon ai-ha-backup
           docker exec addon test -s /data/ai_ha_control.backup.db
           docker exec addon test -s /data/api_key
-          if docker exec addon python3 -c "open('/opt/ai_ha_control/x', 'w')"; then
+          # The add-on itself must run in the strict child profile.
+          confined=$(docker exec addon sh -c 'cat /proc/$(pgrep -f app.main | head -1)/attr/current')
+          echo "add-on runs as: $confined"
+          [ "$confined" = "ai_ha_control//ai_ha_control_app (enforce)" ] || exit 1
+          # Python started from inside the container gets the same profile (docker exec itself does not
+          # transition, so go through a shell like run.sh does).
+          if docker exec addon sh -c "python3 -c \"open('/opt/ai_ha_control/x', 'w')\""; then
             echo "profile allowed writing the code directory"; exit 1
           fi
-          if docker exec addon python3 -c "open('/etc/passwd', 'a')"; then
+          if docker exec addon sh -c "python3 -c \"open('/etc/passwd', 'a')\""; then
             echo "profile allowed writing /etc"; exit 1
           fi
           docker logs addon
