@@ -47,6 +47,10 @@ USEFUL_ATTRIBUTES: dict[str, tuple[str, ...]] = {
 SAFETY_CLASSES = {"smoke", "gas", "carbon_monoxide", "moisture", "safety", "heat"}
 OPENING_CLASSES = {"door", "window", "opening", "garage_door"}
 DETECTION_CLASSES = {"motion", "occupancy", "presence"}
+# A motion detector's "opening" sensor is its tamper/cover contact, not a door or window.
+NOT_OPENING_WORDS = {"bewegingsmelder", "bewegingssensor", "beweging", "motion", "pir", "tamper", "sabotage"}
+# Areas that are no living space (a dashboard group, the server or meter cupboard): left out of the overview lists.
+NON_ROOM_AREAS = {"overzicht", "overview", "server", "serverkast", "serverruimte", "meterkast", "technische ruimte"}
 DETECTION_WORDS = ("person", "persoon", "people", "vehicle", "voertuig", "car", "visitor", "bezoeker",
                    "pet", "dier", "animal", "dog", "cat", "package", "pakket", "face")
 # Only the "someone pressed the button" sensor. "deurbel"/"doorbell" is usually the device name, which the
@@ -181,6 +185,7 @@ class EntityIndex:
         self._registry: dict[str, dict[str, Any]] = {}
         self._device_area: dict[str, str | None] = {}
         self._device_name: dict[str, str] = {}
+        self._motion_devices: set[str] = set()
 
     # --- Building ---------------------------------------------------------
 
@@ -202,6 +207,7 @@ class EntityIndex:
         self.services = services or {}
         self.allowed = allowed
         self.entities = {}
+        self._motion_devices = set()
         for state in states:
             self.update_state(state)
         _LOGGER.info("Indexed %d entities in %d areas", len(self.entities), len(self.areas))
@@ -241,6 +247,8 @@ class EntityIndex:
             unit=attrs.get("unit_of_measurement"),
             last_changed=state.get("last_changed"),
         )
+        if device_id and domain == "binary_sensor" and attrs.get("device_class") in DETECTION_CLASSES:
+            self._motion_devices.add(device_id)
 
     def handle_state_changed(self, data: dict[str, Any]) -> None:
         self.update_state(data.get("new_state"), data.get("entity_id"))
@@ -345,6 +353,27 @@ class EntityIndex:
             return "off"
         return "private" if self.is_backyard(cam) else "door"
 
+    def is_opening(self, ent: EntityInfo) -> bool:
+        """A real door/window/garage contact; not the tamper ("Openen") sensor of a motion detector."""
+        if ent.domain != "binary_sensor" or ent.device_class not in OPENING_CLASSES:
+            return False
+        if ent.device_id and ent.device_id in self._motion_devices:
+            return False
+        words = set(normalize(f"{ent.entity_id.replace('_', ' ')} {ent.name} {ent.device or ''}").split())
+        return not words & NOT_OPENING_WORDS
+
+    @staticmethod
+    def group_by_area(items: list[EntityInfo]) -> dict[str, list[str]]:
+        """Friendly names per area, complete (no "some lights"): {"Woonkamer": ["Hoeklamp", ...]}."""
+        grouped: dict[str, list[str]] = {}
+        for ent in sorted(items, key=lambda e: (e.area is None, e.area or "", e.name)):
+            grouped.setdefault(ent.area or "zonder ruimte", []).append(ent.name)
+        return grouped
+
+    @staticmethod
+    def area_text(grouped: dict[str, list[str]]) -> str:
+        return "; ".join(f"{area}: {', '.join(names)}" for area, names in grouped.items())
+
     def is_detection_sensor(self, ent: EntityInfo) -> bool:
         if ent.domain != "binary_sensor":
             return False
@@ -431,17 +460,19 @@ class EntityIndex:
         def ids(pred) -> list[str]:
             return [e.compact() for e in self.entities.values() if pred(e)]
 
+        lights = [e for e in self.entities.values() if e.domain == "light" and e.state == "on"]
+
         return {
             "location": self.location_name,
-            "areas": sorted(self.areas.values()),
+            "areas": sorted(a for a in self.areas.values() if normalize(a) not in NON_ROOM_AREAS),
             "entity_counts": dict(sorted(by_domain.items())),
             "people": ids(lambda e: e.domain == "person"),
             "lights_on": ids(lambda e: e.domain == "light" and e.state == "on"),
-            "open_doors_windows": ids(
-                lambda e: e.domain == "binary_sensor"
-                and e.device_class in OPENING_CLASSES
-                and e.state == "on"
-            ),
+            "open_doors_windows": ids(lambda e: e.state == "on" and self.is_opening(e)),
+            # Complete and per room, so an answer names every light/window instead of "a few".
+            "lights_on_by_area": self.group_by_area(lights),
+            "open_by_area": self.group_by_area(
+                [e for e in self.entities.values() if e.state == "on" and self.is_opening(e)]),
             "safety_alerts": ids(
                 lambda e: e.domain == "binary_sensor" and e.device_class in SAFETY_CLASSES and e.state == "on"
             ),
@@ -449,6 +480,7 @@ class EntityIndex:
             "climate": [e.compact(with_attributes=True) for e in self.entities.values() if e.domain == "climate"],
             "unlocked": ids(lambda e: e.domain == "lock" and e.state == "unlocked"),
             "alarms": ids(lambda e: e.domain == "alarm_control_panel"),
-            "cameras": [c.compact() for c in self.cameras()],
+            # Names only: "idle" says nothing about what a camera sees.
+            "cameras": [f"{self.camera_label(c)}" + (f" ({c.area})" if c.area else "") for c in self.cameras()],
             "unavailable_count": sum(1 for e in self.entities.values() if e.state == "unavailable"),
         }

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..ha.context import DEVICE, RESIDENT
-from ..ha.index import OPENING_CLASSES, SAFETY_CLASSES, EntityInfo
+from ..ha.index import SAFETY_CLASSES, EntityInfo
 from ..house import is_car
 from ..house import words as house_words
 from ..house import label as house_label
@@ -213,7 +213,7 @@ class Watcher:
             return
         if is_vehicle(ent):
             return  # the car's doors are no burglary, no house activity
-        if ent.device_class in OPENING_CLASSES and not self.in_grace:
+        if self._ctx.index.is_opening(ent) and not self.in_grace:
             await self._opening_while_away(ent)
         if self.baseline is not None and not self.in_grace:
             anomaly = self.baseline.activity(ent, self._now())
@@ -595,7 +595,7 @@ class Watcher:
         if not heating:
             return
         for ent in entities:
-            if ent.domain != "binary_sensor" or ent.device_class not in OPENING_CLASSES or ent.state != "on":
+            if ent.state != "on" or not self._ctx.index.is_opening(ent):
                 continue
             if ent.device_class == "garage_door":
                 continue
@@ -649,7 +649,7 @@ class Watcher:
         index = self._ctx.index
         open_items, unsecured, lights = [], [], []
         for ent in list(index.entities.values()):
-            if ent.domain == "binary_sensor" and ent.device_class in OPENING_CLASSES and ent.state == "on":
+            if ent.state == "on" and index.is_opening(ent):
                 open_items.append(ent)
             elif is_unsecured(ent):
                 unsecured.append(ent)
