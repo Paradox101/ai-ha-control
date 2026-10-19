@@ -7,6 +7,7 @@ import pytest
 from aiohttp.test_utils import TestServer
 from playwright.async_api import async_playwright
 
+from app import settings as settings_module
 from app.config import Config
 from app.main import create_app
 from tests.conftest import STATES
@@ -74,6 +75,25 @@ async def test_ui_tabs_chat_and_settings(addon):
     assert not errors, errors
 
 
+async def test_settings_save_with_unknown_field_type(addon, monkeypatch):
+    """A field type the page has no builder for (stale cached page) must not break rendering or saving."""
+    sections = [{**s, "fields": list(s["fields"])} for s in settings_module.SECTIONS]
+    sections[0]["fields"].append({"key": "future_field", "label": "Toekomstig veld", "type": "future", "help": ""})
+    monkeypatch.setattr(settings_module, "SECTIONS", sections)
+    errors = []
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
+        page = await browser.new_page()
+        page.on("pageerror", lambda err: errors.append(str(err)))
+        response = await page.goto(addon)
+        assert response.headers.get("cache-control") == "no-cache"
+        await page.wait_for_selector("#ha:has-text('HA ✓')")
+        await page.click("#nav button[data-tab='settings']")
+        await page.wait_for_selector("text=Herlaad de pagina")
+        await page.wait_for_selector("text=Agenda gebruiken")
+        await page.evaluate("document.querySelector(\"input[aria-label='Denkmodus']\").click()")
+        await page.click("#settings-save")
+        await page.wait_for_selector("text=Opgeslagen en direct toegepast")
 async def test_ui_comfort_backup_heating(addon):
     errors = []
     async with async_playwright() as pw:

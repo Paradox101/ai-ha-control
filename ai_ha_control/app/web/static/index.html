@@ -1055,6 +1055,9 @@
     },
   };
 
+  // Settings come from the add-on; a page left over from an older version may not know a new field type.
+  function unknownField() { return el("div", "hint warn", "⚠️ Deze instelling vraagt een nieuwere pagina. Herlaad de pagina (Ctrl+F5)."); }
+
   function renderSettings() {
     const form = $("settings-form"); form.replaceChildren(); fieldEls = {};
     const nav = $("section-nav"); nav.replaceChildren();
@@ -1069,7 +1072,8 @@
         const labelCol = el("div"); labelCol.append(el("label", "title", spec.label));
         if (spec.help) labelCol.append(el("div", "help", spec.help));
         const ctl = {}, control = el("div", "control"), error = el("div", "error");
-        control.append(builders[spec.type](spec, draft[spec.key], v => setValue(spec.key, v), ctl), error);
+        const build = builders[spec.type] || unknownField;
+        control.append(build(spec, draft[spec.key], v => setValue(spec.key, v), ctl), error);
         box.append(labelCol, control);
         fieldEls[spec.key] = { box, error, update: ctl.update };
         if (ctl.update) ctl.update();

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.7
+
+- Opslaan van instellingen gaf soms "builders[spec.type] is not a function": na een update draaide de browser nog een oude, gecachte pagina. De pagina wordt nu altijd opnieuw gecontroleerd en een onbekend veld toont een melding in plaats van het formulier te breken.
+
 ## 0.6.6
 
 - Comfort: per ruimte een cv-thermostaat als backup naast de airco. De cv springt alleen bij onder een instelbare buitentemperatuur, als de airco de setpoint niet binnen een instelbare tijd haalt, of bij storing of lang ontdooien; nooit terwijl de airco koelt. Het Comfort-tabblad toont welke bron nu verwarmt.

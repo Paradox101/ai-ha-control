@@ -241,7 +241,8 @@ class App:
     # --- HTTP handlers ---------------------------------------------------------
 
     async def index_page(self, _request: web.Request) -> web.FileResponse:
-        return web.FileResponse(STATIC_DIR / "index.html")
+        # Always revalidate: a cached page from an older version misses builders for new settings fields.
+        return web.FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
     async def status(self, _request: web.Request) -> web.Response:
         assert self.ha and self.llm
