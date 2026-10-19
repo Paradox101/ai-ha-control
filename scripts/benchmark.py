@@ -31,13 +31,16 @@ from app.tools import actions  # noqa: E402
 from app.tools.actions import ConfirmationStore  # noqa: E402
 from app.tools.base import ToolContext  # noqa: E402
 from app.tools.home import build_registry  # noqa: E402
+from app.tools import history  # noqa: E402
 from tests.conftest import AREAS, DEVICES, ENTITIES, SERVICES, STATES, FakeHA  # noqa: E402
+from tests.history_day import EVAL_CASES, NOW, load_day  # noqa: E402
 
 
 @dataclass
 class Case:
     prompt: str
     check: Callable[[ToolContext, str], bool]
+    day: bool = False  # with a day of history (tests/history_day.py)
 
 
 def called(domain: str, service: str, entity: str, **data) -> Callable[[ToolContext, str], bool]:
@@ -58,6 +61,10 @@ def pending_for(entity: str) -> Callable[[ToolContext, str], bool]:
         entity in p.description for p in ctx.confirmations.list())
 
 
+def answer_has(groups: list[tuple[str, ...]]) -> Callable[[ToolContext, str], bool]:
+    return lambda ctx, answer: all(any(w.lower() in answer.lower() for w in group) for group in groups)
+
+
 def remembered(word: str) -> Callable[[ToolContext, str], bool]:
     return lambda ctx, _a: any(word in m["text"] for m in ctx.db.memories())
 
@@ -74,6 +81,8 @@ CASES = [
     Case("Is Vincent thuis?", answer_contains("thuis")),
     Case("Doe de voordeur van het slot", pending_for("lock.voordeur")),
     Case("Onthoud dat ik doordeweeks om 7 uur opsta", remembered("7")),
+    # How often / when / how long: the numbers must come from the tools, not from the model.
+    *[Case(c.question, answer_has(c.answer), day=True) for c in EVAL_CASES],
 ]
 
 
@@ -92,6 +101,8 @@ async def bench_model(session: aiohttp.ClientSession, args: argparse.Namespace, 
         config = Config(ollama_url=args.ollama, model=model, context_size=args.ctx, dry_run=False, think=args.think)
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_context(config, OllamaClient(config, session), tmp)
+            if case.day:
+                load_day(ctx.index, ctx.ha)
             start = time.monotonic()
             try:
                 result = await Agent(ctx, build_registry()).run(case.prompt, f"bench{i}")
@@ -119,6 +130,7 @@ async def main() -> None:
     async def no_sleep(ctx, entity_ids):
         return [ctx.index.get(e).compact() for e in entity_ids if ctx.index.get(e)]
     actions._states_after = no_sleep  # the fake HA never changes state
+    history.local_now = lambda tz: NOW.astimezone(tz)  # the simulated day is Monday 19-10-2026 15:30
 
     results = {}
     async with aiohttp.ClientSession() as session:

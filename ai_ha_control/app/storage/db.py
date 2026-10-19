@@ -375,6 +375,17 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def events_between(self, since: float, until: float, kind: str | None = None,
+                       entity_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        sql, params = "SELECT * FROM events WHERE ts >= ? AND ts < ?", [since, until]
+        if kind:
+            sql += " AND kind = ?"
+            params.append(kind)
+        if entity_ids is not None:
+            sql += f" AND entity_id IN ({','.join('?' * len(entity_ids))})"
+            params += entity_ids
+        return self._rows(sql + " ORDER BY ts", tuple(params))
+
     # --- Memories -------------------------------------------------------------
 
     def add_memory(self, text: str) -> int:

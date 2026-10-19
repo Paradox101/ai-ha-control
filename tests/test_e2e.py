@@ -1,6 +1,8 @@
 """End-to-end: real web app + HA client against a fake HA websocket and a fake Ollama."""
 
 import asyncio
+import io
+import zipfile
 import json
 import time
 
@@ -138,6 +140,12 @@ async def test_end_to_end(tmp_path):
         audit = await (await client.get("/api/audit")).json()
         assert audit[0]["decision"] == "executed"
         assert (await client.get("/")).status == 200
+
+        export = await client.get("/api/export/entities.xlsx")
+        assert export.status == 200 and "attachment" in export.headers["Content-Disposition"]
+        with zipfile.ZipFile(io.BytesIO(await export.read())) as xlsx:
+            sheet = xlsx.read("xl/worksheets/sheet1.xml").decode()
+        assert "light.keuken" in sheet and "Keukenlamp" in sheet
     finally:
         await client.close()
         await ha_server.close()

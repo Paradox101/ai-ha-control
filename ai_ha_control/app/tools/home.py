@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -13,6 +13,7 @@ from .agent_tools import AGENT_TOOLS, HOUSE_RULE_TOOLS
 from .automations import TOOLS as AUTOMATION_TOOLS
 from .base import Tool, ToolContext, ToolRegistry, as_list
 from .context import CONTEXT_TOOLS
+from .history import get_detections, get_history
 
 # --- Reading -----------------------------------------------------------------
 
@@ -47,69 +48,6 @@ async def get_state(ctx: ToolContext, entity_ids: Any) -> dict[str, Any]:
     if missing:
         result["not_found"] = missing
     return result
-
-
-def _parse_ts(item: dict[str, Any]) -> datetime | None:
-    if "lu" in item:
-        return datetime.fromtimestamp(float(item.get("lc", item["lu"])), tz=timezone.utc)
-    ts = item.get("last_changed") or item.get("last_updated")
-    return datetime.fromisoformat(ts) if ts else None
-
-
-async def get_history(ctx: ToolContext, entity_id: str, hours: float = 24, today: bool = False) -> dict[str, Any]:
-    ent = ctx.index.get(entity_id)
-    if ent is None:
-        return {"error": f"entiteit '{entity_id}' bestaat niet; gebruik search_entities"}
-    if today:
-        local_now = datetime.now(ZoneInfo(ctx.timezone) if ctx.timezone else timezone.utc)
-        midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        hours = max(0.25, (local_now - midnight).total_seconds() / 3600)
-    hours = max(0.25, min(float(hours), 24 * 31))
-    start = datetime.now(timezone.utc) - timedelta(hours=hours)
-    raw = await ctx.ha.history([entity_id], start.isoformat())
-    items = raw.get(entity_id, []) if isinstance(raw, dict) else []
-    tz = ZoneInfo(ctx.timezone) if ctx.timezone else timezone.utc
-
-    values = []
-    for item in items:
-        state = item.get("s", item.get("state"))
-        try:
-            values.append(float(state))
-        except (TypeError, ValueError):
-            pass
-    summary: dict[str, Any] = {"entity": ent.compact(), "period_hours": hours, "samples": len(items)}
-    if values and len(values) >= len(items) / 2:
-        if ent.attributes.get("state_class") in ("total", "total_increasing"):
-            # Meter (kWh, m³): the increase is what matters; a drop means the meter was reset.
-            increase = sum(b - a if b >= a else b for a, b in zip(values, values[1:]))
-            summary.update({"increase": round(increase, 3), "last": values[-1], "unit": ent.unit})
-            return summary
-        summary.update(
-            {
-                "min": round(min(values), 2),
-                "max": round(max(values), 2),
-                "avg": round(sum(values) / len(values), 2),
-                "first": values[0],
-                "last": values[-1],
-                "unit": ent.unit,
-            }
-        )
-        return summary
-
-    changes = []
-    durations: dict[str, float] = defaultdict(float)
-    for i, item in enumerate(items):
-        ts = _parse_ts(item)
-        state = item.get("s", item.get("state"))
-        if ts is None:
-            continue
-        nxt = _parse_ts(items[i + 1]) if i + 1 < len(items) else datetime.now(timezone.utc)
-        if nxt:
-            durations[state] += (nxt - max(ts, start)).total_seconds() / 60
-        changes.append(f"{ts.astimezone(tz):%d-%m %H:%M} {state}")
-    summary["changes"] = changes[-20:]
-    summary["minutes_per_state"] = {k: round(v) for k, v in durations.items()}
-    return summary
 
 
 async def get_forecast(ctx: ToolContext, entity_id: str | None = None, kind: str = "daily") -> dict[str, Any]:
@@ -332,17 +270,45 @@ TOOLS = [
     ),
     Tool(
         "get_history",
-        "Geschiedenis van een entiteit: min/max/gemiddelde voor getallen, of de wijzigingen voor aan/uit-sensoren.",
+        "Geschiedenis van één entiteit over een periode. Getallen: min/max/gemiddelde. Aan/uit, open/dicht, "
+        "thuis/weg: het exacte aantal keer (count), de tijdstippen en hoe lang (total_duration). Voor 'hoe vaak', "
+        "'wanneer', 'hoe lang stond X aan/open', 'wanneer kwam Y thuis'.",
         {
             "type": "object",
             "properties": {
                 "entity_id": {"type": "string"},
-                "hours": {"type": "number", "description": "Aantal uur terug (standaard 24)"},
+                "period": {"type": "string", "description": "today, yesterday, day_before_yesterday, this_week, "
+                           "last_7_days, night, last_30_days, een weekdag ('zaterdag') of een datum (JJJJ-MM-DD)"},
+                "hours": {"type": "number", "description": "Of: aantal uur terug"},
+                "start": {"type": "string", "description": "Of: begin (JJJJ-MM-DDTHH:MM of HH:MM vandaag)"},
+                "end": {"type": "string", "description": "Einde bij start (standaard nu)"},
+                "state": {"type": "string", "description": "Te tellen toestand, bijv. 'on', 'open', 'home', 'weg' "
+                          "(standaard aan/open/thuis)"},
                 "today": {"type": "boolean", "description": "true = vanaf middernacht vandaag"},
             },
             "required": ["entity_id"],
         },
         get_history,
+    ),
+    Tool(
+        "get_detections",
+        "Hoe vaak en wanneer camera's/sensoren iets detecteerden: personen, voertuigen, dieren, pakketjes, "
+        "aanbellen of beweging, per plek over een periode. Telt exact (ook dubbele streams Duidelijk/Vloeiend "
+        "als één camera). Gebruik dit voor 'hoe vaak/wanneer was er iemand bij X', 'is er aangebeld'.",
+        {
+            "type": "object",
+            "properties": {
+                "what": {"type": "string", "description": "person, vehicle, animal, package, doorbell, motion of "
+                         "leeg voor alles"},
+                "where": {"type": "string", "description": "Plek, ruimte of camera, bijv. 'voordeur' (leeg = overal)"},
+                "period": {"type": "string", "description": "today (standaard), yesterday, this_week, last_7_days, "
+                           "night, een weekdag of een datum (JJJJ-MM-DD)"},
+                "hours": {"type": "number", "description": "Of: aantal uur terug"},
+                "start": {"type": "string", "description": "Of: begin (JJJJ-MM-DDTHH:MM of HH:MM vandaag)"},
+                "end": {"type": "string", "description": "Einde bij start (standaard nu)"},
+            },
+        },
+        get_detections,
     ),
     Tool(
         "get_forecast",
@@ -431,7 +397,7 @@ TOOLS = [
 
 
 AUTONOMOUS_TOOL_NAMES = {
-    "search_entities", "get_state", "get_history", "get_forecast", "analyze_camera",
+    "search_entities", "get_state", "get_history", "get_detections", "get_forecast", "analyze_camera",
     "control_light", "set_climate", "turn_on_off", "call_service",
 }
 AUTONOMOUS_AUTOMATION_TOOLS = {"list_automations", "get_automation", "related_automations"}

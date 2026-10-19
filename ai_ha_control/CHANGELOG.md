@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.5 — "Hoe vaak / wanneer / hoe lang" klopt
+
+- Nieuwe tool **get_detections**: telt exact hoe vaak en wanneer er een persoon, voertuig, dier, pakketje, aanbelling of beweging was, per camera en over een periode (vandaag, gisteren, vannacht, een weekdag, deze week, een datum). Dubbele sensoren van de Duidelijk/Vloeiend-streams, flikkerende sensoren en een korte "onbeschikbaar" tellen als één keer.
+- **get_history** telt nu zelf: aantal keer aan/open/thuis, de tijdstippen en de totale duur. De toestand aan het begin van de periode telde voorheen als wijziging; daardoor werd "camera idle om 00:00" gelezen als "één keer een persoon gezien".
+- De camera-status (idle/recording) wordt niet meer gebruikt voor detectievragen; het model neemt aantallen en tijden letterlijk over.
+- **⬇ Excel**-knop in de web-UI: alle entiteiten die de add-on ziet, plus de camera-indeling van detectiesensoren.
+- 11 evaluatievragen (tests en `scripts/benchmark.py`) met een gesimuleerde dag geschiedenis.
+
 ## 0.6.3
 
 - Inbraakmelding en de melding "AI-server niet bereikbaar" werkten niet vlak na het opstarten van het systeem (de klok begon te dicht bij nul en telde als "net thuisgekomen").

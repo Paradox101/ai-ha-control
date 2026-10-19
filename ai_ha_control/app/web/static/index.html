@@ -29,7 +29,7 @@
   @media (max-width: 640px) { .bar { flex-wrap: nowrap; } .pills { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } }
   .pill { font-size: 12px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted);
           background: none; cursor: default; white-space: nowrap; }
-  button.pill { cursor: pointer; }
+  button.pill, a.pill { cursor: pointer; text-decoration: none; }
   .pill.ok { color: var(--ok); border-color: var(--ok); }
   .pill.bad { color: var(--bad); border-color: var(--bad); }
   .pill.warn { color: var(--warn-b); border-color: var(--warn-b); }
@@ -175,6 +175,7 @@
     <div class="pills">
     <span id="ha" class="pill">HA …</span>
     <span id="llm" class="pill">Ollama …</span>
+    <a id="export" class="pill" href="api/export/entities.xlsx" download title="Download alle entiteiten die de add-on ziet als Excel">⬇ Excel</a>
     <button id="mode-pill" class="pill hidden" data-goto="agent" title="Huismodus"></button>
     <button id="agent-pill" class="pill hidden" data-goto="agent" title="Autonome agent"></button>
     <button id="dry" class="pill warn hidden" data-goto="settings" title="Testmodus: er wordt niets echt uitgevoerd. Klik om te wijzigen.">🧪 testmodus</button>

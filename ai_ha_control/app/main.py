@@ -22,6 +22,7 @@ from .comfort import ComfortController, profile_suggestions, save_profile
 from .agent.loop import Agent
 from .autonomy import Autonomy, undo_action
 from .config import Config, container_env, supervisor_token
+from .export import entities_xlsx, export_filename
 from .ha.client import HAClient
 from .ha.context import ContextTracker
 from .ha.index import EntityIndex
@@ -596,6 +597,11 @@ class App:
             return web.json_response([{"id": e.entity_id, "name": e.name, "area": e.area or ""} for e in results])
         return web.json_response([e.compact(with_attributes=True) for e in results])
 
+    async def export_entities(self, request: web.Request) -> web.Response:
+        return web.Response(body=entities_xlsx(self.index), headers={
+            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "Content-Disposition": f'attachment; filename="{export_filename()}"'})
+
 
 def access_middleware(api_key: str, supervised: bool):
     """Ingress requests are trusted; everything else (the Assist integration) needs the API key."""
@@ -671,6 +677,7 @@ def create_app(config: Config) -> web.Application:
             web.post(r"/api/suggestions/{suggestion_id:\d+}/{decision:accept|dismiss}", state.suggestion_decision),
             web.post(r"/api/jobs/{job:summary|routines}", state.run_job),
             web.get("/api/entities", state.entities),
+            web.get("/api/export/entities.xlsx", state.export_entities),
             web.get("/api/integration", state.integration),
             web.get("/api/integration/state", state.integration_state),
             web.get("/api/llm/performance", state.llm_performance),

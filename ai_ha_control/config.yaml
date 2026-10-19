@@ -1,5 +1,5 @@
 name: AI HA Control
-version: "0.6.3"
+version: "0.6.5"
 slug: ai_ha_control
 description: Lokale AI (Ollama) die je huis helpt beheren via Home Assistant
 url: https://github.com/paradox101/ai-ha-control
