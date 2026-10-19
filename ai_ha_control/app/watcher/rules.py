@@ -21,7 +21,7 @@ from ..notify import (
 )
 from ..tools.actions import describe_service, queue_confirmation, resolve_confirmation
 from ..tools.base import ToolContext
-from .vision import QUIET_CATEGORIES, SUSPICIOUS, UNKNOWN, classify
+from .vision import QUIET_CATEGORIES, SUSPICIOUS, UNKNOWN, VISITOR, classify
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +36,8 @@ SAFETY_LABELS = {
 # After (re)connecting, Home Assistant may still be starting: entities, areas and states settle over
 # a minute or two and sensors flip on. Ignore detections and periodic rules during that time.
 STARTUP_GRACE_SECONDS = 120
+# Someone at the door who doesn't ring: look again after this long, only report them if they're still there.
+LINGER_SECONDS = 45
 
 
 def minutes_since(iso: str | None) -> float:
@@ -79,6 +81,8 @@ class Watcher:
         self._done: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
         self._grace_until = 0.0
+        self._rang: dict[str, float] = {}  # camera key -> when the doorbell last rang
+        self.linger_seconds = LINGER_SECONDS
         # Optional collaborators, wired up by the app (tests may leave them out).
         self.agent = None       # AutonomousAgent: receives observations
         self.incidents = None   # IncidentManager: groups notifications into incidents
@@ -199,14 +203,23 @@ class Watcher:
         index = self._ctx.index
         doorbell = index.is_doorbell(ent)
         home = index.anyone_home()
-        if mode == "away" and not doorbell and home is not False:
+        armed = index.alarm_armed()
+        if mode == "away" and not doorbell and home is not False and not armed:
             return
         camera = index.camera_for(ent)
-        # One notification per device: person, vehicle and motion sensors of one camera fire together.
-        key = ent.device_id or (camera.entity_id if camera else ent.entity_id)
+        if camera is not None:
+            camera = index.best_stream(camera)
+        # One notification per physical camera: person, vehicle and motion sensors fire together, and
+        # each stream (clear/fluent) may come with its own sensors or device.
+        key = index._camera_key(camera) if camera else (ent.device_id or ent.entity_id)
+        profile = index.camera_profile(camera, self.config.camera_profiles) if camera else "door"
+        if profile == "off" and not doorbell:
+            return
+        if doorbell:
+            self._rang[key] = time.monotonic()
         if not self._allowed(f"{'ring' if doorbell else 'detect'}:{key}", 60 if doorbell else 300):
             return
-        where = ent.area or (camera.name if camera else ent.name)
+        where = ent.area or (index.camera_label(camera) if camera else ent.name)
 
         if camera is None:
             await self._notifier.send(
@@ -217,42 +230,76 @@ class Watcher:
             )
             return
 
-        description, failure, snapshot, category = "", "", None, UNKNOWN
-        try:
-            image = await self._ctx.ha.camera_snapshot(camera.entity_id)
-            if self.snapshots is not None:
-                snapshot = self.snapshots.save(camera.entity_id, image)
-            category, description = await classify(
-                self._ctx.llm, image, camera.name,
-                "Er werd net aangebeld." if doorbell else f"De sensor '{ent.name}' ging net af.",
-            )
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Camera analysis for %s failed: %s", camera.entity_id, err)
-            failure = f" (geen beeldanalyse: {str(err)[:120] or type(err).__name__})"
+        context = "Er werd net aangebeld." if doorbell else f"De sensor '{ent.name}' ging net af."
+        category, description, snapshot, failure = await self._look(camera, context)
 
         if category in QUIET_CATEGORIES and not doorbell:
             # Nothing, or people passing by on the street: keep it in the history, don't disturb.
             self._ctx.db.add_event("camera", f"Detectie bij {where}", description, camera.entity_id, False)
             return
-        title = "🔔 Er wordt aangebeld" if doorbell else f"📷 Detectie bij {where}"
+
+        private = profile == "private"
+        critical = armed and not doorbell and (category == SUSPICIOUS or (category == VISITOR and private))
+        if critical:
+            title = f"Persoon bij {where} terwijl het alarm aan staat"
+            await self._camera_alert(title, description, camera, snapshot, severity="critical", critical=True,
+                                     announce=f"Let op! {title}.")
+            return
+
+        if profile == "street" and category != SUSPICIOUS and not doorbell:
+            self._ctx.db.add_event("camera", f"Detectie bij {where}", description, camera.entity_id, False)
+            return
+
+        if category == VISITOR and not doorbell and not private:
+            # Someone at the door: only interesting when they hang around without ringing.
+            self._ctx.db.add_event("camera", f"Detectie bij {where}", description, camera.entity_id, False)
+            await asyncio.sleep(self.linger_seconds)
+            started = time.monotonic() - self.linger_seconds
+            if self._rang.get(key, -1e9) >= started - 5:
+                return  # they rang: the doorbell notification covers it
+            category, description, snapshot, failure = await self._look(
+                camera, f"Er stond {int(self.linger_seconds)} seconden geleden iemand. Kijk of die er nog is.")
+            if category not in (VISITOR, SUSPICIOUS):
+                return
+            await self._camera_alert(f"Iemand blijft rondhangen bij {where}", description, camera, snapshot,
+                                     severity="warning")
+            return
+
+        title = "Er wordt aangebeld" if doorbell else f"Detectie bij {where}"
         message = description or f"{ent.name} ging af.{failure}"
-        severity = "warning" if category in (SUSPICIOUS, UNKNOWN) else "info"
+        severity = "info" if doorbell else ("warning" if category in (SUSPICIOUS, UNKNOWN) else "info")
+        await self._camera_alert(title, message, camera, snapshot, severity=severity, doorbell=doorbell)
+
+    async def _look(self, camera: EntityInfo, context: str) -> tuple[str, str, str | None, str]:
+        """Snapshot + vision model: (category, description, saved snapshot, failure note)."""
+        try:
+            image = await self._ctx.ha.camera_snapshot(camera.entity_id)
+            snapshot = self.snapshots.save(camera.entity_id, image) if self.snapshots is not None else None
+            category, description = await classify(self._ctx.llm, image, camera.name, context)
+            return category, description, snapshot, ""
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Camera analysis for %s failed: %s", camera.entity_id, err)
+            return UNKNOWN, "", None, f" (geen beeldanalyse: {str(err)[:120] or type(err).__name__})"
+
+    async def _camera_alert(self, title: str, message: str, camera: EntityInfo, snapshot: str | None,
+                            severity: str, doorbell: bool = False, critical: bool = False,
+                            announce: str | None = None) -> None:
+        if doorbell:
+            announce = f"Er wordt aangebeld. {message}"
         if self.agent is not None and not doorbell:
-            self.agent.observe(f"{title.lstrip('📷 ')} ({ent.name}): {message}", urgent=True)
+            self.agent.observe(f"{title}: {message}", urgent=True)
         if self.incidents is not None:
             await self.incidents.report(
-                "doorbell" if doorbell else "presence",
-                "Er wordt aangebeld" if doorbell else f"Detectie bij {where}",
-                message, severity="info" if doorbell else severity, entity_id=camera.entity_id,
-                snapshot=snapshot, image_entity=camera.entity_id, correlate_seconds=60 if doorbell else 600,
-                announce=f"Er wordt aangebeld. {message}" if doorbell else None,
-                respect_quiet_hours=not doorbell,
+                "doorbell" if doorbell else "presence", title, message, severity=severity,
+                entity_id=camera.entity_id, snapshot=snapshot, image_entity=camera.entity_id,
+                correlate_seconds=60 if doorbell else 600, critical=critical, announce=announce,
+                respect_quiet_hours=not (doorbell or critical),
             )
             return
-        await self._notifier.send(title, message, kind="camera", entity_id=camera.entity_id,
-                                  image_entity=camera.entity_id,
-                                  announce=f"Er wordt aangebeld. {message}" if doorbell else None,
-                                  respect_quiet_hours=not doorbell)
+        icon = "🔔" if doorbell else ("🚨" if critical else "📷")
+        await self._notifier.send(f"{icon} {title}", message, kind="camera", entity_id=camera.entity_id,
+                                  image_entity=camera.entity_id, critical=critical, announce=announce,
+                                  respect_quiet_hours=not (doorbell or critical))
 
     async def handle_notification_action(self, data: dict[str, Any]) -> None:
         """Buttons pressed in a Companion app notification."""

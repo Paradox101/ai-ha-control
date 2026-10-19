@@ -816,6 +816,21 @@
       }));
       return wrap;
     },
+    cameras(spec, v, set) {
+      const list = settings.choices.cameras || [];
+      if (!list.length) return el("div", "meta", "Geen camera's gevonden.");
+      const chosen = Object.fromEntries((v || []).map(x => x.split("=")));
+      const names = Object.fromEntries(spec.options);
+      const grid = el("div", "autonomy-grid");
+      for (const cam of list) {
+        const options = spec.options.map(([k, l]) => [k, k === "auto" ? `Auto (${names[cam.guess].replace(/^\S+ /, "")})` : l]);
+        grid.append(el("div", "", cam.label), segmented(options, chosen[cam.value] || "auto", p => {
+          chosen[cam.value] = p;
+          set(Object.entries(chosen).filter(([, x]) => x !== "auto").map(([c, x]) => `${c}=${x}`));
+        }));
+      }
+      return grid;
+    },
     autonomy(spec, v, set) {
       const levels = Object.fromEntries((v || []).map(x => x.split("=")));
       const grid = el("div", "autonomy-grid");

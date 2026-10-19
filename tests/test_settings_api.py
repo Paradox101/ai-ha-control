@@ -82,6 +82,11 @@ async def test_settings_api_roundtrip(client):
     assert body["values"]["dry_run"] is False
     assert client.app["state"].config.camera_patrol == "always"  # applied immediately
 
+    bad = await client.post("/api/settings", json={"values": {"camera_profiles": ["camera.x=sometimes"]}})
+    assert bad.status == 400
+    ok = await client.post("/api/settings", json={"values": {"camera_profiles": ["camera.tuin=private", "camera.y=auto"]}})
+    assert (await ok.json())["values"]["camera_profiles"] == ["camera.tuin=private"]
+
     test = await (await client.post("/api/settings/test-ollama", json={"url": "http://127.0.0.1:1"})).json()
     assert test["reachable"] is False
 
