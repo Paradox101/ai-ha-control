@@ -1,0 +1,41 @@
+configuration:
+  ollama_url:
+    name: Ollama URL
+    description: Adres van de Ollama-server, bijv. http://192.168.1.10:11434
+  model:
+    name: Taalmodel
+    description: Ollama-model voor gesprekken en het aansturen van het huis (moet tool-calling ondersteunen)
+  vision_model:
+    name: Beeldmodel
+    description: Ollama-model voor camerabeelden (vision)
+  context_size:
+    name: Contextgrootte
+    description: Aantal tokens context (num_ctx). Hoger kost meer VRAM.
+  keep_alive:
+    name: Keep alive
+    description: Hoe lang Ollama het model in het geheugen houdt na gebruik
+  think:
+    name: Denkmodus
+    description: Laat het model eerst "nadenken" (trager, soms nauwkeuriger)
+  language:
+    name: Taal
+  dry_run:
+    name: Testmodus (dry-run)
+    description: Acties worden alleen gelogd, niet echt uitgevoerd
+  only_exposed_entities:
+    name: Alleen blootgestelde entiteiten
+    description: Beperk de AI tot entiteiten die in Assist zijn blootgesteld
+  confirm_domains:
+    name: Bevestiging vereist
+    description: Domeinen waarvoor je acties eerst moet bevestigen
+  deny_domains:
+    name: Verboden domeinen
+    description: Domeinen waarvan de AI nooit services mag aanroepen
+  deny_services:
+    name: Verboden services
+    description: Specifieke services die de AI nooit mag aanroepen (domein.service)
+  max_tool_calls:
+    name: Max. tool-aanroepen
+    description: Maximaal aantal tool-aanroepen per vraag
+  log_level:
+    name: Logniveau

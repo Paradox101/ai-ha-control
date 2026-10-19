@@ -1,0 +1,346 @@
+"""Tools the LLM can use to read and control the house."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from .actions import perform
+from .base import Tool, ToolContext, ToolRegistry, as_list
+
+# --- Reading -----------------------------------------------------------------
+
+
+async def get_home_overview(ctx: ToolContext) -> dict[str, Any]:
+    return ctx.index.overview()
+
+
+async def search_entities(
+    ctx: ToolContext,
+    query: str = "",
+    area: str | None = None,
+    domain: str | None = None,
+    device_class: str | None = None,
+    limit: int = 15,
+) -> dict[str, Any]:
+    results = ctx.index.search(query, area=area, domain=domain, device_class=device_class, limit=min(int(limit), 40))
+    if not results and area and ctx.index.resolve_area(area) is None:
+        return {"results": [], "hint": f"ruimte '{area}' niet gevonden", "areas": sorted(ctx.index.areas.values())}
+    return {"results": [e.compact() for e in results]}
+
+
+async def get_state(ctx: ToolContext, entity_ids: Any) -> dict[str, Any]:
+    found, missing = [], []
+    for eid in as_list(entity_ids):
+        ent = ctx.index.get(eid)
+        if ent:
+            found.append(ent.compact(with_attributes=True))
+        else:
+            missing.append(eid)
+    result: dict[str, Any] = {"states": found}
+    if missing:
+        result["not_found"] = missing
+    return result
+
+
+def _parse_ts(item: dict[str, Any]) -> datetime | None:
+    if "lu" in item:
+        return datetime.fromtimestamp(float(item.get("lc", item["lu"])), tz=timezone.utc)
+    ts = item.get("last_changed") or item.get("last_updated")
+    return datetime.fromisoformat(ts) if ts else None
+
+
+async def get_history(ctx: ToolContext, entity_id: str, hours: float = 24) -> dict[str, Any]:
+    ent = ctx.index.get(entity_id)
+    if ent is None:
+        return {"error": f"entiteit '{entity_id}' bestaat niet"}
+    hours = max(0.25, min(float(hours), 24 * 31))
+    start = datetime.now(timezone.utc) - timedelta(hours=hours)
+    raw = await ctx.ha.history([entity_id], start.isoformat())
+    items = raw.get(entity_id, []) if isinstance(raw, dict) else []
+    tz = ZoneInfo(ctx.timezone) if ctx.timezone else timezone.utc
+
+    values = []
+    for item in items:
+        state = item.get("s", item.get("state"))
+        try:
+            values.append(float(state))
+        except (TypeError, ValueError):
+            pass
+    summary: dict[str, Any] = {"entity": ent.compact(), "period_hours": hours, "samples": len(items)}
+    if values and len(values) >= len(items) / 2:
+        summary.update(
+            {
+                "min": round(min(values), 2),
+                "max": round(max(values), 2),
+                "avg": round(sum(values) / len(values), 2),
+                "first": values[0],
+                "last": values[-1],
+                "unit": ent.unit,
+            }
+        )
+        return summary
+
+    changes = []
+    durations: dict[str, float] = defaultdict(float)
+    for i, item in enumerate(items):
+        ts = _parse_ts(item)
+        state = item.get("s", item.get("state"))
+        if ts is None:
+            continue
+        nxt = _parse_ts(items[i + 1]) if i + 1 < len(items) else datetime.now(timezone.utc)
+        if nxt:
+            durations[state] += (nxt - max(ts, start)).total_seconds() / 60
+        changes.append(f"{ts.astimezone(tz):%d-%m %H:%M} {state}")
+    summary["changes"] = changes[-20:]
+    summary["minutes_per_state"] = {k: round(v) for k, v in durations.items()}
+    return summary
+
+
+# --- Controlling -------------------------------------------------------------
+
+COLOR_NAMES = {
+    "rood": "red", "groen": "green", "blauw": "blue", "geel": "yellow", "oranje": "orange",
+    "paars": "purple", "roze": "pink", "wit": "white", "warmwit": "warmwhite",
+}
+
+
+async def control_light(
+    ctx: ToolContext,
+    entity_ids: Any,
+    action: str = "on",
+    brightness_pct: int | None = None,
+    color_name: str | None = None,
+    color_temp_kelvin: int | None = None,
+) -> dict[str, Any]:
+    ids = as_list(entity_ids)
+    if not ids:
+        return {"error": "geen entity_ids opgegeven"}
+    action = action.lower()
+    if action in ("off", "uit"):
+        return await perform(ctx, "light", "turn_off", ids)
+    if action == "toggle":
+        return await perform(ctx, "light", "toggle", ids)
+    data: dict[str, Any] = {}
+    if brightness_pct is not None:
+        data["brightness_pct"] = max(0, min(100, int(brightness_pct)))
+    if color_name:
+        name = COLOR_NAMES.get(color_name.lower(), color_name.lower())
+        if name == "warmwhite":
+            data["color_temp_kelvin"] = 2700
+        else:
+            data["color_name"] = name
+    if color_temp_kelvin is not None:
+        data["color_temp_kelvin"] = int(color_temp_kelvin)
+    return await perform(ctx, "light", "turn_on", ids, data)
+
+
+async def set_climate(
+    ctx: ToolContext,
+    entity_id: str,
+    temperature: float | None = None,
+    hvac_mode: str | None = None,
+    preset_mode: str | None = None,
+) -> dict[str, Any]:
+    ent = ctx.index.get(entity_id)
+    if ent is None or ent.domain != "climate":
+        return {"error": f"'{entity_id}' is geen climate-entiteit; gebruik search_entities met domain=climate"}
+    results = {}
+    if hvac_mode:
+        modes = ent.attributes.get("hvac_modes") or []
+        if modes and hvac_mode not in modes:
+            return {"error": f"hvac_mode '{hvac_mode}' niet ondersteund. Opties: {modes}"}
+        results["hvac_mode"] = await perform(ctx, "climate", "set_hvac_mode", [entity_id], {"hvac_mode": hvac_mode})
+    if preset_mode:
+        presets = ent.attributes.get("preset_modes") or []
+        if presets and preset_mode not in presets:
+            return {"error": f"preset '{preset_mode}' niet ondersteund. Opties: {presets}"}
+        results["preset_mode"] = await perform(
+            ctx, "climate", "set_preset_mode", [entity_id], {"preset_mode": preset_mode}
+        )
+    if temperature is not None:
+        temperature = float(temperature)
+        lo, hi = ent.attributes.get("min_temp", 5), ent.attributes.get("max_temp", 30)
+        if not lo <= temperature <= hi:
+            return {"error": f"temperatuur {temperature} buiten bereik {lo}-{hi}"}
+        results["temperature"] = await perform(
+            ctx, "climate", "set_temperature", [entity_id], {"temperature": temperature}
+        )
+    if not results:
+        return {"error": "geef temperature, hvac_mode of preset_mode op"}
+    return results
+
+
+async def turn_on_off(ctx: ToolContext, entity_ids: Any, action: str = "on") -> dict[str, Any]:
+    ids = as_list(entity_ids)
+    if not ids:
+        return {"error": "geen entity_ids opgegeven"}
+    action = {"aan": "on", "uit": "off"}.get(action.lower(), action.lower())
+    service = {"on": "turn_on", "off": "turn_off", "toggle": "toggle"}.get(action)
+    if service is None:
+        return {"error": "action moet on, off of toggle zijn"}
+    by_domain: dict[str, list[str]] = defaultdict(list)
+    for eid in ids:
+        by_domain[eid.split(".", 1)[0]].append(eid)
+    return {domain: await perform(ctx, domain, service, eids) for domain, eids in by_domain.items()}
+
+
+async def call_service(
+    ctx: ToolContext,
+    domain: str,
+    service: str,
+    entity_ids: Any = None,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if "." in service and not domain:
+        domain, service = service.split(".", 1)
+    elif service.startswith(f"{domain}."):
+        service = service.split(".", 1)[1]
+    return await perform(ctx, domain, service, as_list(entity_ids), data if isinstance(data, dict) else None)
+
+
+async def analyze_camera(ctx: ToolContext, entity_id: str, question: str = "") -> dict[str, Any]:
+    ent = ctx.index.get(entity_id)
+    if ent is None or ent.domain != "camera":
+        cams = [e.entity_id for e in ctx.index.search(domain="camera", limit=20)]
+        return {"error": f"'{entity_id}' is geen camera", "cameras": cams}
+    image = await ctx.ha.camera_snapshot(entity_id)
+    language = "Antwoord in het Nederlands." if ctx.config.language == "nl" else "Answer in English."
+    prompt = (
+        f"Dit is een actueel beeld van camera '{ent.name}'. "
+        f"{question or 'Beschrijf kort wat je ziet, vooral personen, voertuigen, dieren en pakketjes.'} "
+        f"Wees feitelijk en beknopt. {language}"
+    )
+    description = await ctx.llm.describe_image(image, prompt)
+    ctx.db.audit("analyze_camera", {"entity_id": entity_id, "question": question}, "executed", description[:500],
+                 ctx.conversation_id)
+    return {"camera": ent.name, "description": description}
+
+
+# --- Registry ------------------------------------------------------------------
+
+ENTITY_IDS = {
+    "type": "array",
+    "items": {"type": "string"},
+    "description": "Lijst met entity_ids, bijv. ['light.woonkamer']",
+}
+
+TOOLS = [
+    Tool(
+        "get_home_overview",
+        "Overzicht van het huis: ruimtes, wie thuis is, lampen aan, open ramen/deuren, klimaat, camera's.",
+        {"type": "object", "properties": {}},
+        get_home_overview,
+    ),
+    Tool(
+        "search_entities",
+        "Zoek entiteiten (apparaten/sensoren) op naam, ruimte, domein of device_class. "
+        "Gebruik dit altijd als je de exacte entity_id niet kent.",
+        {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Zoekwoorden, bijv. 'temperatuur slaapkamer'"},
+                "area": {"type": "string", "description": "Ruimte, bijv. 'woonkamer'"},
+                "domain": {"type": "string", "description": "Domein, bijv. light, sensor, climate, camera, cover"},
+                "device_class": {"type": "string", "description": "Bijv. temperature, motion, window, door, power"},
+                "limit": {"type": "integer", "description": "Max. aantal resultaten (standaard 15)"},
+            },
+        },
+        search_entities,
+    ),
+    Tool(
+        "get_state",
+        "Actuele toestand en belangrijkste eigenschappen van één of meer entiteiten.",
+        {"type": "object", "properties": {"entity_ids": ENTITY_IDS}, "required": ["entity_ids"]},
+        get_state,
+    ),
+    Tool(
+        "get_history",
+        "Geschiedenis van een entiteit: min/max/gemiddelde voor getallen, of de wijzigingen voor aan/uit-sensoren.",
+        {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "hours": {"type": "number", "description": "Aantal uur terug (standaard 24)"},
+            },
+            "required": ["entity_id"],
+        },
+        get_history,
+    ),
+    Tool(
+        "control_light",
+        "Lampen aan/uit zetten, dimmen of van kleur veranderen.",
+        {
+            "type": "object",
+            "properties": {
+                "entity_ids": ENTITY_IDS,
+                "action": {"type": "string", "enum": ["on", "off", "toggle"]},
+                "brightness_pct": {"type": "integer", "description": "Helderheid 0-100"},
+                "color_name": {"type": "string", "description": "Kleur, bijv. red, blue, warmwhite"},
+                "color_temp_kelvin": {"type": "integer", "description": "Kleurtemperatuur, bijv. 2700 (warm) - 6500 (koel)"},
+            },
+            "required": ["entity_ids", "action"],
+        },
+        control_light,
+    ),
+    Tool(
+        "set_climate",
+        "Thermostaat/airco instellen: doeltemperatuur, hvac_mode (heat, cool, auto, off) of preset.",
+        {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "temperature": {"type": "number"},
+                "hvac_mode": {"type": "string"},
+                "preset_mode": {"type": "string"},
+            },
+            "required": ["entity_id"],
+        },
+        set_climate,
+    ),
+    Tool(
+        "turn_on_off",
+        "Willekeurige entiteiten aan/uit zetten (schakelaars, ventilatoren, media, scenes, scripts, automations).",
+        {
+            "type": "object",
+            "properties": {"entity_ids": ENTITY_IDS, "action": {"type": "string", "enum": ["on", "off", "toggle"]}},
+            "required": ["entity_ids", "action"],
+        },
+        turn_on_off,
+    ),
+    Tool(
+        "call_service",
+        "Een willekeurige Home Assistant service aanroepen voor zaken waar geen andere tool voor is, "
+        "bijv. cover.open_cover, media_player.volume_set, vacuum.start, notify.mobile_app_x.",
+        {
+            "type": "object",
+            "properties": {
+                "domain": {"type": "string"},
+                "service": {"type": "string"},
+                "entity_ids": ENTITY_IDS,
+                "data": {"type": "object", "description": "Extra service data, bijv. {'position': 50}"},
+            },
+            "required": ["domain", "service"],
+        },
+        call_service,
+    ),
+    Tool(
+        "analyze_camera",
+        "Bekijk het actuele beeld van een camera en beantwoord een vraag erover.",
+        {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "camera.* entiteit"},
+                "question": {"type": "string", "description": "Wat wil je weten, bijv. 'Staat er een pakketje?'"},
+            },
+            "required": ["entity_id"],
+        },
+        analyze_camera,
+    ),
+]
+
+
+def build_registry() -> ToolRegistry:
+    return ToolRegistry(TOOLS)

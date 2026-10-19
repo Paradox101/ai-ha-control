@@ -201,11 +201,11 @@ Testen per fase: pytest met mock HA-websocket + mock LLM; een vaste set NL-testo
 
 ---
 
-## 7. Open vragen
+## 7. Keuzes (beantwoorde vragen)
 
-1. Welke LLM-runtime draait er nu (Ollama, llama.cpp, LM Studio, …) en welk model?
-2. Draait Home Assistant OS/Supervised op dezelfde server, of apart (bijv. Pi/VM)?
-3. Camera's: via Frigate, of direct (RTSP/ONVIF/merk-integratie)?
-4. Gebruik je Assist/spraak-satellieten, of vooral chat via web/app?
-5. Welke acties moeten altijd bevestiging vragen, en waar wil je bevestigingen ontvangen (Companion app, web-UI)?
-6. Voorkeurstaal van de AI: Nederlands?
+| Vraag | Antwoord | Gevolg |
+|-------|----------|--------|
+| LLM-runtime | Ollama, model naar advies | `qwen3:8b` (tekst/tools) + `qwen3-vl:4b` (camera). Native Ollama API (`/api/chat`) voor `num_ctx`, `think`, `keep_alive` en beelden |
+| Waar draait HA | HA OS op aparte machine, zelfde netwerk | Ollama luistert op `0.0.0.0:11434`; add-on verbindt via `ollama_url` |
+| Camera's | Reolink (geen Frigate) | Snapshots via HA `camera_proxy`; Reolink persoon/voertuig-sensoren als trigger in fase 5 |
+| Assist/spraak | Nog niet | Fase 3 later; eerst Ingress-chat |
