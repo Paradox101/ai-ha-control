@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.23
+
+- **Temperaturen per ruimte in de chat**: "Graag alle temperaturen" geeft nu per ruimte de juiste sensor (de mediaan van de kamersensoren, de gekozen sensor van een comfortprofiel, anders de thermostaat), met vocht en CO₂ waar die er zijn, plus buiten. Ruimtes zonder sensor worden weggelaten in plaats van "geen temperatuur beschikbaar". Ook `get_home_overview` geeft ze (`room_readings`).
+- **Geen inleiding meer over de controle**: zinnen als "De momentopname bevat al de benodigde informatie. Hier is het antwoord nog een keer:" verdwijnen uit het antwoord.
+
 ## 0.6.22
 
 Tweede ronde verbeteringen aan bestaande functies, na een review van chat, tools, camera's en de web-UI.

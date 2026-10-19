@@ -346,3 +346,39 @@ def test_export_has_a_cleanup_sheet(ctx):
     assert rows[1][0] == "sensor.oud" and "40 dagen" in rows[1][2]
     assert [name for name, _, _ in sheets(ctx.index)][-1] == "Opruimen"
     assert pushes(ctx) == []
+
+
+# --- chat: temperatures per room ---------------------------------------------------------------
+
+async def test_chat_gets_every_room_temperature_and_skips_rooms_without_sensor(ctx):
+    from app.agent.loop import Agent
+    from app.tools.home import build_registry
+
+    temp(ctx, "sensor.badkamer_temperatuur", 21.34, "Badkamer", "Badkamer temperatuur")
+    temp(ctx, "sensor.badkamer_vocht", 71, "Badkamer", "Badkamer vocht", cls="humidity")
+    temp(ctx, "sensor.zolder_temperatuur", 17.2, "Zolder", "Zolder temperatuur")
+    temp(ctx, "sensor.goodwe_inverter_temperature", 32.1, "Zolder", "Inverter temperature")
+    put(ctx, "climate.slaapkamer_achterkant", "cool", area="Slaapkamer achterkant", friendly_name="Airco",
+        current_temperature=20.1, temperature=19)
+    ctx.index.areas["schuur"] = "Schuur"
+    prompt = Agent(ctx, build_registry()).system_prompt()
+    line = next(x for x in prompt.splitlines() if x.startswith("- Temperatuur per ruimte"))
+    assert "Badkamer 21,3 °C (RV 71 %)" in line and "Zolder 17,2 °C" in line
+    assert "Slaapkamer achterkant 20,1 °C" in line and "Schuur" not in line and "32" not in line
+    overview = await build_registry().run(ctx, "get_home_overview", {})
+    assert '"Zolder": {"temperature": 17.2}' in overview
+
+
+async def test_check_intro_sentences_are_stripped(ctx):
+    from app.agent.loop import Agent
+    from app.tools.home import build_registry
+
+    from .conftest import FakeLLM
+
+    ctx.llm = FakeLLM([
+        {"role": "assistant", "content": "Woonkamer 19,7 °C."},
+        {"role": "assistant", "content": "De momentopname bevat al de benodigde informatie. Hier is het antwoord "
+                                         "nog een keer:\n\n- Woonkamer: 19,7 °C\n- Badkamer: 21,3 °C"},
+    ])
+    result = await Agent(ctx, build_registry()).run("Graag alle temperaturen", "q9")
+    assert result.answer == "- Woonkamer: 19,7 °C\n- Badkamer: 21,3 °C"

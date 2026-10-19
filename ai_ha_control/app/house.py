@@ -75,6 +75,44 @@ def room_air(index: EntityIndex) -> dict[str, dict[str, float]]:
     return {area: {k: statistics.median(v) for k, v in by_class.items()} for area, by_class in values.items()}
 
 
+def room_readings(index: EntityIndex, profiles: list[dict[str, Any]] | tuple = ()) -> dict[str, dict[str, float]]:
+    """What each room measures, for chat and overview: the room median, a comfort profile's chosen temperature
+    sensor wins, a thermostat's own reading fills a room without sensors. Rooms without any reading are left out."""
+    result = {area: dict(v) for area, v in room_air(index).items()}
+    for profile in profiles:
+        value = sensor_value(index, profile.get("temperature_sensor"))
+        if value is not None and profile.get("area"):
+            result.setdefault(profile["area"], {})["temperature"] = value
+    current: dict[str, list[float]] = {}
+    for ent in index.entities.values():
+        value = _number(ent.attributes.get("current_temperature")) if ent.domain == "climate" else None
+        if ent.area and value is not None and ent.state not in ("unavailable", "unknown"):
+            current.setdefault(ent.area, []).append(value)
+    for area, values in current.items():
+        result.setdefault(area, {}).setdefault("temperature", statistics.median(values))
+    return {area: {k: round(v, 1) for k, v in values.items()} for area, values in sorted(result.items())}
+
+
+def fmt_number(v: float, nl: bool = True) -> str:
+    """19.7 → "19,7", 20.0 → "20"."""
+    text = f"{v:.1f}".rstrip("0").rstrip(".")
+    return text.replace(".", ",") if nl else text
+
+
+def readings_text(readings: dict[str, dict[str, float]], nl: bool = True) -> str:
+    """"Woonkamer 19,9 °C (RV 55 %, CO₂ 650 ppm)" per room, rooms without a temperature after the others."""
+    def fmt(v: float) -> str:
+        return fmt_number(v, nl)
+
+    parts = []
+    for area, v in sorted(readings.items(), key=lambda kv: "temperature" not in kv[1]):
+        extra = ([f"{'RV' if nl else 'RH'} {fmt(v['humidity'])} %"] if "humidity" in v else []) + (
+            [f"CO₂ {v['carbon_dioxide']:.0f} ppm"] if "carbon_dioxide" in v else [])
+        head = f"{area} {fmt(v['temperature'])} °C" if "temperature" in v else area
+        parts.append(head + (f" ({', '.join(extra)})" if extra else ""))
+    return "; ".join(parts)
+
+
 def sensor_value(index: EntityIndex, entity_id: str | None) -> float | None:
     ent = index.get(entity_id) if entity_id else None
     return _number(ent.state) if ent else None
