@@ -124,6 +124,12 @@ configuration:
   bedtime_check:
     name: Bedtime check
     description: When the house goes to sleep: one notification with open windows/doors, locks and lights still on
+  appliance_alerts:
+    name: Appliance done
+    description: Notify when the washer, dryer or dishwasher is done (power sensor with that name)
+  leak_flow_hours:
+    name: Warn when water keeps running for (hours)
+    description: Water meter or flow sensor without a pause; three times as long during the day. 0 = off
   escalate_minutes:
     name: Repeat alarms after (minutes)
     description: "Critical notifications nobody marked as 'Seen' are sent to everybody again and announced, at most 3 times. 0 = off."

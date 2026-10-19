@@ -124,6 +124,12 @@ configuration:
   bedtime_check:
     name: Nachtronde
     description: Bij het slapengaan één melding met open ramen/deuren, sloten en lampen die nog aan staan
+  appliance_alerts:
+    name: Apparaat klaar
+    description: Melding als wasmachine, droger of vaatwasser klaar is (stroommeter met die naam)
+  leak_flow_hours:
+    name: Waarschuwen als water blijft lopen na (uren)
+    description: Watermeter of doorstroomsensor zonder pauze; overdag drie keer zo lang. 0 = uit
   escalate_minutes:
     name: Alarm herhalen na (minuten)
     description: "Kritieke meldingen zonder 'Gezien' gaan opnieuw naar iedereen en worden omgeroepen, maximaal 3 keer. 0 = uit."

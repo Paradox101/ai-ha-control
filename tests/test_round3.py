@@ -234,3 +234,69 @@ async def test_missed_action_is_not_run_late(ctx, notifier):
     await run_due(ctx, time.time() + 86400)
     assert not any(c[:2] == ("light", "turn_off") for c in ctx.ha.calls)
     assert ctx.db.events()[0]["title"] == "⚙️ Geplande actie overgeslagen"
+
+
+# --- appliances done and water that keeps running -------------------------------------------------------
+
+from app.watcher.appliances import ApplianceMonitor  # noqa: E402
+
+
+def power(ctx, watts, entity_id="sensor.wasmachine_vermogen"):
+    ctx.index.update_state({"entity_id": entity_id, "state": str(watts),
+                            "attributes": {"friendly_name": "Wasmachine vermogen", "device_class": "power",
+                                           "unit_of_measurement": "W"}})
+
+
+async def test_washer_done_after_a_real_run(ctx, notifier):
+    monitor = ApplianceMonitor(ctx, notifier)
+    t = time.time()
+    power(ctx, 0)
+    await monitor.tick("thuis", t)
+    for minute, watts in [(1, 2000), (20, 150), (40, 3), (45, 600), (60, 2), (65, 1)]:
+        power(ctx, watts)
+        await monitor.tick("thuis", t + minute * 60)
+    assert ctx.db.events() == []  # low for only 5 minutes
+    await monitor.tick("thuis", t + 71 * 60)
+    (event,) = ctx.db.events()
+    assert event["title"] == "🧺 Wasmachine is klaar" and "59 minuten" in event["message"]
+    await monitor.tick("thuis", t + 90 * 60)
+    assert len(ctx.db.events()) == 1
+
+
+async def test_short_blip_is_not_a_program(ctx, notifier):
+    monitor = ApplianceMonitor(ctx, notifier)
+    t = time.time()
+    for minute, watts in [(0, 0), (1, 50), (3, 1), (20, 1)]:
+        power(ctx, watts)
+        await monitor.tick("thuis", t + minute * 60)
+    assert ctx.db.events() == []
+
+
+def meter(ctx, liters):
+    ctx.index.update_state({"entity_id": "sensor.watermeter", "state": str(liters),
+                            "attributes": {"friendly_name": "Watermeter", "device_class": "water",
+                                           "state_class": "total_increasing", "unit_of_measurement": "L"}})
+
+
+async def test_water_running_all_night_is_a_leak(ctx, notifier):
+    monitor = ApplianceMonitor(ctx, notifier, IncidentManager(ctx.db, notifier))
+    t = time.time()
+    liters = 1000.0
+    for minute in range(0, 3 * 60, 5):
+        liters += 0.5
+        meter(ctx, liters)
+        await monitor.tick("slapen", t + minute * 60)
+    (incident,) = ctx.db.incidents(status="active")
+    assert incident["title"] == "Water blijft lopen"
+
+
+async def test_normal_use_with_pauses_is_no_leak(ctx, notifier):
+    monitor = ApplianceMonitor(ctx, notifier, IncidentManager(ctx.db, notifier))
+    t = time.time()
+    liters = 1000.0
+    for minute in range(0, 5 * 60, 5):
+        if minute % 60 < 20:  # 20 minutes of use per hour, then a rest
+            liters += 3
+        meter(ctx, liters)
+        await monitor.tick("slapen", t + minute * 60)
+    assert ctx.db.incidents(status="active") == []

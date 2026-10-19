@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.11
+
+- **Apparaat klaar**: melding naar wie thuis is als de wasmachine, droger of vaatwasser klaar is, herkend aan een stroommeter met die naam (`appliance_alerts`).
+- **Water blijft lopen**: telt een watermeter of doorstroomsensor urenlang zonder pauze, dan komt er een waarschuwing (lekkende kraan of wc). Standaard na 2 uur 's nachts of als je weg bent, overdag na 6 uur (`leak_flow_hours`, 0 = uit).
+
 ## 0.6.10
 
 - **Herinneringen en geplande acties** via de chat: "herinner me om 18:00 aan de vuilnisbak", "zet over een uur de verwarming op 18". Bewaard over herstarts, zichtbaar en te annuleren bovenaan het tabblad Meldingen. Een geplande actie gaat op het moment zelf door dezelfde regels: deuren en alarm worden dan nog op je telefoon gevraagd. Stond de add-on op dat moment uit, dan wordt een actie niet alsnog uren later uitgevoerd maar gemeld.

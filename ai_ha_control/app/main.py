@@ -35,6 +35,7 @@ from .tools.actions import ConfirmationStore, resolve_confirmation
 from .tools.base import ToolContext
 from .tools.home import build_autonomous_registry, build_registry
 from . import settings as settings_module
+from .watcher.appliances import ApplianceMonitor
 from .watcher.baseline import Baseline
 from .watcher.incidents import IncidentManager, SnapshotStore
 from .watcher.thresholds import ThresholdMonitor, describe, normalize, save_watch_rule
@@ -149,6 +150,7 @@ class App:
         self.publisher = StatusPublisher(self.ha, self.db, self.autonomy)
         self.comfort = ComfortController(self.ctx)
         self.thresholds = ThresholdMonitor(self.ctx, self.incidents)
+        self.appliances = ApplianceMonitor(self.ctx, self.notifier, self.incidents)
         self.incidents.on_event = lambda data: self.ha.fire_event("ai_ha_control_incident", data)
         self.watcher.agent, self.watcher.incidents = self.guardian, self.incidents
         self.watcher.baseline, self.watcher.snapshots = self.baseline, self.snapshots
@@ -156,7 +158,7 @@ class App:
         s = self.scheduler
         s.agent, s.baseline, s.patrol = self.guardian, self.baseline, self.patrol
         s.incidents, s.snapshots, s.publisher = self.incidents, self.snapshots, self.publisher
-        s.comfort, s.thresholds = self.comfort, self.thresholds
+        s.comfort, s.thresholds, s.appliances = self.comfort, self.thresholds, self.appliances
         self.ha.on_connect(self.refresh_index)
         self.ha.on_connect(self.watcher.on_connected)
         self.ha.on_event("homeassistant_started", self.watcher.on_ha_started)

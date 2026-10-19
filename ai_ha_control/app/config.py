@@ -103,6 +103,9 @@ class Config:
     escalate_minutes: int = 5
     # When the house goes to sleep: one overview of open windows/doors, locks and lights still on
     bedtime_check: bool = True
+    # Washer/dryer/dishwasher done (by power use) and water that never stops running (0 = off)
+    appliance_alerts: bool = True
+    leak_flow_hours: float = 2.0
     calendar_context: bool = True
     energy_context: bool = True
     api_key: str = ""

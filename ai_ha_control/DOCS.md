@@ -112,6 +112,12 @@ Is alleen de AI-server (Ollama) weg, dan meldt de add-on dat zelf na `llm_down_m
 
 In de chat of via Assist: "herinner me om 18:00 aan de vuilnisbak" of "zet over een uur de verwarming op 18 graden". Geplande dingen staan bovenaan het tabblad *Meldingen* en kun je daar annuleren. Een geplande actie volgt op het moment zelf dezelfde regels als een gewone opdracht: sloten, alarm en poorten worden dan nog op je telefoon gevraagd.
 
+### Apparaat klaar en water dat blijft lopen
+
+Heeft een stroommeter (`sensor.*` met device class *power*) *wasmachine*, *droger* of *vaatwasser* (of washer/dryer/dishwasher) in de naam, dan krijgt wie thuis is een melding zodra het programma klaar is: minstens 10 minuten gedraaid en daarna 10 minuten onder 5 W.
+
+Een watermeter (*water*, totaal) of doorstroomsensor (*volume_flow_rate*) die `leak_flow_hours` lang nooit een kwartier stilstaat, geeft een waarschuwing. Overdag wacht de add-on drie keer zo lang, omdat douchen of de tuin sproeien dan normaal is.
+
 ### Nachtronde
 
 Gaat het huis naar de slaapmodus (slaapscène of begin van `sleep_hours`), dan krijg je één melding met ramen en deuren die open staan, sloten en garage die niet dicht zijn en lampen die nog aan staan, met een knop *Lampen uit*. Voor elk slot en de garage komt een aparte vraag op je telefoon; de agent doet dat nooit zelf. Staat alles goed, dan krijg je niets.
@@ -237,6 +243,8 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 | `digest_time` | – | Avondoverzicht van niet-dringende meldingen, bijv. `20:00` |
 | `llm_down_minutes` | `30` | Melding als de AI-server zo lang onbereikbaar is |
 | `bedtime_check` | `true` | Nachtronde: bij het slapengaan één melding met wat nog open of aan staat |
+| `appliance_alerts` | `true` | Melding als wasmachine, droger of vaatwasser klaar is (stroommeter met die naam) |
+| `leak_flow_hours` | `2` | Waarschuwing als een watermeter zo lang zonder pauze telt ('s nachts/weg; overdag 3×), 0 = uit |
 | `escalate_minutes` | `5` | Kritieke melding zonder *Gezien* na zoveel minuten opnieuw naar iedereen en omroepen (max. 3 keer, 0 = uit) |
 | `calendar_context` | `true` | Agenda in de ochtendsamenvatting; lopende afspraak met "vakantie"/"gasten" zet de huismodus |
 | `energy_context` | `true` | Stroomprijs, goedkoopste tijdvak en zonneverwachting in de samenvatting en de chat |

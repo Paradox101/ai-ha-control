@@ -29,7 +29,7 @@ MAX_ESCALATIONS = 3  # a critical notification nobody saw is repeated at most th
 # Not urgent: bundled in the evening digest when one is configured.
 DIGEST_KINDS = {"anomaly", "energy", "device", "comfort", "routine"}
 # Only for the people at home (who can do something about it there).
-HOME_KINDS = {"doorbell", "energy", "comfort"}
+HOME_KINDS = {"doorbell", "energy", "comfort", "appliance"}
 
 # Kinds where 👍/👎 feedback makes sense (things the AI decided to tell you).
 FEEDBACK_KINDS = {"camera", "motion", "energy", "anomaly", "agent", "autonomous", "presence", "security", "summary",
