@@ -37,5 +37,32 @@ configuration:
   max_tool_calls:
     name: Max. tool-aanroepen
     description: Maximaal aantal tool-aanroepen per vraag
+  notify_service:
+    name: Meldingsservice
+    description: Bijv. notify.mobile_app_telefoon. Leeg = meldingen in Home Assistant zelf.
+  proactive:
+    name: Proactief
+    description: De AI houdt het huis in de gaten en waarschuwt zelf
+  camera_alerts:
+    name: Camera-meldingen
+    description: Bij detectie (persoon/voertuig/bel) het camerabeeld laten beoordelen - off, away (alleen als niemand thuis is) of always
+  open_window_minutes:
+    name: Raam open + verwarming (min.)
+    description: Waarschuw als een raam/deur zo lang open staat terwijl de verwarming aan staat
+  unlocked_away_minutes:
+    name: Onbeveiligd terwijl weg (min.)
+    description: Waarschuw als een slot open of garagedeur open staat terwijl niemand thuis is
+  daily_summary_time:
+    name: Dagelijkse samenvatting
+    description: Tijdstip (HH:MM) voor de ochtendsamenvatting. Leeg = uit.
+  quiet_hours:
+    name: Stille uren
+    description: Geen niet-kritieke pushmeldingen in deze periode, bijv. 23:00-07:00
+  routine_learning:
+    name: Routines leren
+    description: Herken terugkerende handmatige acties en stel automatiseringen voor
+  api_key:
+    name: API-sleutel
+    description: Voor de Assist-integratie. Leeg = automatisch gegenereerd.
   log_level:
     name: Logniveau

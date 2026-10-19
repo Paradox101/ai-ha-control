@@ -1,0 +1,35 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  addon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pytest-homeassistant-custom-component
+      - run: pytest -q -c tests_integration/pytest.ini tests_integration
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build add-on image (amd64)
+        run: docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.20 -t ai-ha-control ai_ha_control
+      - name: Import check
+        run: docker run --rm --entrypoint sh ai-ha-control -c "cd /opt/ai_ha_control && python3 -c 'import app.main'"

@@ -1,5 +1,7 @@
 # AI HA Control – Plan
 
+> **Status:** fase 0–7 geïmplementeerd (v0.2.0). Zie [README.md](README.md) voor de huidige stand en [ai_ha_control/DOCS.md](ai_ha_control/DOCS.md) voor gebruik.
+
 Home Assistant add-on die een lokaal draaiende LLM (homeserver, RTX 2080 Super / 8 GB VRAM) volledige, maar gecontroleerde toegang geeft tot Home Assistant: entiteiten, sensoren, klimaat, verlichting, camera's, automatiseringen.
 
 ---

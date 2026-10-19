@@ -37,5 +37,32 @@ configuration:
   max_tool_calls:
     name: Max tool calls
     description: Maximum number of tool calls per request
+  notify_service:
+    name: Notify service
+    description: E.g. notify.mobile_app_phone. Empty = Home Assistant persistent notifications.
+  proactive:
+    name: Proactive
+    description: Let the AI watch the house and warn you by itself
+  camera_alerts:
+    name: Camera alerts
+    description: On detection (person/vehicle/doorbell) let the AI look at the camera - off, away (only when nobody is home) or always
+  open_window_minutes:
+    name: Window open + heating (min)
+    description: Warn when a window/door is open this long while heating is on
+  unlocked_away_minutes:
+    name: Unsecured while away (min)
+    description: Warn when a lock is unlocked or the garage is open while nobody is home
+  daily_summary_time:
+    name: Daily summary
+    description: Time (HH:MM) for the morning summary. Empty = off.
+  quiet_hours:
+    name: Quiet hours
+    description: No non-critical push notifications in this period, e.g. 23:00-07:00
+  routine_learning:
+    name: Learn routines
+    description: Detect repeated manual actions and suggest automations
+  api_key:
+    name: API key
+    description: Used by the Assist integration. Empty = generated automatically.
   log_level:
     name: Log level

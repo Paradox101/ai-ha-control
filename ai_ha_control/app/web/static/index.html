@@ -19,17 +19,18 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px;
+  header { display: flex; gap: 8px 12px; align-items: center; padding: 10px 16px;
            background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   header h1 { font-size: 17px; margin: 0 8px 0 0; }
   .pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); }
   .pill.ok { color: var(--ok); border-color: var(--ok); }
   .pill.bad { color: var(--bad); border-color: var(--bad); }
   .pill.warn { color: var(--warn-b); border-color: var(--warn-b); }
-  nav { margin-left: auto; display: flex; gap: 4px; }
+  nav { display: flex; gap: 4px; width: 100%; overflow-x: auto; }
   nav button { background: none; border: 1px solid transparent; color: var(--muted); padding: 4px 10px;
-               border-radius: 6px; cursor: pointer; font: inherit; }
+               border-radius: 6px; cursor: pointer; font: inherit; white-space: nowrap; }
   nav button.active { border-color: var(--border); color: var(--text); background: var(--bg); }
+  nav .badge { background: var(--accent); color: #fff; border-radius: 99px; font-size: 11px; padding: 0 6px; margin-left: 4px; }
   main { max-width: 860px; margin: 0 auto; padding: 16px; }
   #chat { display: flex; flex-direction: column; gap: 10px; padding-bottom: 90px; }
   .msg { padding: 10px 14px; border-radius: 12px; max-width: 85%; white-space: pre-wrap; word-wrap: break-word;
@@ -38,21 +39,27 @@
   .msg.error { border-color: var(--bad); color: var(--bad); }
   details { font-size: 12px; color: var(--muted); margin-top: 6px; }
   details pre { white-space: pre-wrap; margin: 4px 0; }
-  .confirm { background: var(--warn); border: 1px solid var(--warn-b); border-radius: 10px; padding: 10px 14px; }
-  .confirm button { margin: 6px 6px 0 0; }
-  form { position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel); border-top: 1px solid var(--border);
-         padding: 12px 16px; }
-  form .inner { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; }
+  .card.warn, .confirm { background: var(--warn); border: 1px solid var(--warn-b); border-radius: 10px; padding: 10px 14px; }
+  .card .meta { font-size: 12px; color: var(--muted); }
+  .card h3 { margin: 0 0 4px; font-size: 15px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  form.chat { position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel); border-top: 1px solid var(--border);
+              padding: 12px 16px; }
+  form.chat .inner { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; }
   input[type=text] { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
                      background: var(--bg); color: var(--text); font: inherit; min-width: 0; }
-  button.primary, .confirm button { background: var(--accent); color: #fff; border: 0; border-radius: 8px;
-                                    padding: 8px 16px; cursor: pointer; font: inherit; }
-  .confirm button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  button.primary, button.secondary { border-radius: 8px; padding: 8px 16px; cursor: pointer; font: inherit; }
+  button.primary { background: var(--accent); color: #fff; border: 0; }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
   button:disabled { opacity: .5; cursor: default; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--panel); }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  .hidden { display: none; }
+  .table-wrap { overflow-x: auto; }
+  code { background: var(--bg); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+  .hidden { display: none !important; }
   .typing { color: var(--muted); font-style: italic; }
+  .empty { color: var(--muted); padding: 12px 0; }
 </style>
 </head>
 <body>
@@ -63,19 +70,55 @@
   <span id="dry" class="pill warn hidden">testmodus</span>
   <nav>
     <button data-tab="chat" class="active">Chat</button>
+    <button data-tab="events">Meldingen</button>
+    <button data-tab="routines">Routines<span id="routine-badge" class="badge hidden"></span></button>
+    <button data-tab="memory">Geheugen</button>
     <button data-tab="log">Actielog</button>
+    <button data-tab="settings">Koppelen</button>
   </nav>
 </header>
 <main>
-  <section id="tab-chat">
-    <div id="chat"></div>
+  <section id="tab-chat"><div id="pending"></div><div id="chat"></div></section>
+
+  <section id="tab-events" class="hidden"><div id="events"></div></section>
+
+  <section id="tab-routines" class="hidden">
+    <p class="meta">Handelingen die je vaak rond hetzelfde tijdstip handmatig doet (laatste 14 dagen).</p>
+    <div class="row" style="margin-bottom:12px"><button class="secondary" id="analyze">Nu analyseren</button></div>
+    <div id="routines"></div>
   </section>
+
+  <section id="tab-memory" class="hidden">
+    <p class="meta">Feiten en voorkeuren die de AI onthoudt. Je kunt ook in de chat zeggen: "Onthoud dat …".</p>
+    <form id="memory-form" class="row" style="margin-bottom:12px">
+      <input id="memory-input" type="text" placeholder="Bijv. 'In de slaapkamer wil ik 's nachts 17 graden'">
+      <button class="primary">Toevoegen</button>
+    </form>
+    <div id="memories"></div>
+  </section>
+
   <section id="tab-log" class="hidden">
-    <table><thead><tr><th>Tijd</th><th>Actie</th><th>Status</th><th>Resultaat</th></tr></thead>
-      <tbody id="log"></tbody></table>
+    <div class="table-wrap"><table><thead><tr><th>Tijd</th><th>Actie</th><th>Status</th><th>Resultaat</th></tr></thead>
+      <tbody id="log"></tbody></table></div>
+  </section>
+
+  <section id="tab-settings" class="hidden">
+    <div class="card">
+      <h3>Assist / spraak</h3>
+      <p>Installeer de integratie <b>AI HA Control</b> (via HACS of <code>custom_components</code>). Meestal wordt de
+        add-on automatisch gevonden. Handmatig instellen kan met:</p>
+      <p>URL: <code id="int-url">…</code><br>API-sleutel: <code id="int-key">…</code></p>
+      <p>Kies daarna bij <b>Instellingen → Spraakassistenten</b> "AI HA Control" als gespreksagent.</p>
+    </div>
+    <div class="card">
+      <h3>Dagelijkse samenvatting</h3>
+      <p class="meta">Stuur nu een samenvatting om te testen.</p>
+      <div class="row"><button class="secondary" id="summary">Samenvatting nu sturen</button></div>
+      <p id="summary-out" class="meta"></p>
+    </div>
   </section>
 </main>
-<form id="form">
+<form id="form" class="chat">
   <div class="inner">
     <input id="input" type="text" placeholder="Vraag of opdracht, bijv. 'Welke ramen staan open?'" autocomplete="off">
     <button class="primary" id="send">Stuur</button>
@@ -88,7 +131,11 @@
     if (!r.ok) throw new Error(data.error || r.statusText);
     return data;
   });
+  const post = (path, body) => api(path, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
+  });
   const $ = id => document.getElementById(id);
+  const fmt = ts => new Date(ts * 1000).toLocaleString("nl-NL", { dateStyle: "short", timeStyle: "short" });
   let conversationId = null;
   try { conversationId = sessionStorage.getItem("conv"); } catch (e) {}
 
@@ -106,27 +153,32 @@
     return m;
   }
 
+  function resultText(r) {
+    if (r.status === "ok") return "✅ Uitgevoerd";
+    if (r.status === "dry_run") return "🧪 " + r.message;
+    if (r.status === "rejected") return "Geannuleerd";
+    return "❌ " + (r.error || r.status);
+  }
+
   function addPending(p) {
     if (document.getElementById("p-" + p.id)) return;
     const box = el("div", "confirm");
     box.id = "p-" + p.id;
     box.appendChild(el("div", "", "⚠️ Bevestiging nodig: " + p.description));
-    box.appendChild(el("div", "", p.reason));
-    const yes = el("button", "", "Uitvoeren");
+    box.appendChild(el("div", "meta", p.reason));
+    const row = el("div", "row");
+    const yes = el("button", "primary", "Uitvoeren");
     const no = el("button", "secondary", "Annuleren");
     const decide = async (decision) => {
       yes.disabled = no.disabled = true;
-      try {
-        const r = await api(`api/pending/${p.id}/${decision}`, { method: "POST" });
-        box.appendChild(el("div", "", decision === "confirm"
-          ? (r.status === "ok" ? "✅ Uitgevoerd" : r.status === "dry_run" ? "🧪 " + r.message : "❌ " + (r.error || r.status))
-          : "Geannuleerd"));
-      } catch (e) { box.appendChild(el("div", "", "❌ " + e.message)); }
+      try { box.appendChild(el("div", "", resultText(await post(`api/pending/${p.id}/${decision}`)))); }
+      catch (e) { box.appendChild(el("div", "", "❌ " + e.message)); }
     };
     yes.onclick = () => decide("confirm");
     no.onclick = () => decide("reject");
-    box.append(yes, no);
-    $("chat").appendChild(box);
+    row.append(yes, no);
+    box.appendChild(row);
+    $("pending").appendChild(box);
   }
 
   $("form").onsubmit = async (ev) => {
@@ -138,10 +190,7 @@
     addMessage(text, "user");
     const typing = addMessage("Bezig…", "typing");
     try {
-      const r = await api("api/chat", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, conversation_id: conversationId }),
-      });
+      const r = await post("api/chat", { message: text, conversation_id: conversationId });
       conversationId = r.conversation_id;
       try { sessionStorage.setItem("conv", conversationId); } catch (e) {}
       typing.remove();
@@ -171,13 +220,78 @@
       const o = s.ollama;
       let txt = "Ollama onbereikbaar", cls = "bad";
       if (o.reachable) {
-        txt = `${o.model}${o.model_installed ? "" : " (niet geïnstalleerd!)"}`;
-        cls = o.model_installed ? "ok" : "warn";
+        const missing = [!o.model_installed && o.model, !o.vision_model_installed && o.vision_model].filter(Boolean);
+        txt = missing.length ? `ontbreekt: ${missing.join(", ")}` : o.model;
+        cls = missing.length ? "warn" : "ok";
       }
       $("llm").textContent = txt;
       $("llm").className = "pill " + cls;
       $("dry").classList.toggle("hidden", !s.dry_run);
     } catch (e) {}
+    try { (await api("api/pending")).forEach(addPending); } catch (e) {}
+    try {
+      const n = (await api("api/suggestions")).length;
+      $("routine-badge").textContent = n;
+      $("routine-badge").classList.toggle("hidden", !n);
+    } catch (e) {}
+  }
+
+  async function refreshEvents() {
+    const list = await api("api/events?limit=200");
+    const box = $("events");
+    box.replaceChildren();
+    if (!list.length) box.appendChild(el("div", "empty", "Nog geen meldingen."));
+    for (const e of list) {
+      const c = el("div", "card" + (e.kind === "safety" ? " warn" : ""));
+      c.appendChild(el("h3", "", e.title));
+      c.appendChild(el("div", "", e.message));
+      c.appendChild(el("div", "meta", `${fmt(e.ts)} · ${e.kind}${e.pushed ? " · gepusht" : ""}`));
+      box.appendChild(c);
+    }
+  }
+
+  async function refreshRoutines() {
+    const list = await api("api/suggestions");
+    const box = $("routines");
+    box.replaceChildren();
+    if (!list.length) box.appendChild(el("div", "empty", "Geen nieuwe routines gevonden."));
+    for (const s of list) {
+      const c = el("div", "card");
+      c.appendChild(el("div", "", s.description));
+      c.appendChild(el("div", "meta", `${s.entity_id} → ${s.state} om ${s.time}${s.weekdays_only ? " (ma–vr)" : ""}`));
+      const row = el("div", "row");
+      const yes = el("button", "primary", "Automatisering maken");
+      const no = el("button", "secondary", "Negeren");
+      yes.onclick = async () => {
+        yes.disabled = no.disabled = true;
+        try { c.appendChild(el("div", "", resultText(await post(`api/suggestions/${s.id}/accept`)))); }
+        catch (e) { c.appendChild(el("div", "", "❌ " + e.message)); }
+      };
+      no.onclick = async () => { await post(`api/suggestions/${s.id}/dismiss`); refreshRoutines(); };
+      row.append(yes, no);
+      c.appendChild(row);
+      box.appendChild(c);
+    }
+  }
+
+  async function refreshMemories(list) {
+    list = list || await api("api/memories");
+    const box = $("memories");
+    box.replaceChildren();
+    if (!list.length) box.appendChild(el("div", "empty", "Nog niets onthouden."));
+    for (const m of list) {
+      const c = el("div", "card");
+      const row = el("div", "row");
+      row.style.justifyContent = "space-between";
+      row.style.marginTop = "0";
+      row.appendChild(el("div", "", m.text));
+      const del = el("button", "secondary", "Vergeten");
+      del.onclick = async () => refreshMemories(await api(`api/memories/${m.id}`, { method: "DELETE" }));
+      row.appendChild(del);
+      c.appendChild(row);
+      c.appendChild(el("div", "meta", fmt(m.ts)));
+      box.appendChild(c);
+    }
   }
 
   async function refreshLog() {
@@ -188,22 +302,49 @@
       const tr = el("tr");
       const a = r.arguments;
       const what = a.domain ? `${a.domain}.${a.service} ${(a.entity_ids || []).join(", ")} ${a.data && Object.keys(a.data).length ? JSON.stringify(a.data) : ""}`
-                            : `${r.action} ${JSON.stringify(a)}`;
-      tr.append(el("td", "", new Date(r.ts * 1000).toLocaleString("nl-NL")), el("td", "", what),
-                el("td", "", r.decision), el("td", "", r.result || ""));
+                 : a.config ? `automatisering: ${a.config.alias}` : `${r.action} ${JSON.stringify(a)}`;
+      tr.append(el("td", "", fmt(r.ts)), el("td", "", what), el("td", "", r.decision), el("td", "", r.result || ""));
       body.appendChild(tr);
     }
   }
 
+  async function refreshSettings() {
+    const i = await api("api/integration");
+    $("int-url").textContent = i.url;
+    $("int-key").textContent = i.api_key;
+  }
+
+  const loaders = { events: refreshEvents, routines: refreshRoutines, memory: refreshMemories,
+                    log: refreshLog, settings: refreshSettings };
   document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+    const tab = b.dataset.tab;
     document.querySelectorAll("nav button").forEach(x => x.classList.toggle("active", x === b));
-    $("tab-chat").classList.toggle("hidden", b.dataset.tab !== "chat");
-    $("tab-log").classList.toggle("hidden", b.dataset.tab !== "log");
-    $("form").classList.toggle("hidden", b.dataset.tab !== "chat");
-    if (b.dataset.tab === "log") refreshLog();
+    document.querySelectorAll("main > section").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + tab));
+    $("form").classList.toggle("hidden", tab !== "chat");
+    if (loaders[tab]) loaders[tab]().catch(e => alert(e.message));
   });
 
-  api("api/pending").then(list => list.forEach(addPending)).catch(() => {});
+  $("memory-form").onsubmit = async (ev) => {
+    ev.preventDefault();
+    const text = $("memory-input").value.trim();
+    if (!text) return;
+    $("memory-input").value = "";
+    refreshMemories(await post("api/memories", { text }));
+  };
+  $("analyze").onclick = async () => {
+    $("analyze").disabled = true;
+    try { await post("api/jobs/routines"); await refreshRoutines(); }
+    catch (e) { alert(e.message); }
+    finally { $("analyze").disabled = false; }
+  };
+  $("summary").onclick = async () => {
+    $("summary").disabled = true;
+    $("summary-out").textContent = "Bezig…";
+    try { $("summary-out").textContent = (await post("api/jobs/summary")).text || "(leeg)"; }
+    catch (e) { $("summary-out").textContent = "❌ " + e.message; }
+    finally { $("summary").disabled = false; }
+  };
+
   refreshStatus();
   setInterval(refreshStatus, 15000);
   $("input").focus();

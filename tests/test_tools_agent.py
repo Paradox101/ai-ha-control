@@ -1,7 +1,7 @@
 import json
 
 from app.agent.loop import Agent
-from app.tools.actions import execute
+from app.tools.actions import resolve_confirmation
 from app.tools.home import build_registry
 
 from .conftest import FakeLLM
@@ -38,8 +38,7 @@ async def test_lock_needs_confirmation(ctx):
     result = await run(ctx, "call_service", domain="lock", service="unlock", entity_ids=["lock.voordeur"])
     assert result["status"] == "needs_confirmation"
     assert ctx.ha.calls == []
-    pending = ctx.confirmations.pop(result["confirmation_id"])
-    out = await execute(ctx, pending.domain, pending.service, pending.entity_ids, pending.data, confirmed=True)
+    out = await resolve_confirmation(ctx, result["confirmation_id"], approve=True)
     assert out["status"] == "ok"
     assert ctx.ha.calls[0][:2] == ("lock", "unlock")
 

@@ -44,6 +44,13 @@ USEFUL_ATTRIBUTES: dict[str, tuple[str, ...]] = {
     "camera": ("motion_detection",),
 }
 
+SAFETY_CLASSES = {"smoke", "gas", "carbon_monoxide", "moisture", "safety", "heat"}
+OPENING_CLASSES = {"door", "window", "opening", "garage_door"}
+DETECTION_CLASSES = {"motion", "occupancy", "presence"}
+DETECTION_WORDS = ("person", "persoon", "vehicle", "voertuig", "visitor", "bezoeker", "doorbell", "deurbel",
+                   "pet", "dier", "animal", "package", "pakket", "face")
+DOORBELL_WORDS = ("visitor", "bezoeker", "doorbell", "deurbel")
+
 SKIP_DOMAINS = {"update", "persistent_notification", "conversation", "tts", "stt", "wake_word", "event"}
 
 
@@ -61,6 +68,7 @@ class EntityInfo:
     attributes: dict[str, Any] = field(default_factory=dict)
     area: str | None = None
     device: str | None = None
+    device_id: str | None = None
     aliases: list[str] = field(default_factory=list)
     device_class: str | None = None
     unit: str | None = None
@@ -160,6 +168,7 @@ class EntityIndex:
             attributes=attrs,
             area=self.areas.get(area_id) if area_id else None,
             device=self._device_name.get(device_id) if device_id else None,
+            device_id=device_id,
             aliases=list(reg.get("aliases") or []),
             device_class=attrs.get("device_class"),
             unit=attrs.get("unit_of_measurement"),
@@ -234,6 +243,40 @@ class EntityIndex:
         scored.sort(key=lambda item: item[0], reverse=True)
         return [ent for _, ent in scored[:limit]]
 
+    def anyone_home(self) -> bool | None:
+        """True/False based on person entities, None when there are none."""
+        people = [e for e in self.entities.values() if e.domain == "person"]
+        if not people:
+            return None
+        return any(p.state == "home" for p in people)
+
+    def is_detection_sensor(self, ent: EntityInfo) -> bool:
+        if ent.domain != "binary_sensor":
+            return False
+        if ent.device_class in DETECTION_CLASSES:
+            return True
+        object_id = ent.entity_id.split(".", 1)[1]
+        return any(word in object_id for word in DETECTION_WORDS)
+
+    @staticmethod
+    def is_doorbell(ent: EntityInfo) -> bool:
+        return any(word in ent.entity_id for word in DOORBELL_WORDS)
+
+    def camera_for(self, ent: EntityInfo) -> EntityInfo | None:
+        """Camera on the same device (Reolink) or, failing that, in the same area."""
+        cameras = [e for e in self.entities.values() if e.domain == "camera"]
+        if ent.device_id:
+            same_device = [c for c in cameras if c.device_id == ent.device_id]
+            if same_device:
+                # Prefer the high-quality "clear" stream over the "fluent" sub stream.
+                same_device.sort(key=lambda c: ("fluent" in c.entity_id, c.entity_id))
+                return same_device[0]
+        if ent.area:
+            same_area = [c for c in cameras if c.area == ent.area]
+            if same_area:
+                return same_area[0]
+        return None
+
     def overview(self) -> dict[str, Any]:
         """Short summary of the house for the system prompt / overview tool."""
         by_domain: dict[str, int] = {}
@@ -251,9 +294,13 @@ class EntityIndex:
             "lights_on": ids(lambda e: e.domain == "light" and e.state == "on"),
             "open_doors_windows": ids(
                 lambda e: e.domain == "binary_sensor"
-                and e.device_class in ("door", "window", "opening", "garage_door")
+                and e.device_class in OPENING_CLASSES
                 and e.state == "on"
             ),
+            "safety_alerts": ids(
+                lambda e: e.domain == "binary_sensor" and e.device_class in SAFETY_CLASSES and e.state == "on"
+            ),
+            "weather": [e.compact(with_attributes=True) for e in self.entities.values() if e.domain == "weather"][:1],
             "climate": [e.compact(with_attributes=True) for e in self.entities.values() if e.domain == "climate"],
             "unlocked": ids(lambda e: e.domain == "lock" and e.state == "unlocked"),
             "alarms": ids(lambda e: e.domain == "alarm_control_panel"),

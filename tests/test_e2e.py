@@ -52,8 +52,8 @@ def fake_home_assistant(service_calls: list) -> web.Application:
     return app
 
 
-def fake_ollama(requests: list) -> web.Application:
-    replies = [
+def fake_ollama(requests: list, replies: list | None = None) -> web.Application:
+    replies = replies if replies is not None else [
         {"role": "assistant", "content": "", "tool_calls": [
             {"function": {"name": "control_light", "arguments": {"entity_ids": ["light.keuken"], "action": "off"}}}]},
         {"role": "assistant", "content": "De keukenlamp is uit."},
@@ -114,6 +114,34 @@ async def test_end_to_end(tmp_path):
         audit = await (await client.get("/api/audit")).json()
         assert audit[0]["decision"] == "executed"
         assert (await client.get("/")).status == 200
+    finally:
+        await client.close()
+        await ha_server.close()
+        await ollama_server.close()
+
+
+async def test_assist_endpoint_requires_api_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "x")
+    monkeypatch.delenv("HOSTNAME", raising=False)
+    service_calls, llm_requests = [], []
+    ha_server = TestServer(fake_home_assistant(service_calls))
+    ollama_server = TestServer(fake_ollama(llm_requests, [{"role": "assistant", "content": "Het is 21,4 °C."}]))
+    await ha_server.start_server()
+    await ollama_server.start_server()
+    config = Config(ha_url=str(ha_server.make_url("")).rstrip("/"), ha_token="secret",
+                    ollama_url=str(ollama_server.make_url("")).rstrip("/"), data_dir=str(tmp_path),
+                    api_key="sleutel123")
+    client = TestClient(TestServer(create_app(config)))
+    await client.start_server()
+    try:
+        await client.app["state"].ha.wait_connected(5)
+        assert (await client.post("/api/conversation", json={"text": "Hoe warm is het?"})).status == 401
+        assert (await client.get("/api/status", headers={"Authorization": "Bearer fout"})).status == 401
+        resp = await client.post("/api/conversation", json={"text": "Hoe warm is het?", "conversation_id": "c1"},
+                                 headers={"Authorization": "Bearer sleutel123"})
+        assert resp.status == 200
+        assert await resp.json() == {"conversation_id": "c1", "speech": "Het is 21,4 °C."}
+        assert "uitgesproken" in llm_requests[0]["messages"][0]["content"]  # voice-friendly prompt
     finally:
         await client.close()
         await ha_server.close()

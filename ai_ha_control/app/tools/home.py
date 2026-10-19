@@ -8,6 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .actions import perform
+from .automations import TOOLS as AUTOMATION_TOOLS
 from .base import Tool, ToolContext, ToolRegistry, as_list
 
 # --- Reading -----------------------------------------------------------------
@@ -343,4 +344,4 @@ TOOLS = [
 
 
 def build_registry() -> ToolRegistry:
-    return ToolRegistry(TOOLS)
+    return ToolRegistry(TOOLS + AUTOMATION_TOOLS)

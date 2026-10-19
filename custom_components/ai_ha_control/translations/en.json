@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "AI HA Control",
+        "description": "Connect to the AI HA Control add-on. The API key is shown in the add-on log.",
+        "data": {
+          "url": "Add-on URL",
+          "api_key": "API key"
+        }
+      },
+      "hassio_confirm": {
+        "title": "AI HA Control add-on found",
+        "description": "Use the AI HA Control add-on as a conversation agent for Assist?"
+      },
+      "reauth_confirm": {
+        "title": "New API key",
+        "data": {
+          "api_key": "API key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the add-on",
+      "invalid_auth": "Invalid API key"
+    },
+    "abort": {
+      "already_configured": "Already configured",
+      "reauth_successful": "API key updated"
+    }
+  },
+  "services": {
+    "ask": {
+      "name": "Ask the AI",
+      "description": "Send a question or command to the local AI and get the answer back.",
+      "fields": {
+        "text": {
+          "name": "Text",
+          "description": "Question or command"
+        },
+        "conversation_id": {
+          "name": "Conversation ID",
+          "description": "Continue an earlier conversation"
+        }
+      }
+    }
+  }
+}

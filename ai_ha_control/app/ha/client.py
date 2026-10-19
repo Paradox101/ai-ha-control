@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -28,7 +29,7 @@ class HAClient:
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ids = itertools.count(1)
         self._pending: dict[int, asyncio.Future] = {}
-        self._event_callbacks: list[EventCallback] = []
+        self._event_callbacks: dict[str, list[EventCallback]] = defaultdict(list)
         self._connect_callbacks: list[Callable[[], Awaitable[None]]] = []
         self._connected = asyncio.Event()
         self._runner: asyncio.Task | None = None
@@ -38,8 +39,12 @@ class HAClient:
     def connected(self) -> bool:
         return self._connected.is_set()
 
+    def on_event(self, event_type: str, callback: EventCallback) -> None:
+        """Register a callback receiving the event data; register before start()."""
+        self._event_callbacks[event_type].append(callback)
+
     def on_state_changed(self, callback: EventCallback) -> None:
-        self._event_callbacks.append(callback)
+        self.on_event("state_changed", callback)
 
     def on_connect(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._connect_callbacks.append(callback)
@@ -91,7 +96,8 @@ class HAClient:
 
             reader = asyncio.create_task(self._reader(ws))
             try:
-                await self._send_command({"type": "subscribe_events", "event_type": "state_changed"})
+                for event_type in {"state_changed", *self._event_callbacks}:
+                    await self._send_command({"type": "subscribe_events", "event_type": event_type})
                 self._connected.set()
                 for callback in self._connect_callbacks:
                     await callback()
@@ -111,14 +117,14 @@ class HAClient:
     async def _dispatch(self, msg: dict[str, Any]) -> None:
         if msg.get("type") == "event":
             event = msg.get("event", {})
-            if event.get("event_type") == "state_changed":
-                for callback in self._event_callbacks:
-                    try:
-                        result = callback(event.get("data", {}))
-                        if asyncio.iscoroutine(result):
-                            await result
-                    except Exception:  # noqa: BLE001
-                        _LOGGER.exception("state_changed callback failed")
+            event_type = event.get("event_type")
+            for callback in self._event_callbacks.get(event_type, []):
+                try:
+                    result = callback(event.get("data", {}))
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception("%s callback failed", event_type)
             return
         fut = self._pending.pop(msg.get("id"), None)
         if fut is None or fut.done():
@@ -202,10 +208,39 @@ class HAClient:
             payload["end_time"] = end_time
         return await self.command(payload, timeout=60)
 
-    async def camera_snapshot(self, entity_id: str) -> bytes:
-        url = f"{self._config.ha_url.rstrip('/')}/api/camera_proxy/{entity_id}"
+    async def logbook(self, entity_ids: list[str], start_time: str, end_time: str) -> list[dict[str, Any]]:
+        return await self.command(
+            {"type": "logbook/get_events", "start_time": start_time, "end_time": end_time, "entity_ids": entity_ids},
+            timeout=120,
+        )
+
+    async def validate_config(self, triggers: Any, conditions: Any, actions: Any) -> dict[str, Any]:
+        """Validate automation parts; returns {section: {valid, error}}."""
+        payload: dict[str, Any] = {"type": "validate_config", "triggers": triggers, "actions": actions}
+        if conditions:
+            payload["conditions"] = conditions
+        return await self.command(payload)
+
+    # --- REST -------------------------------------------------------------------
+
+    async def _rest(self, method: str, path: str, json: Any = None, raw: bool = False) -> Any:
+        url = f"{self._config.ha_url.rstrip('/')}/api/{path.lstrip('/')}"
         headers = {"Authorization": f"Bearer {self._config.ha_token}"}
-        async with self._session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            if resp.status != 200:
-                raise HAError(f"camera snapshot failed ({resp.status})")
-            return await resp.read()
+        async with self._session.request(
+            method, url, json=json, headers=headers, timeout=aiohttp.ClientTimeout(total=30)
+        ) as resp:
+            if resp.status >= 400:
+                raise HAError(f"{method} {path} failed ({resp.status}): {(await resp.text())[:300]}")
+            if raw:
+                return await resp.read()
+            return await resp.json(content_type=None)
+
+    async def camera_snapshot(self, entity_id: str) -> bytes:
+        return await self._rest("GET", f"camera_proxy/{entity_id}", raw=True)
+
+    async def get_automation_config(self, automation_id: str) -> dict[str, Any]:
+        return await self._rest("GET", f"config/automation/config/{automation_id}")
+
+    async def save_automation_config(self, automation_id: str, config: dict[str, Any]) -> Any:
+        """Create or update an automation in automations.yaml (HA reloads automatically)."""
+        return await self._rest("POST", f"config/automation/config/{automation_id}", json=config)

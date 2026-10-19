@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..ha.client import HAClient
     from ..ha.index import EntityIndex
     from ..llm.ollama import OllamaClient
+    from ..notify import Notifier
     from ..policy import Policy
     from ..storage.db import Database
     from .actions import ConfirmationStore
@@ -31,8 +32,10 @@ class ToolContext:
     policy: Policy
     db: Database
     confirmations: ConfirmationStore
+    notifier: Notifier | None = None
     conversation_id: str | None = None
     timezone: str | None = None
+    source: str = "web"  # web | assist | watcher
 
 
 Handler = Callable[..., Awaitable[Any]]

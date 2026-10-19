@@ -38,6 +38,16 @@ class Config:
         ]
     )
     max_tool_calls: int = 8
+    # Proactive behaviour
+    notify_service: str = ""
+    proactive: bool = True
+    camera_alerts: str = "away"  # off | away | always
+    open_window_minutes: int = 10
+    unlocked_away_minutes: int = 15
+    daily_summary_time: str = "07:30"
+    quiet_hours: str = "23:00-07:00"
+    routine_learning: bool = True
+    api_key: str = ""
     log_level: str = "info"
 
     # Not user-configurable via options.json
@@ -62,7 +72,7 @@ class Config:
         if options_file.exists():
             options = json.loads(options_file.read_text())
             for key, value in options.items():
-                if hasattr(cfg, key):
+                if hasattr(cfg, key) and value is not None:
                     setattr(cfg, key, value)
 
         cfg.ha_token = os.environ.get("HA_TOKEN") or os.environ.get("SUPERVISOR_TOKEN", "")

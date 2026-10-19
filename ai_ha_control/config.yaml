@@ -1,5 +1,5 @@
 name: AI HA Control
-version: "0.1.0"
+version: "0.2.0"
 slug: ai_ha_control
 description: Lokale AI (Ollama) die je huis helpt beheren via Home Assistant
 url: https://github.com/paradox101/ai-ha-control
@@ -10,6 +10,9 @@ init: false
 startup: application
 boot: auto
 homeassistant_api: true
+hassio_api: true
+discovery:
+  - ai_ha_control
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:robot-happy
@@ -39,6 +42,15 @@ options:
     - homeassistant.stop
     - homeassistant.reload_all
   max_tool_calls: 8
+  notify_service: ""
+  proactive: true
+  camera_alerts: away
+  open_window_minutes: 10
+  unlocked_away_minutes: 15
+  daily_summary_time: "07:30"
+  quiet_hours: "23:00-07:00"
+  routine_learning: true
+  api_key: ""
   log_level: info
 schema:
   ollama_url: url
@@ -57,4 +69,13 @@ schema:
   deny_services:
     - str
   max_tool_calls: int(1,30)
+  notify_service: str?
+  proactive: bool
+  camera_alerts: list(off|away|always)
+  open_window_minutes: int(1,240)
+  unlocked_away_minutes: int(1,240)
+  daily_summary_time: str?
+  quiet_hours: str?
+  routine_learning: bool
+  api_key: password?
   log_level: list(debug|info|warning|error)

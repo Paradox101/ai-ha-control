@@ -6,6 +6,7 @@ import pytest
 
 from app.config import Config
 from app.ha.index import EntityIndex
+from app.notify import Notifier
 from app.policy import Policy
 from app.storage.db import Database
 from app.tools.actions import ConfirmationStore
@@ -27,21 +28,36 @@ STATES = [
     {"entity_id": "camera.voordeur_fluent", "state": "idle", "attributes": {"friendly_name": "Voordeur"}},
     {"entity_id": "switch.koffiezetapparaat", "state": "off", "attributes": {"friendly_name": "Koffiezetapparaat"}},
     {"entity_id": "person.vincent", "state": "home", "attributes": {"friendly_name": "Vincent"}},
+    {"entity_id": "camera.voordeur_clear", "state": "idle", "attributes": {"friendly_name": "Voordeur Clear"}},
+    {"entity_id": "binary_sensor.voordeur_person", "state": "off", "attributes": {"friendly_name": "Voordeur Persoon"}},
+    {"entity_id": "binary_sensor.voordeur_visitor", "state": "off", "attributes": {"friendly_name": "Voordeur Bezoeker"}},
+    {"entity_id": "binary_sensor.rookmelder_zolder", "state": "off",
+     "attributes": {"friendly_name": "Rookmelder zolder", "device_class": "smoke"}},
+    {"entity_id": "cover.garagedeur", "state": "closed",
+     "attributes": {"friendly_name": "Garagedeur", "device_class": "garage"}},
 ]
 AREAS = [{"area_id": "woonkamer", "name": "Woonkamer"}, {"area_id": "slaapkamer", "name": "Slaapkamer"},
          {"area_id": "keuken", "name": "Keuken"}]
-DEVICES = [{"id": "dev1", "name": "Hue plafond", "area_id": "woonkamer"}]
+DEVICES = [{"id": "dev1", "name": "Hue plafond", "area_id": "woonkamer"},
+           {"id": "cam1", "name": "Voordeur", "area_id": None}]
 ENTITIES = [
     {"entity_id": "light.woonkamer_plafond", "device_id": "dev1"},
     {"entity_id": "sensor.woonkamer_temperatuur", "area_id": "woonkamer"},
     {"entity_id": "binary_sensor.raam_slaapkamer", "area_id": "slaapkamer"},
     {"entity_id": "light.keuken", "area_id": "keuken", "aliases": ["aanrecht"]},
+    {"entity_id": "camera.voordeur_fluent", "device_id": "cam1"},
+    {"entity_id": "camera.voordeur_clear", "device_id": "cam1"},
+    {"entity_id": "binary_sensor.voordeur_person", "device_id": "cam1"},
+    {"entity_id": "binary_sensor.voordeur_visitor", "device_id": "cam1"},
 ]
 SERVICES = {
     "light": {"turn_on": {}, "turn_off": {}, "toggle": {}},
     "switch": {"turn_on": {}, "turn_off": {}, "toggle": {}},
     "climate": {"set_temperature": {}, "set_hvac_mode": {}, "set_preset_mode": {}},
     "lock": {"lock": {}, "unlock": {}},
+    "cover": {"open_cover": {}, "close_cover": {}},
+    "notify": {"mobile_app_telefoon": {}},
+    "persistent_notification": {"create": {}},
     "homeassistant": {"restart": {}, "turn_on": {}},
     "shell_command": {"run": {}},
 }
@@ -50,9 +66,23 @@ SERVICES = {
 class FakeHA:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.saved_automations: dict[str, dict] = {}
+        self.logbook_entries: list[dict] = []
+        self.validation: dict = {"triggers": {"valid": True, "error": None}, "actions": {"valid": True, "error": None}}
+        self.connected = True
 
     async def call_service(self, domain, service, data=None, target=None):
         self.calls.append((domain, service, data, target))
+
+    async def validate_config(self, triggers, conditions, actions):
+        return self.validation
+
+    async def save_automation_config(self, automation_id, config):
+        self.saved_automations[automation_id] = config
+        return {"result": "ok"}
+
+    async def logbook(self, entity_ids, start_time, end_time):
+        return [e for e in self.logbook_entries if e["entity_id"] in entity_ids]
 
     async def history(self, entity_ids, start_time, end_time=None):
         return {entity_ids[0]: [{"s": "20.0", "lu": 1.0}, {"s": "22.0", "lu": 2.0}, {"s": "21.0", "lu": 3.0}]}
@@ -99,3 +129,12 @@ def ctx(config, index) -> ToolContext:
         conversation_id="test",
         timezone="Europe/Amsterdam",
     )
+
+
+@pytest.fixture
+def notifier(ctx) -> Notifier:
+    ctx.config.quiet_hours = ""
+    n = Notifier(ctx.config, ctx.ha, ctx.db)
+    n.timezone = "Europe/Amsterdam"
+    ctx.notifier = n
+    return n
