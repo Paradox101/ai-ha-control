@@ -222,7 +222,8 @@ class EntityIndex:
             area=self.areas.get(area_id) if area_id else None,
             device=self._device_name.get(device_id) if device_id else None,
             device_id=device_id,
-            aliases=list(reg.get("aliases") or []),
+            # Newer Home Assistant versions put None in the list for "the entity's own name".
+            aliases=[str(a) for a in reg.get("aliases") or [] if a],
             device_class=attrs.get("device_class"),
             unit=attrs.get("unit_of_measurement"),
             last_changed=state.get("last_changed"),
