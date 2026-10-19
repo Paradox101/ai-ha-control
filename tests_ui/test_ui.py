@@ -49,9 +49,20 @@ async def test_ui_tabs_chat_and_settings(addon):
         page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
         await page.goto(addon)
         await page.wait_for_selector("#ha:has-text('HA ✓')")
+        await page.click("#export")
+        await page.wait_for_selector("#export-panel:not(.hidden)")
+        assert not await page.evaluate("document.documentElement.scrollWidth > window.innerWidth")
         async with page.expect_download() as download:
-            await page.click("#export")
+            await page.click("#export-xlsx")
         assert (await download.value).suggested_filename.endswith(".xlsx")
+        # Where downloading fails (the Home Assistant app), the text can be copied instead.
+        await page.click("#export-copy")
+        await page.wait_for_selector("#export-text:not(.hidden)")
+        text = await page.input_value("#export-text")
+        assert "light.keuken" in text and "\t" in text
+        await page.wait_for_selector("#toast:has-text('regels')")
+        await page.click("#export-close")
+        await page.wait_for_selector("#export-panel.hidden", state="attached")
 
         for tab in TABS:
             await page.click(f"#nav button[data-tab='{tab}']")

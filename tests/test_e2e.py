@@ -146,6 +146,10 @@ async def test_end_to_end(tmp_path):
         with zipfile.ZipFile(io.BytesIO(await export.read())) as xlsx:
             sheet = xlsx.read("xl/worksheets/sheet1.xml").decode()
         assert "light.keuken" in sheet and "Keukenlamp" in sheet
+        text = await client.get("/api/export/entities.txt")
+        assert text.status == 200 and text.headers["Content-Type"].startswith("text/plain")
+        body = await text.text()
+        assert body.startswith("## Entiteiten") and "light.keuken\tKeukenlamp\tlight" in body
     finally:
         await client.close()
         await ha_server.close()
