@@ -382,3 +382,53 @@ async def test_check_intro_sentences_are_stripped(ctx):
     ])
     result = await Agent(ctx, build_registry()).run("Graag alle temperaturen", "q9")
     assert result.answer == "- Woonkamer: 19,7 °C\n- Badkamer: 21,3 °C"
+
+
+# --- car ----------------------------------------------------------------------------------------
+
+FORD = "Ford Explorer (WF0RPAEF3SSM50705)"
+
+
+def ford(ctx, charging="NOT_PLUGGED_IN", plug="DISCONNECTED", charger_w=0):
+    p = "fordpass_wf0rpaef3ssm50705"
+    put(ctx, f"sensor.{p}_soc", 75.0, "Achtertuin", FORD, friendly_name="Laadtoestand", device_class="battery",
+        unit_of_measurement="%")
+    put(ctx, f"sensor.{p}_elveh", 226.0, "Achtertuin", FORD, friendly_name="EV bereik", device_class="distance",
+        unit_of_measurement="km")
+    put(ctx, f"sensor.{p}_odometer", 38757.0, "Achtertuin", FORD, friendly_name="Kilometerteller",
+        device_class="distance", unit_of_measurement="km")
+    put(ctx, f"sensor.{p}_elvehcharging", charging, "Achtertuin", FORD, friendly_name="EV oplaadstatus")
+    put(ctx, f"sensor.{p}_elvehplug", plug, "Achtertuin", FORD, friendly_name="EV stekker")
+    put(ctx, f"lock.{p}_doorlock", "locked", "Achtertuin", FORD, friendly_name="Deuren")
+    # A 12 V battery and a phone that are "full" must never answer "how full is the car".
+    put(ctx, f"sensor.{p}_battery", 100, "Achtertuin", FORD, friendly_name="12V accu", device_class="battery",
+        unit_of_measurement="%")
+    put(ctx, "binary_sensor.telefoon_battery", "off", device="Telefoon", friendly_name="Telefoon batterij",
+        device_class="battery")
+    put(ctx, "sensor.laadpaal_active_power_total_socket_1", charger_w, "Achtertuin", "Laadpaal",
+        friendly_name="Laadpaal Active Power Total Socket 1", device_class="power", unit_of_measurement="W")
+    put(ctx, "sensor.laadpaal_car_pwm_duty_cycle_socket_1", 26.6, "Achtertuin", "Laadpaal",
+        friendly_name="Laadpaal Car PWM Duty Cycle Socket 1", device_class="power_factor", unit_of_measurement="%")
+
+
+def test_car_status_uses_the_ev_state_of_charge(ctx):
+    from app.house import car_status
+    ford(ctx)
+    assert car_status(ctx.index) == [f"{FORD}: laadtoestand (EV-accu) 75 %, laadt niet, stekker eruit, "
+                                     "bereik 226 km, op slot"]
+    ford(ctx, charging="CHARGING", plug="CONNECTED")
+    assert "NU AAN HET LADEN" in car_status(ctx.index)[0]
+    # FordPass lags behind; the charge point's power is live.
+    ford(ctx, charger_w=7400)
+    line = car_status(ctx.index)[0]
+    assert "75 %" in line and "NU AAN HET LADEN (laadpaal 7,4 kW)" in line and "100" not in line
+
+
+async def test_car_question_reads_the_car_line(ctx):
+    from app.agent.loop import Agent
+    from app.tools.home import build_registry, get_home_overview
+    ford(ctx, charger_w=7400)
+    prompt = Agent(ctx, build_registry()).system_prompt()
+    assert f"- Auto: {FORD}: laadtoestand (EV-accu) 75 %, NU AAN HET LADEN" in prompt
+    assert "75 %" in (await get_home_overview(ctx))["car"][0]
+    assert ctx.index.search("auto accu")[0].entity_id.startswith("sensor.fordpass")
