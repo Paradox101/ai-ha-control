@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.29
+
+- **"Hoe vol is de auto?" komt nu rechtstreeks van de auto**: een vraag over de laadtoestand, het laden, het bereik of het slot van de auto gaat niet meer via het taalmodel, maar wordt direct uit de sensoren beantwoord ("De accu is 75 % vol en de auto is nu aan het laden (7,4 kW). Het bereik is 226 km."). Het kleine model maakte van 75 % nog steeds "volledig vol" en herhaalde een eerder fout antwoord uit het gesprek. Opdrachten ("doe de auto op slot") en vragen over het verleden gaan nog wel naar de agent.
+
 ## 0.6.28
 
 Nagelopen tegen de volledige entiteitenlijst van het huis (3657 entiteiten):

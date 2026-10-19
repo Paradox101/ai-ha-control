@@ -12,7 +12,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..ha.index import normalize
-from ..house import car_status, fmt_number, is_car, outside_temperature, readings_text, room_readings
+from ..house import car_answer, car_status, fmt_number, is_car, outside_temperature, readings_text, room_readings
 from ..llm.ollama import PRIORITY_CHAT, DeltaCallback
 from ..watcher.baseline import house_mode
 from ..tools.actions import resolve_confirmation
@@ -337,6 +337,11 @@ class Agent:
         ctx = replace(self._ctx, conversation_id=conversation_id, source=source)
         db = ctx.db
         shortcut = await self._answer_confirmation(ctx, user_text)
+        if shortcut is None and (car := car_answer(ctx.index, user_text, ctx.config.language == "nl")):
+            # Straight from the car's sensors: small models turned "75 %" into "volledig vol", and a wrong
+            # earlier answer in the history kept coming back.
+            shortcut = AgentResult(answer=car)
+            shortcut.actions.append({"tool": "car_status", "arguments": {}, "result": car})
         if shortcut is not None:
             db.add_message(conversation_id, "user", user_text)
             db.add_message(conversation_id, "assistant", shortcut.answer)

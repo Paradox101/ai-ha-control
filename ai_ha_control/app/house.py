@@ -344,41 +344,121 @@ def _watt(e: EntityInfo) -> float:
     return value * 1000 if (e.unit or "").lower() == "kw" else value
 
 
-def car_status(index: EntityIndex, nl: bool = True) -> list[str]:
-    """Per car one line with real numbers: state of charge, charging or not, range, plug, lock."""
-    lines = []
+def car_facts(index: EntityIndex) -> list[dict[str, Any]]:
+    """Per car what its sensors say right now; None where the car has no such sensor."""
     charger = charger_power(index)
     charger_w = _watt(charger) if charger is not None else None
+    facts = []
     for device, ents in sorted(car_devices(index).items()):
-        parts = []
-        soc = car_soc(ents)
-        if soc is not None:
-            parts.append(f"{'laadtoestand (EV-accu)' if nl else 'state of charge (EV battery)'} "
-                         f"{fmt_number(float(soc.state), nl)} %")
+        soc, rng = car_soc(ents), _car_range(ents)
         charging = _charging(ents)
         if charger_w is not None and charger_w > 100:
             charging = True
-        if charging:
-            text = "NU AAN HET LADEN" if nl else "CHARGING NOW"
-            if charger_w is not None and charger_w > 100:
-                text += f" ({'laadpaal' if nl else 'charger'} {fmt_number(charger_w / 1000, nl)} kW)"
-            parts.append(text)
-        elif charging is False:
-            parts.append("laadt niet" if nl else "not charging")
-        plugged = _plugged(ents)
-        if plugged is not None and not charging:
-            parts.append(("stekker erin" if nl else "plugged in") if plugged else
-                         ("stekker eruit" if nl else "unplugged"))
-        rng = _car_range(ents)
-        if rng is not None:
-            parts.append(f"{'bereik' if nl else 'range'} {fmt_number(float(rng.state), nl)} {rng.unit}")
         locks = [e for e in ents if e.domain == "lock" and _usable(e)]
-        if locks:
-            parts.append(locks[0].readable_state if nl else locks[0].state)
-        if soc is None:
+        facts.append({
+            "device": device,
+            "name": device.split(" (")[0] or device,
+            "soc": float(soc.state) if soc is not None else None,
+            "charging": charging,
+            "charger_kw": charger_w / 1000 if charging and charger_w is not None and charger_w > 100 else None,
+            "plugged": _plugged(ents),
+            "range": (float(rng.state), rng.unit) if rng is not None else None,
+            "lock": locks[0] if locks else None,
+        })
+    return facts
+
+
+def car_status(index: EntityIndex, nl: bool = True) -> list[str]:
+    """Per car one line with real numbers: state of charge, charging or not, range, plug, lock."""
+    lines = []
+    for f in car_facts(index):
+        parts = []
+        if f["soc"] is not None:
+            parts.append(f"{'laadtoestand (EV-accu)' if nl else 'state of charge (EV battery)'} "
+                         f"{fmt_number(f['soc'], nl)} %")
+        if f["charging"]:
+            text = "NU AAN HET LADEN" if nl else "CHARGING NOW"
+            if f["charger_kw"]:
+                text += f" ({'laadpaal' if nl else 'charger'} {fmt_number(f['charger_kw'], nl)} kW)"
+            parts.append(text)
+        elif f["charging"] is False:
+            parts.append("laadt niet" if nl else "not charging")
+        if f["plugged"] is not None and not f["charging"]:
+            parts.append(("stekker erin" if nl else "plugged in") if f["plugged"] else
+                         ("stekker eruit" if nl else "unplugged"))
+        if f["range"]:
+            parts.append(f"{'bereik' if nl else 'range'} {fmt_number(f['range'][0], nl)} {f['range'][1]}")
+        if f["lock"] is not None:
+            parts.append(f["lock"].readable_state if nl else f["lock"].state)
+        if f["soc"] is None:
             parts.append("laadtoestand onbekend (geen sensor)" if nl else "state of charge unknown (no sensor)")
-        lines.append(f"{device}: {', '.join(parts)}")
+        lines.append(f"{f['device']}: {', '.join(parts)}")
     return lines
+
+
+CAR_QUESTION_WORDS = CAR_WORDS | {"explorer", "wagen", "ev", "elektrische"}
+CAR_CHARGE_WORDS = {"vol", "accu", "batterij", "battery", "laadtoestand", "laadniveau", "soc", "procent", "opgeladen",
+                    "geladen", "laden", "laadt", "full", "charge", "charged", "charging", "leeg", "empty"}
+CAR_RANGE_WORDS = {"bereik", "actieradius", "range", "km", "kilometer", "kilometers", "rijden", "ver"}
+CAR_LOCK_WORDS = {"slot", "dicht", "vergrendeld", "afgesloten", "locked", "lock"}
+QUESTION_START = {"hoe", "is", "wat", "hoeveel", "staat", "laadt", "heeft", "zit", "how", "what", "does", "has",
+                  "kan", "ben", "zijn", "geef"}
+# Commands and questions about the past go to the agent: "doe de auto op slot", "wanneer laadde de auto".
+NOT_A_STATUS_QUESTION = {"doe", "zet", "start", "stop", "ontgrendel", "vergrendel", "open", "begin", "pauzeer",
+                         "wanneer", "gisteren", "vandaag", "lang", "vaak", "keer", "when", "yesterday", "unlock",
+                         "automatisering", "automation", "camera", "gezien", "oprit", "straat"}
+
+
+def car_answer(index: EntityIndex, question: str, nl: bool = True) -> str | None:
+    """A status question about the car ("hoe vol is de auto?") answered straight from its sensors: small models
+    turned "75 %" into "volledig vol". None for anything else (commands, history, other devices)."""
+    tokens = normalize(question).split()
+    if not tokens or not set(tokens) & CAR_QUESTION_WORDS or set(tokens) & NOT_A_STATUS_QUESTION:
+        return None
+    if "?" not in question and tokens[0] not in QUESTION_START:
+        return None
+    asks_charge, asks_range = bool(set(tokens) & CAR_CHARGE_WORDS), bool(set(tokens) & CAR_RANGE_WORDS)
+    asks_lock = bool(set(tokens) & CAR_LOCK_WORDS) or "op slot" in " ".join(tokens)
+    if not (asks_charge or asks_range or asks_lock):
+        return None
+    facts = car_facts(index)
+    if not facts:
+        return None
+    sentences = []
+    for f in facts:
+        name = ("De auto" if nl else "The car") if len(facts) == 1 else f["name"]
+        if asks_lock:
+            lock = f["lock"]
+            if lock is None:
+                sentences.append(f"Het slot van {name.lower() if len(facts) == 1 else name} is niet bekend." if nl
+                                 else f"The lock of {name.lower()} is not known.")
+            elif nl:
+                sentences.append(f"{name} staat {lock.readable_state}.")
+            else:
+                sentences.append(f"{name} is {'locked' if lock.state == 'locked' else lock.state}.")
+        if asks_charge:
+            if f["soc"] is None:
+                sentences.append("De laadtoestand van de auto is niet bekend." if nl
+                                 else "The car's state of charge is not known.")
+            else:
+                soc = fmt_number(f["soc"], nl)
+                head = (f"De accu is {soc} % vol" if nl else f"The battery is at {soc} %") \
+                    if asks_lock or len(facts) == 1 else f"{name}: {soc} %"
+                if f["charging"]:
+                    tail = (" en de auto is nu aan het laden" if nl else " and it is charging now") + (
+                        f" ({fmt_number(f['charger_kw'], nl)} kW)" if f["charger_kw"] else "")
+                elif f["charging"] is False or f["plugged"] is False:
+                    tail = " en de auto laadt nu niet" if nl else " and it is not charging"
+                else:
+                    tail = ""
+                sentences.append(head + tail + ".")
+        if asks_range or (asks_charge and f["range"] and not asks_lock):
+            if f["range"]:
+                sentences.append(f"{'Het bereik is' if nl else 'The range is'} "
+                                 f"{fmt_number(f['range'][0], nl)} {f['range'][1]}.")
+            elif asks_range:
+                sentences.append("Het bereik is niet bekend." if nl else "The range is not known.")
+    return " ".join(sentences)
 
 
 def house_fan(index: EntityIndex) -> EntityInfo | None:
