@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from ..house import grid_power, is_car, ups_on_battery, ups_runtime_minutes
+from ..house import car_devices, car_soc, grid_power, ups_on_battery, ups_runtime_minutes
 from ..ha.index import EntityInfo
 from ..tools.base import ToolContext
 from .appliances import appliance_sensors
@@ -104,8 +104,8 @@ class HouseSignals:
         idle = sorted({name for eid, name in appliance_sensors(index.entities.values()).items()
                        if (ent := index.get(eid)) is not None and _watts(ent) < 15})
         options = [f"de {n.lower()}" for n in idle]
-        car = next((e for e in index.entities.values() if e.domain == "sensor" and e.device_class == "battery"
-                    and is_car(e) and 0 <= _watts(e) < CAR_FULL), None)
+        car = next((soc for ents in car_devices(index).values()
+                    if (soc := car_soc(ents)) is not None and 0 <= _watts(soc) < CAR_FULL), None)
         if car is not None:
             options.append(f"de auto laden ({_watts(car):.0f}%)")
         tip = f" Goed moment voor {' of '.join(options)}." if options else ""

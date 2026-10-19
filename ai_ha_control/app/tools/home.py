@@ -8,7 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..ha.index import normalize
-from ..house import outside_temperature, room_readings
+from ..house import car_status, outside_temperature, room_readings
 from .actions import perform
 from .agent_tools import AGENT_TOOLS, HOUSE_RULE_TOOLS
 from .automations import TOOLS as AUTOMATION_TOOLS
@@ -26,6 +26,9 @@ async def get_home_overview(ctx: ToolContext) -> dict[str, Any]:
     outside = outside_temperature(ctx.index, ctx.config)
     if outside is not None:
         overview["outside_temperature"] = round(outside, 1)
+    car = car_status(ctx.index, ctx.config.language == "nl")
+    if car:
+        overview["car"] = car
     return overview
 
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.26
+
+- **"Hoe vol is de auto?" klopt**: de chat leest nu de laadtoestand van de auto zelf (FordPass "Laadtoestand" in %), nooit de 12V-accu of een batterijsensor van een ander apparaat. Een nieuwe regel "Auto" in de live momentopname geeft laadtoestand, of de auto nu laadt, stekker, bereik en slot. Laadt de laadpaal (Alfen e.d.) met vermogen, dan staat er "nu aan het laden" met het laadvermogen, ook als FordPass nog achterloopt. Zonder laadtoestand-sensor zegt de chat dat het niet bekend is.
+- **Zoeken op "accu" of "auto"** vindt nu ook de FordPass-sensoren.
+
 ## 0.6.25
 
 - **De auto is geen huisdeur**: sloten en deuren van een auto (FordPass, Tesla, ...) tellen niet meer mee voor "staat open terwijl niemand thuis is" of een mogelijke inbraak. De auto rijdt mee als je weg bent. In de nachtronde staat de auto nog wel apart, als "(auto)".

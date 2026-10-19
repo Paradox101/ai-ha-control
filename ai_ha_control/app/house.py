@@ -12,7 +12,7 @@ import statistics
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from .ha.index import EntityIndex, EntityInfo, normalize
+from .ha.index import CAR_WORDS, EntityIndex, EntityInfo, normalize
 
 if TYPE_CHECKING:
     from .config import Config
@@ -31,7 +31,6 @@ PSEUDO_CAMERA_WORDS = {"imap", "mail", "delivery", "buienradar", "radar", "map",
 PRIVATE_ROOM_WORDS = {"baby", "babycam", "babyfoon", "babyphone", "nursery", "kinderkamer", "slaapkamer", "bedroom",
                       "badkamer", "bathroom", "vm65", "vm75", "nanit", "owlet", "babykamer", "logeerkamer", "douche",
                       "shower", "toilet", "wc"}
-CAR_WORDS = {"fordpass", "ford", "car", "auto", "vehicle", "voertuig", "tesla", "kia", "volvo", "skoda", "bmw"}
 VENTILATION_WORDS = {"ventilatie", "ventilation", "itho", "cve", "wtw", "mv", "zehnder", "orcon", "brink"}
 AWNING_WORDS = {"zonnescherm", "markies", "knikarm", "awning", "screen"}
 ARRIVING_ZONE_WORDS = {"voorloop", "thuiskomst", "bijna", "onderweg", "approach", "nearby"}
@@ -210,6 +209,135 @@ def is_car(ent: EntityInfo) -> bool:
 def label(ent: EntityInfo) -> str:
     """Name for messages: a car lock is not a house door."""
     return f"🚗 {ent.name} (auto)" if ent.domain == "lock" and is_car(ent) else ent.name
+
+
+# State of charge, charging state, plug and range of an EV (FordPass, Tesla, Kia, ...). The 12 V battery of the
+# same car is no state of charge: "accu 100 %" while the car is charging is the wrong answer.
+CHARGER_WORDS = {"laadpaal", "charger", "wallbox", "evse", "alfen", "easee", "zaptec", "laadstation"}
+LOW_VOLTAGE_WORDS = {"12v", "lv", "aux", "12", "accu12v", "starter", "startaccu"}
+SOC_WORDS = {"soc", "laadtoestand", "laadniveau", "charge", "hvb", "ev", "elveh", "accu", "batterij", "battery"}
+RANGE_WORDS = {"range", "bereik", "actieradius", "elveh", "distance"}
+CHARGING_WORDS = {"elvehcharging", "oplaadstatus", "laadstatus", "charging"}
+PLUG_WORDS = {"elvehplug", "stekker", "plug", "plugged", "cable"}
+NOT_CHARGING = ("not", "niet", "complete", "completed", "target", "paused", "pause", "done", "finished", "stopped",
+                "fault", "error", "geen", "volledig", "vol", "full", "geladen")
+PLUGGED = {"connected", "plugged", "plugged in", "on", "ingeplugd", "verbonden"}
+UNPLUGGED = {"disconnected", "not plugged in", "unplugged", "off", "uitgeplugd", "niet verbonden"}
+
+
+def _usable(ent: EntityInfo) -> bool:
+    return ent.state not in ("unknown", "unavailable", "")
+
+
+def car_devices(index: EntityIndex) -> dict[str, list[EntityInfo]]:
+    """Per car its entities, grouped by device (a charger is no car, even with "car" in a sensor's name)."""
+    cars: dict[str, list[EntityInfo]] = {}
+    for ent in index.entities.values():
+        if not is_car(ent) or words(ent) & CHARGER_WORDS:
+            continue
+        cars.setdefault(ent.device or "Auto", []).append(ent)
+    return {d: ents for d, ents in cars.items() if any(e.domain in ("lock", "sensor") for e in ents)}
+
+
+def car_soc(ents: list[EntityInfo]) -> EntityInfo | None:
+    """The EV's state of charge in %, never the 12 V battery."""
+    found = []
+    for e in ents:
+        if e.domain != "sensor" or not _usable(e) or _number(e.state) is None or (e.unit or "%") != "%":
+            continue
+        w = words(e)
+        if w & LOW_VOLTAGE_WORDS or not (e.device_class == "battery" or w & {"soc", "laadtoestand", "laadniveau"}):
+            continue
+        rank = 0 if w & {"soc", "laadtoestand", "laadniveau", "hvb"} else 1 if w & SOC_WORDS else 2
+        found.append((rank, e.entity_id, e))
+    return min(found)[2] if found else None
+
+
+def _car_range(ents: list[EntityInfo]) -> EntityInfo | None:
+    found = [e for e in ents if e.domain == "sensor" and _usable(e) and _number(e.state) is not None
+             and (e.unit or "").lower() in ("km", "mi") and words(e) & RANGE_WORDS
+             and not words(e) & {"odometer", "kilometerteller", "fuel", "brandstof"}]
+    return min(found, key=lambda e: e.entity_id) if found else None
+
+
+def _charging(ents: list[EntityInfo]) -> bool | None:
+    """Charging or not according to the car's own charging sensor; None without one."""
+    for e in sorted(ents, key=lambda e: e.entity_id):
+        if e.domain in ("sensor", "binary_sensor") and _usable(e) and words(e) & CHARGING_WORDS \
+                and not words(e) & PLUG_WORDS:
+            if e.domain == "binary_sensor":
+                return e.state == "on"
+            text = normalize(e.state)
+            return any(w in text for w in ("charging", "in progress", "laden", "laadt")) and \
+                not any(w in text.split() or text.startswith(w) for w in NOT_CHARGING)
+    return None
+
+
+def _plugged(ents: list[EntityInfo]) -> bool | None:
+    for e in sorted(ents, key=lambda e: e.entity_id):
+        if e.domain in ("sensor", "binary_sensor") and _usable(e) and words(e) & PLUG_WORDS \
+                and not words(e) & CHARGING_WORDS:
+            text = normalize(e.state).replace("_", " ")
+            if text in UNPLUGGED or text.replace(" ", "") in {u.replace(" ", "") for u in UNPLUGGED}:
+                return False
+            if text in PLUGGED or text.replace(" ", "") in {p.replace(" ", "") for p in PLUGGED}:
+                return True
+    return None
+
+
+def charger_power(index: EntityIndex) -> EntityInfo | None:
+    """The charge point's total power (Alfen, Easee, ...): live proof the car is charging."""
+    found = []
+    for e in index.entities.values():
+        w = words(e)
+        if e.domain != "sensor" or e.device_class != "power" or not w & CHARGER_WORDS or _number(e.state) is None:
+            continue
+        if w & {"max", "min", "limit", "maximum", "minimum", "l1", "l2", "l3", "phase", "fase"}:
+            continue
+        found.append((0 if "total" in w or "totaal" in w else 1, e.entity_id, e))
+    return min(found)[2] if found else None
+
+
+def _watt(e: EntityInfo) -> float:
+    value = _number(e.state) or 0.0
+    return value * 1000 if (e.unit or "").lower() == "kw" else value
+
+
+def car_status(index: EntityIndex, nl: bool = True) -> list[str]:
+    """Per car one line with real numbers: state of charge, charging or not, range, plug, lock."""
+    lines = []
+    charger = charger_power(index)
+    charger_w = _watt(charger) if charger is not None else None
+    for device, ents in sorted(car_devices(index).items()):
+        parts = []
+        soc = car_soc(ents)
+        if soc is not None:
+            parts.append(f"{'laadtoestand (EV-accu)' if nl else 'state of charge (EV battery)'} "
+                         f"{fmt_number(float(soc.state), nl)} %")
+        charging = _charging(ents)
+        if charger_w is not None and charger_w > 100:
+            charging = True
+        if charging:
+            text = "NU AAN HET LADEN" if nl else "CHARGING NOW"
+            if charger_w is not None and charger_w > 100:
+                text += f" ({'laadpaal' if nl else 'charger'} {fmt_number(charger_w / 1000, nl)} kW)"
+            parts.append(text)
+        elif charging is False:
+            parts.append("laadt niet" if nl else "not charging")
+        plugged = _plugged(ents)
+        if plugged is not None and not charging:
+            parts.append(("stekker erin" if nl else "plugged in") if plugged else
+                         ("stekker eruit" if nl else "unplugged"))
+        rng = _car_range(ents)
+        if rng is not None:
+            parts.append(f"{'bereik' if nl else 'range'} {fmt_number(float(rng.state), nl)} {rng.unit}")
+        locks = [e for e in ents if e.domain == "lock" and _usable(e)]
+        if locks:
+            parts.append(locks[0].readable_state if nl else locks[0].state)
+        if soc is None:
+            parts.append("laadtoestand onbekend (geen sensor)" if nl else "state of charge unknown (no sensor)")
+        lines.append(f"{device}: {', '.join(parts)}")
+    return lines
 
 
 def house_fan(index: EntityIndex) -> EntityInfo | None:
