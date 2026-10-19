@@ -72,7 +72,7 @@ configuration:
     description: The AI watches the house by itself (heartbeat, incidents, follow-ups)
   autonomy:
     name: Autonomy per domain
-    description: "domain=level. observe = watch only, ask = ask with a button, act = do it (reversible, with undo)"
+    description: "domain=level. observe = watch only, shadow = record without doing, ask = ask with a button, act = do it (reversible, with undo)"
   kill_switch:
     name: Kill switch
     description: input_boolean that enables acting on its own (created automatically). Off = notify only.
@@ -100,6 +100,27 @@ configuration:
     name: Patrol interval (min)
   snapshot_retention_days:
     name: Keep snapshots (days)
+  autonomous_scenes:
+    name: Scenes/scripts the agent may start by itself
+  override_minutes:
+    name: Keep hands off after a manual change (minutes)
+  comfort:
+    name: Run comfort profiles
+  preheat_distance_km:
+    name: Preheat from distance (km)
+  leak_valve:
+    name: Close main valve on a leak
+  emergency_lights:
+    name: All lights on for smoke/gas/CO
+  emergency_fans_off:
+    name: Ventilation off for smoke
+  person_notify:
+    name: Phone per person
+    description: "person.name=notify.mobile_app_phone"
+  digest_time:
+    name: Evening digest (HH:MM)
+  llm_down_minutes:
+    name: Report an unreachable AI server after (minutes)
   api_key:
     name: API key
     description: Used by the Assist integration. Empty = generated automatically.

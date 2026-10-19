@@ -43,10 +43,11 @@ class AIHAClient:
     async def status(self) -> dict[str, Any]:
         return await self._request("GET", "/api/status")
 
-    async def converse(self, text: str, conversation_id: str | None, language: str | None = None) -> dict[str, Any]:
+    async def converse(self, text: str, conversation_id: str | None, language: str | None = None,
+                       user_id: str | None = None) -> dict[str, Any]:
         return await self._request(
             "POST",
             "/api/conversation",
-            {"text": text, "conversation_id": conversation_id, "language": language},
+            {"text": text, "conversation_id": conversation_id, "language": language, "user_id": user_id},
             timeout=REQUEST_TIMEOUT,
         )

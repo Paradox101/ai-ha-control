@@ -50,6 +50,11 @@ OFFLINE_MINUTES = 60
 OFFLINE_DOMAINS = {"sensor", "binary_sensor", "lock", "camera", "climate", "alarm_control_panel"}
 
 
+def day_bucket(now: datetime) -> int:
+    """Baseline bucket per kind of day: 100-123 working days, 124-147 weekend (0-23 = all days)."""
+    return (124 if now.weekday() >= 5 else 100) + now.hour
+
+
 def minutes_since(iso: str | None) -> float:
     if not iso:
         return 0.0
@@ -135,6 +140,10 @@ class Baseline:
                 continue
             self._last_sample[ent.entity_id] = mono
             n, mean, variance = self._db.baseline_update(ent.entity_id, now.hour, value)
+            # Weekends differ from working days: judge against the same kind of day once that is learned.
+            day_n, day_mean, day_variance = self._db.baseline_update(ent.entity_id, day_bucket(now), value)
+            if day_n >= MIN_SAMPLES:
+                n, mean, variance = day_n, day_mean, day_variance
             if n < MIN_SAMPLES:
                 continue
             deviation = value - mean
@@ -146,7 +155,8 @@ class Baseline:
                     key=f"anomaly:{ent.entity_id}:{direction}",
                     entity_id=ent.entity_id,
                     text=f"{ent.name} is ongewoon {direction}: {value:g}{unit} "
-                         f"(normaal rond {mean:.1f}{unit} om {now.hour}:00)",
+                         f"(normaal rond {mean:.1f}{unit} om {now.hour}:00"
+                         f"{' in het weekend' if day_n >= MIN_SAMPLES and now.weekday() >= 5 else ''})",
                 ))
                 if anomaly:
                     anomalies.append(anomaly)

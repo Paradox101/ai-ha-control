@@ -120,9 +120,12 @@ class HAClient:
         if msg.get("type") == "event":
             event = msg.get("event", {})
             event_type = event.get("event_type")
+            data = event.get("data", {})
+            if event.get("context") and isinstance(data, dict) and "context" not in data:
+                data = {**data, "context": event["context"]}  # who caused it (see ha/context.py)
             for callback in self._event_callbacks.get(event_type, []):
                 try:
-                    result = callback(event.get("data", {}))
+                    result = callback(data)
                 except Exception:  # noqa: BLE001
                     _LOGGER.exception("%s callback failed", event_type)
                     continue

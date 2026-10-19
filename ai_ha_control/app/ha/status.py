@@ -39,7 +39,7 @@ class StatusPublisher:
         self._autonomy = autonomy
         self._last: dict[str, Any] = {}
 
-    async def publish(self, mode: str, last_summary: str = "") -> None:
+    async def publish(self, mode: str, last_summary: str = "", health: dict[str, Any] | None = None) -> None:
         incidents = self._db.incidents(status="active")
         worst = max((i["severity"] for i in incidents), key=["info", "warning", "critical"].index, default=None)
         status = {"critical": "alarm", "warning": "aandacht"}.get(worst or "", "rustig")
@@ -48,7 +48,7 @@ class StatusPublisher:
             STATUS_ENTITY: (status, {
                 "friendly_name": "AI huis status", "icon": "mdi:shield-home",
                 "open_incidents": len(incidents), "mode": mode,
-                "autonomous": self._autonomy.enabled, "last_check": last_summary[:250],
+                "autonomous": self._autonomy.enabled, "last_check": last_summary[:250], **(health or {}),
             }),
             MODE_ENTITY: (mode, {"friendly_name": "AI huismodus", "icon": "mdi:home-account"}),
             CONCERN_ENTITY: ("on" if worst in ("warning", "critical") else "off", {
