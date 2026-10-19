@@ -121,6 +121,9 @@ configuration:
     name: Avondoverzicht (UU:MM)
   llm_down_minutes:
     name: Melden als de AI-server onbereikbaar is na (minuten)
+  escalate_minutes:
+    name: Alarm herhalen na (minuten)
+    description: "Kritieke meldingen zonder 'Gezien' gaan opnieuw naar iedereen en worden omgeroepen, maximaal 3 keer. 0 = uit."
   calendar_context:
     name: Agenda gebruiken
     description: Afspraken in de ochtendsamenvatting; een lopende afspraak met 'vakantie' of 'gasten' zet de huismodus

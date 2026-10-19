@@ -1,0 +1,145 @@
+import time
+
+from app.watcher.incidents import IncidentManager
+from app.watcher.rules import Watcher
+
+from .test_security_comfort import pushes
+
+
+def actions_of(call):
+    return [a["action"] for a in call[2]["data"].get("actions", [])]
+
+
+# --- critical notifications: "seen" and escalation -------------------------------------------------
+
+async def test_unseen_critical_notification_is_repeated_and_announced(ctx, notifier):
+    ctx.config.notify_service = "notify.mobile_app_vincent"
+    ctx.config.tts_entity, ctx.config.announce_players = "tts.piper", ["media_player.woonkamer"]
+    incidents = IncidentManager(ctx.db, notifier)
+    incident_id = await incidents.report("safety:rook", "Alarm: rook", "Rookmelder zolder detecteert rook!",
+                                         severity="critical", critical=True)
+    first = pushes(ctx)[-1]
+    event_id = ctx.db.events()[0]["id"]
+    assert actions_of(first)[0] == f"AIHA_ACK_{event_id}"
+    assert await notifier.escalate() == 0  # not due yet
+
+    later = time.time() + 6 * 60
+    assert await notifier.escalate(later) == 1
+    assert pushes(ctx)[-1][2]["title"].startswith("‼️ Nog niet gezien")
+    assert any(c[0] == "tts" for c in ctx.ha.calls)
+    assert ctx.db.incidents(status="active")[0]["unseen"] == 1
+    assert "opnieuw gemeld" in ctx.db.get_incident(incident_id)["events"][-1]["text"]
+
+    # at most three times
+    assert await notifier.escalate(later + 600) == 1
+    assert await notifier.escalate(later + 1200) == 1
+    assert await notifier.escalate(later + 1800) == 0
+
+
+async def test_seen_on_the_phone_stops_escalation(ctx, notifier):
+    incidents = IncidentManager(ctx.db, notifier)
+    incident_id = await incidents.report("security", "Mogelijke inbraak", "Achterdeur ging open",
+                                         severity="critical", critical=True)
+    event_id = ctx.db.events()[0]["id"]
+    watcher = Watcher(ctx, notifier)
+    await watcher.handle_notification_action({"action": f"AIHA_ACK_{event_id}"})
+    assert await notifier.escalate(time.time() + 3600) == 0
+    assert ctx.db.incidents(status="active")[0]["unseen"] == 0
+    assert ctx.db.get_incident(incident_id)["events"][-1]["text"] == "Gezien via telefoon"
+
+
+async def test_resolved_incident_or_feedback_stops_escalation(ctx, notifier):
+    incidents = IncidentManager(ctx.db, notifier)
+    first = await incidents.report("security", "Inbraak", "Deur open", severity="critical", critical=True)
+    incidents.resolve(first)
+    await notifier.send("⚠️ Alarm: lekkage", "Lekkage in de keuken", kind="safety", critical=True)
+    leak = ctx.db.events()[0]["id"]
+    await Watcher(ctx, notifier).handle_notification_action({"action": f"AIHA_FB_UP_{leak}"})
+    assert await notifier.escalate(time.time() + 3600) == 0
+
+
+async def test_escalation_off_and_normal_notifications(ctx, notifier):
+    ctx.config.notify_service = "notify.mobile_app_vincent"
+    await notifier.send("Raam open", "Slaapkamer", kind="energy")
+    assert not any(a.startswith("AIHA_ACK_") for a in actions_of(pushes(ctx)[-1]))
+    ctx.config.escalate_minutes = 0
+    await notifier.send("🚨 Inbraak", "Deur open", kind="security", critical=True)
+    assert not any(a.startswith("AIHA_ACK_") for a in actions_of(pushes(ctx)[-1]))
+    assert await notifier.escalate(time.time() + 3600) == 0
+
+
+# --- watch rules without the LLM ----------------------------------------------------------------------
+
+from app.tools.actions import resolve_confirmation  # noqa: E402
+from app.watcher.thresholds import ThresholdMonitor, add_watch_rule, matches  # noqa: E402
+
+from .test_security_comfort import set_state  # noqa: E402
+from .test_settings_api import client  # noqa: E402,F401
+
+
+def test_matches():
+    assert matches("-12.5", ">", "-15") is True
+    assert matches("-18", ">", "-15") is False
+    assert matches("on", "=", "on") is True and matches("on", "!=", "on") is False
+    assert matches("unavailable", ">", "-15") is None
+    assert matches("open", "<", "3") is None
+
+
+async def watch_setup(ctx, notifier):
+    ctx.index.update_state({"entity_id": "sensor.vriezer", "state": "-18",
+                            "attributes": {"friendly_name": "Vriezer", "device_class": "temperature",
+                                           "unit_of_measurement": "°C"}})
+    result = await add_watch_rule(ctx, "sensor.vriezer", ">", "-15", minutes=10)
+    assert result["status"] == "needs_confirmation"
+    assert ctx.db.watch_rules() == []  # nothing until confirmed
+    assert (await resolve_confirmation(ctx, result["confirmation_id"], True))["status"] == "ok"
+    return ThresholdMonitor(ctx, IncidentManager(ctx.db, notifier))
+
+
+async def test_watch_rule_fires_after_duration_and_recovers(ctx, notifier):
+    monitor = await watch_setup(ctx, notifier)
+    now = time.time()
+    set_state(ctx.index, "sensor.vriezer", "-12")
+    await monitor.check(ctx.index.get("sensor.vriezer"), now)
+    assert ctx.db.incidents(status="active") == []  # not yet ten minutes
+    await monitor.tick(now=now + 11 * 60)
+    active = ctx.db.incidents(status="active")
+    assert len(active) == 1 and "Vriezer is -12 °C" in active[0]["summary"]
+    await monitor.tick(now=now + 20 * 60)
+    assert len(ctx.db.events()) == 1  # no repeat while it stays too warm
+
+    set_state(ctx.index, "sensor.vriezer", "-17")
+    await monitor.check(ctx.index.get("sensor.vriezer"), now + 30 * 60)
+    assert ctx.db.incidents(status="active") == []
+    assert ctx.db.events()[0]["title"] == "✅ Weer normaal"
+
+
+async def test_watch_rule_only_in_mode_and_validation(ctx, notifier):
+    monitor = ThresholdMonitor(ctx, IncidentManager(ctx.db, notifier))
+    bad = await add_watch_rule(ctx, "sensor.bestaat_niet", ">", "1")
+    assert bad["status"] == "error"
+    assert (await add_watch_rule(ctx, "lock.voordeur", ">", "open"))["status"] == "error"
+    ctx.db.add_watch_rule({"entity_id": "lock.voordeur", "op": "=", "value": "unlocked", "modes": ["weg"]})
+    set_state(ctx.index, "lock.voordeur", "unlocked")
+    await monitor.tick(mode="thuis")
+    assert ctx.db.incidents(status="active") == []
+    await monitor.tick(mode="weg")
+    assert len(ctx.db.incidents(status="active")) == 1
+
+
+async def test_watch_rules_and_ack_api(client):
+    bad = await client.post("/api/watch-rules", json={"entity_id": "sensor.woonkamer_temperatuur", "operator": ">"})
+    assert bad.status == 400
+    rules = await (await client.post("/api/watch-rules", json={
+        "entity_id": "sensor.woonkamer_temperatuur", "operator": ">", "value": "25", "minutes": 5})).json()
+    assert len(rules) == 1 and "boven 25" in rules[0]["text"]
+    rules = await (await client.post(f"/api/watch-rules/{rules[0]['id']}/toggle", json={"enabled": False})).json()
+    assert rules[0]["enabled"] is False
+    assert await (await client.delete(f"/api/watch-rules/{rules[0]['id']}")).json() == []
+
+    state = client.app["state"]
+    incident_id = await state.incidents.report("security", "Inbraak", "Deur open", severity="critical", critical=True)
+    listed = await (await client.get("/api/incidents?status=active")).json()
+    assert listed[0]["unseen"] == 1
+    assert (await (await client.post(f"/api/incidents/{incident_id}/ack")).json())["stopped"] == 1
+    assert (await (await client.get("/api/incidents?status=active")).json())[0]["unseen"] == 0

@@ -1,5 +1,5 @@
 name: AI HA Control
-version: "0.6.7"
+version: "0.6.8"
 slug: ai_ha_control
 description: Lokale AI (Ollama) die je huis helpt beheren via Home Assistant
 url: https://github.com/paradox101/ai-ha-control
@@ -92,6 +92,7 @@ options:
   person_notify: []
   digest_time: ""
   llm_down_minutes: 30
+  escalate_minutes: 5
   calendar_context: true
   energy_context: true
   api_key: ""
@@ -151,6 +152,7 @@ schema:
     - match(^person\.[a-z0-9_]+=[a-z_]+\.[a-z0-9_]+$)
   digest_time: str?
   llm_down_minutes: int(5,1440)
+  escalate_minutes: int(0,60)
   calendar_context: bool
   energy_context: bool
   api_key: password?

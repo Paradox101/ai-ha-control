@@ -13,6 +13,7 @@ from ..ha.context import DEVICE, RESIDENT
 from ..ha.index import OPENING_CLASSES, SAFETY_CLASSES, EntityInfo
 from ..autonomy import undo_action
 from ..notify import (
+    ACTION_PREFIX_ACK,
     ACTION_PREFIX_CONFIRM,
     ACTION_PREFIX_FEEDBACK_DOWN,
     ACTION_PREFIX_FEEDBACK_UP,
@@ -101,6 +102,7 @@ class Watcher:
         self.incidents = None   # IncidentManager: groups notifications into incidents
         self.baseline = None    # Baseline: learns activity patterns
         self.snapshots = None   # SnapshotStore: keeps images for incident timelines
+        self.thresholds = None  # ThresholdMonitor: the user's watch rules
 
     @property
     def config(self):
@@ -172,6 +174,8 @@ class Watcher:
             await self._note_manual(ent, origin, old, new, setpoint_changed)
         if ent.domain == "person":
             self._note_arrival(ent, old.get("state"), new.get("state"))
+        if self.thresholds is not None and not self.in_grace:
+            await self.thresholds.check(ent)
         if not self.config.proactive or new.get("state") == old.get("state"):
             return
         if self.agent is not None and not self.in_grace:
@@ -461,6 +465,9 @@ class Watcher:
     async def handle_notification_action(self, data: dict[str, Any]) -> None:
         """Buttons pressed in a Companion app notification."""
         action = data.get("action") or ""
+        if action.startswith(ACTION_PREFIX_ACK):
+            self._notifier.acknowledge(int(action[len(ACTION_PREFIX_ACK):]))
+            return
         if action.startswith(ACTION_PREFIX_UNDO):
             result = await undo_action(self._ctx, int(action[len(ACTION_PREFIX_UNDO):]))
             text = "↩️ Teruggedraaid" if result.get("status") == "ok" else f"❌ {result.get('error', result.get('status'))}"
@@ -469,7 +476,9 @@ class Watcher:
             return
         for prefix, value in ((ACTION_PREFIX_FEEDBACK_UP, 1), (ACTION_PREFIX_FEEDBACK_DOWN, -1)):
             if action.startswith(prefix):
-                apply_feedback(self._ctx.db, int(action[len(prefix):]), value)
+                event_id = int(action[len(prefix):])
+                apply_feedback(self._ctx.db, event_id, value)
+                self._notifier.acknowledge(event_id)  # reacting at all means someone saw it
                 return
         for prefix, approve in ((ACTION_PREFIX_CONFIRM, True), (ACTION_PREFIX_REJECT, False)):
             if action.startswith(prefix):

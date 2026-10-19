@@ -99,6 +99,8 @@ class Config:
     person_notify: list[str] = field(default_factory=list)
     digest_time: str = ""
     llm_down_minutes: int = 30
+    # Critical notifications without "Seen" are repeated to everybody after this many minutes (0 = off)
+    escalate_minutes: int = 5
     calendar_context: bool = True
     energy_context: bool = True
     api_key: str = ""

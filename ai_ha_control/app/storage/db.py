@@ -194,6 +194,21 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     tools TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS watch_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    entity_id TEXT NOT NULL,
+    op TEXT NOT NULL,
+    value TEXT NOT NULL,
+    minutes INTEGER NOT NULL DEFAULT 0,
+    modes TEXT NOT NULL DEFAULT '[]',
+    severity TEXT NOT NULL DEFAULT 'warning',
+    label TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    since REAL,
+    alerted INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
@@ -204,7 +219,8 @@ CREATE INDEX IF NOT EXISTS idx_incidents_updated ON incidents(updated);
 
 # Columns added after the first release; ALTER TABLE for existing databases.
 MIGRATIONS = {
-    "events": {"ref": "TEXT", "feedback": "INTEGER", "incident_id": "INTEGER"},
+    "events": {"ref": "TEXT", "feedback": "INTEGER", "incident_id": "INTEGER",
+               "escalate_at": "REAL", "escalations": "INTEGER NOT NULL DEFAULT 0", "acked": "REAL"},
     "actions": {"shadow": "INTEGER NOT NULL DEFAULT 0", "feedback": "INTEGER", "verified": "TEXT"},
     "agent_runs": {"report": "TEXT", "feedback": "INTEGER"},
     "comfort_profiles": {"backup_entity": "TEXT NOT NULL DEFAULT ''", "backup": "TEXT NOT NULL DEFAULT '{}'"},
@@ -369,6 +385,25 @@ class Database:
         self._conn.execute("UPDATE events SET feedback = ? WHERE id = ?", (value, event_id))
         self._conn.commit()
 
+    def set_escalation(self, event_id: int, at: float | None, level: int = 0) -> None:
+        self._conn.execute("UPDATE events SET escalate_at = ?, escalations = ? WHERE id = ?", (at, level, event_id))
+        self._conn.commit()
+
+    def due_escalations(self, now: float | None = None) -> list[dict[str, Any]]:
+        return self._rows("SELECT * FROM events WHERE escalate_at IS NOT NULL AND escalate_at <= ? AND acked IS NULL",
+                          (now or time.time(),))
+
+    def ack_events(self, event_id: int | None = None, incident_id: int | None = None) -> int:
+        """Mark a critical notification (or all of an incident) as seen; returns how many were still escalating."""
+        column, value = ("incident_id", incident_id) if incident_id is not None else ("id", event_id)
+        pending = self._conn.execute(
+            f"SELECT COUNT(*) FROM events WHERE {column} = ? AND escalate_at IS NOT NULL AND acked IS NULL",
+            (value,)).fetchone()[0]
+        self._conn.execute(f"UPDATE events SET acked = COALESCE(acked, ?), escalate_at = NULL WHERE {column} = ?",
+                           (time.time(), value))
+        self._conn.commit()
+        return pending
+
     def negative_feedback(self, limit: int = 10) -> list[dict[str, Any]]:
         return self._rows("SELECT title, message FROM events WHERE feedback < 0 ORDER BY id DESC LIMIT ?", (limit,))
 
@@ -474,10 +509,14 @@ class Database:
             "SELECT * FROM incident_events WHERE incident_id = ? ORDER BY id", (incident_id,))}
 
     def incidents(self, status: str | None = None, since: float = 0, limit: int = 50) -> list[dict[str, Any]]:
+        # unseen: critical notifications of the incident nobody marked as seen yet (still escalating)
+        columns = ("*, (SELECT COUNT(*) FROM events e WHERE e.incident_id = incidents.id "
+                   "AND e.escalate_at IS NOT NULL AND e.acked IS NULL) AS unseen")
         if status == "active":
-            return self._rows("SELECT * FROM incidents WHERE status != 'resolved' ORDER BY updated DESC LIMIT ?",
-                              (limit,))
-        return self._rows("SELECT * FROM incidents WHERE updated >= ? ORDER BY updated DESC LIMIT ?", (since, limit))
+            return self._rows(f"SELECT {columns} FROM incidents WHERE status != 'resolved' "
+                              "ORDER BY updated DESC LIMIT ?", (limit,))
+        return self._rows(f"SELECT {columns} FROM incidents WHERE updated >= ? ORDER BY updated DESC LIMIT ?",
+                          (since, limit))
 
     # --- Follow-ups -------------------------------------------------------------
 
@@ -723,3 +762,36 @@ class Database:
     def agent_runs(self, limit: int = 50) -> list[dict[str, Any]]:
         return [{**r, "tools": json.loads(r["tools"])}
                 for r in self._rows("SELECT * FROM agent_runs ORDER BY id DESC LIMIT ?", (limit,))]
+
+    # --- Watch rules (thresholds checked without the LLM) ----------------------------
+
+    def add_watch_rule(self, rule: dict[str, Any]) -> int:
+        return self._insert(
+            "INSERT INTO watch_rules (ts, entity_id, op, value, minutes, modes, severity, label) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (time.time(), rule["entity_id"], rule["op"], str(rule["value"]), int(rule.get("minutes") or 0),
+             json.dumps(rule.get("modes") or []), rule.get("severity") or "warning", rule.get("label") or ""))
+
+    def watch_rules(self, enabled_only: bool = False, entity_id: str | None = None) -> list[dict[str, Any]]:
+        sql, params = "SELECT * FROM watch_rules WHERE 1 = 1", []
+        if enabled_only:
+            sql += " AND enabled = 1"
+        if entity_id is not None:
+            sql += " AND entity_id = ?"
+            params.append(entity_id)
+        return [{**r, "modes": json.loads(r["modes"]), "enabled": bool(r["enabled"]), "alerted": bool(r["alerted"])}
+                for r in self._rows(sql + " ORDER BY id", tuple(params))]
+
+    def set_watch_state(self, rule_id: int, since: float | None, alerted: bool) -> None:
+        self._conn.execute("UPDATE watch_rules SET since = ?, alerted = ? WHERE id = ?", (since, int(alerted), rule_id))
+        self._conn.commit()
+
+    def set_watch_enabled(self, rule_id: int, enabled: bool) -> None:
+        self._conn.execute("UPDATE watch_rules SET enabled = ?, since = NULL, alerted = 0 WHERE id = ?",
+                           (int(enabled), rule_id))
+        self._conn.commit()
+
+    def delete_watch_rule(self, rule_id: int) -> bool:
+        cur = self._conn.execute("DELETE FROM watch_rules WHERE id = ?", (rule_id,))
+        self._conn.commit()
+        return cur.rowcount > 0

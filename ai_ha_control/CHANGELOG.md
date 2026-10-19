@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.8
+
+- **Alarm niet gezien**: kritieke meldingen hebben een knop *Gezien*. Zonder reactie na `escalate_minutes` (standaard 5) gaat de melding opnieuw naar iedereen en wordt hij omgeroepen, maximaal 3 keer. Ook *Gezien* in het tabblad Incidenten.
+- **Bewakingsregels**: "waarschuw als de vriezer boven -15 graden komt" wordt een vaste regel (entiteit, boven/onder/is, waarde, minimale duur, optioneel alleen in bepaalde huismodi). De add-on controleert hem bij elke wijziging zelf, zonder de AI, en meldt het als het weer normaal is. Aanmaken via de chat (met bevestiging) of in het tabblad Huisregels.
+- Voorbeeldknoppen in het tabblad Huisregels lopen op een telefoon niet meer buiten beeld.
+
 ## 0.6.7
 
 - Opslaan van instellingen gaf soms "builders[spec.type] is not a function": na een update draaide de browser nog een oude, gecachte pagina. De pagina wordt nu altijd opnieuw gecontroleerd en een onbekend veld toont een melding in plaats van het formulier te breken.

@@ -86,6 +86,7 @@ class Scheduler:
         self.snapshots = None
         self.publisher = None
         self.comfort = None
+        self.thresholds = None
         self._agent_task: asyncio.Task | None = None
         self._llm_checked = -1e9
         self.llm_down_since: float | None = None
@@ -151,6 +152,7 @@ class Scheduler:
             return
         config = self._ctx.config
         await self._watcher.tick()
+        await self._notifier.escalate()
         now = self._notifier.now()
         await self._autonomous_round(now)
         await self._check_llm()
@@ -177,6 +179,8 @@ class Scheduler:
             self._start_agent()
         if self.comfort is not None and not settling:
             await self.comfort.tick(mode, now)
+        if self.thresholds is not None and not settling:
+            await self.thresholds.tick(mode)
         if self.patrol is not None and not settling and self.patrol.due(mode):
             await self.patrol.run()
         if self.incidents is not None:

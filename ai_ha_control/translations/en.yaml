@@ -121,6 +121,9 @@ configuration:
     name: Evening digest (HH:MM)
   llm_down_minutes:
     name: Report an unreachable AI server after (minutes)
+  escalate_minutes:
+    name: Repeat alarms after (minutes)
+    description: "Critical notifications nobody marked as 'Seen' are sent to everybody again and announced, at most 3 times. 0 = off."
   calendar_context:
     name: Use calendar
     description: Appointments in the morning summary; an ongoing event with 'vacation' or 'guests' sets the house mode

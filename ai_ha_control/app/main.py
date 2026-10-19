@@ -37,6 +37,7 @@ from .tools.home import build_autonomous_registry, build_registry
 from . import settings as settings_module
 from .watcher.baseline import Baseline
 from .watcher.incidents import IncidentManager, SnapshotStore
+from .watcher.thresholds import ThresholdMonitor, describe, normalize, save_watch_rule
 from .watcher.patrol import Patrol
 from .watcher.routines import accept_suggestion
 from .watcher.rules import Watcher, apply_feedback
@@ -147,13 +148,15 @@ class App:
         self.patrol.on_observation = lambda text: self.guardian.observe(text, urgent=True)
         self.publisher = StatusPublisher(self.ha, self.db, self.autonomy)
         self.comfort = ComfortController(self.ctx)
+        self.thresholds = ThresholdMonitor(self.ctx, self.incidents)
         self.incidents.on_event = lambda data: self.ha.fire_event("ai_ha_control_incident", data)
         self.watcher.agent, self.watcher.incidents = self.guardian, self.incidents
         self.watcher.baseline, self.watcher.snapshots = self.baseline, self.snapshots
+        self.watcher.thresholds = self.thresholds
         s = self.scheduler
         s.agent, s.baseline, s.patrol = self.guardian, self.baseline, self.patrol
         s.incidents, s.snapshots, s.publisher = self.incidents, self.snapshots, self.publisher
-        s.comfort = self.comfort
+        s.comfort, s.thresholds = self.comfort, self.thresholds
         self.ha.on_connect(self.refresh_index)
         self.ha.on_connect(self.watcher.on_connected)
         self.ha.on_event("homeassistant_started", self.watcher.on_ha_started)
@@ -488,7 +491,14 @@ class App:
         if self.db.get_incident(incident_id) is None:
             raise web.HTTPNotFound()
         self.incidents.resolve(incident_id, "Afgesloten door de bewoner")
+        self.notifier.acknowledge_incident(incident_id)
         return web.json_response({"status": "ok"})
+
+    async def incident_ack(self, request: web.Request) -> web.Response:
+        incident_id = int(request.match_info["incident_id"])
+        if self.db.get_incident(incident_id) is None:
+            raise web.HTTPNotFound()
+        return web.json_response({"status": "ok", "stopped": self.notifier.acknowledge_incident(incident_id)})
 
     async def snapshot(self, request: web.Request) -> web.StreamResponse:
         path = self.snapshots.path(request.match_info["name"])
@@ -512,6 +522,27 @@ class App:
         return web.json_response(self.db.rules())
 
     # --- Settings --------------------------------------------------------------------
+
+    def _watch_rules(self) -> list[dict]:
+        return [{**r, "text": describe(r, self.index.get(r["entity_id"]))} for r in self.db.watch_rules()]
+
+    async def watch_rules(self, request: web.Request) -> web.Response:
+        if request.method == "POST":
+            body = await json_body(request)
+            try:
+                result = save_watch_rule(self.ctx, normalize(**{k: body[k] for k in (
+                    "entity_id", "operator", "value", "minutes", "modes", "severity", "label") if k in body}))
+            except (TypeError, ValueError) as err:
+                result = {"status": "error", "error": str(err)}
+            if result.get("status") == "error":
+                return web.json_response(result, status=400)
+        elif request.method == "DELETE":
+            self.db.delete_watch_rule(int(request.match_info["rule_id"]))
+        return web.json_response(self._watch_rules())
+
+    async def watch_rule_toggle(self, request: web.Request) -> web.Response:
+        self.db.set_watch_enabled(int(request.match_info["rule_id"]), bool((await json_body(request)).get("enabled")))
+        return web.json_response(self._watch_rules())
 
     async def settings_get(self, _request: web.Request) -> web.Response:
         assert self.llm
@@ -698,11 +729,16 @@ def create_app(config: Config) -> web.Application:
             web.get("/api/incidents", state.incidents_list),
             web.get(r"/api/incidents/{incident_id:\d+}", state.incident_detail),
             web.post(r"/api/incidents/{incident_id:\d+}/resolve", state.incident_resolve),
+            web.post(r"/api/incidents/{incident_id:\d+}/ack", state.incident_ack),
             web.get("/api/snapshots/{name}", state.snapshot),
             web.get("/api/rules", state.rules),
             web.post("/api/rules", state.rules),
             web.delete(r"/api/rules/{rule_id:\d+}", state.rules),
             web.post(r"/api/rules/{rule_id:\d+}/toggle", state.rule_toggle),
+            web.get("/api/watch-rules", state.watch_rules),
+            web.post("/api/watch-rules", state.watch_rules),
+            web.delete(r"/api/watch-rules/{rule_id:\d+}", state.watch_rules),
+            web.post(r"/api/watch-rules/{rule_id:\d+}/toggle", state.watch_rule_toggle),
             web.get("/api/settings", state.settings_get),
             web.post("/api/settings", state.settings_save),
             web.post("/api/settings/test-ollama", state.test_ollama),

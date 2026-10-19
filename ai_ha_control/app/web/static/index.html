@@ -139,6 +139,11 @@
   .seg button.on { background: var(--accent); color: #fff; }
   .unit { display: flex; align-items: center; gap: 8px; }
   .unit input { width: 140px; }
+  #rule-examples .btn { white-space: normal; text-align: left; }
+  #watch-form > * { max-width: 100%; }
+  #watch-entity { flex: 1 1 100%; }
+  #watch-value { width: 140px; }
+  #watch-form .unit input { width: 80px; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px; border: 1px solid var(--border);
            border-radius: 8px; background: var(--bg); }
   .chips .chip { background: var(--soft); border-radius: 99px; padding: 2px 4px 2px 10px; font-size: 13px; display: flex; gap: 4px; align-items: center; }
@@ -249,6 +254,13 @@
       <div class="row" id="rule-examples" style="margin-top:4px"></div>
     </div>
     <div id="rules"></div>
+    <h3 style="margin-top:20px">Bewakingsregels</h3>
+    <p class="meta">Een drempel op één meetwaarde of status. De add-on waarschuwt direct, zonder de AI, en meldt het als het weer goed is. In de chat kan ook: "waarschuw als de vriezer boven -15 graden komt".</p>
+    <div class="card">
+      <div class="row" id="watch-form"></div>
+      <div class="row"><button class="btn primary" id="watch-add">Bewakingsregel toevoegen</button></div>
+    </div>
+    <div id="watch-rules"></div>
   </section>
 
   <section id="tab-routines" class="hidden">
@@ -472,6 +484,9 @@
         }
       });
       row.appendChild(toggle);
+      if (i.unseen && i.status !== "resolved") row.appendChild(btn("👁 Gezien", "small", async () => {
+        await post(`api/incidents/${i.id}/ack`); toast("Alarm wordt niet meer herhaald"); refreshIncidents();
+      }));
       if (i.status !== "resolved") row.appendChild(btn("Afsluiten", "small", async () => {
         await post(`api/incidents/${i.id}/resolve`); toast("Incident afgesloten"); refreshIncidents(); refreshStatus();
       }));
@@ -786,6 +801,51 @@
   $("rule-add").onclick = async () => {
     const text = $("rule-input").value.trim(); if (!text) return $("rule-input").focus();
     renderRules(await post("api/rules", { text })); $("rule-input").value = ""; toast("Huisregel toegevoegd");
+  };
+
+  /* ---------------- Watch rules ---------------- */
+  const watchDraft = { entity_id: "", operator: ">", value: "", minutes: 0, severity: "warning" };
+  let watchFormReady = false;
+  async function buildWatchForm() {
+    if (watchFormReady) return; watchFormReady = true;
+    const list = await api("api/entities?domain=sensor,binary_sensor,lock,cover,climate,input_boolean&limit=500&format=pick");
+    const ent = entitySelect(list, "", v => { watchDraft.entity_id = v; }); ent.id = "watch-entity"; ent.setAttribute("aria-label", "Entiteit");
+    const op = el("select"); op.id = "watch-op"; op.setAttribute("aria-label", "Voorwaarde");
+    [[">", "boven"], ["<", "onder"], ["=", "is"], ["!=", "is niet"]].forEach(([v, t]) => op.appendChild(new Option(t, v)));
+    op.onchange = () => { watchDraft.operator = op.value; };
+    const val = el("input"); val.type = "text"; val.id = "watch-value"; val.placeholder = "waarde, bijv. -15 of on"; val.setAttribute("aria-label", "Waarde");
+    val.oninput = () => { watchDraft.value = val.value.trim(); };
+    const min = el("input"); min.type = "number"; min.min = 0; min.max = 1440; min.value = 0; min.setAttribute("aria-label", "Minuten");
+    min.oninput = () => { watchDraft.minutes = Number(min.value || 0); };
+    const sev = el("select"); sev.setAttribute("aria-label", "Ernst");
+    [["info", "ℹ️ Info"], ["warning", "⚠️ Waarschuwing"], ["critical", "🚨 Kritiek"]].forEach(([v, t]) => sev.appendChild(new Option(t, v)));
+    sev.value = "warning"; sev.onchange = () => { watchDraft.severity = sev.value; };
+    const unit = el("div", "unit"); unit.append(min, el("span", "meta", "min"));
+    $("watch-form").append(ent, op, val, unit, sev);
+  }
+  async function renderWatchRules(list) {
+    await buildWatchForm();
+    list = list || await api("api/watch-rules");
+    const box = $("watch-rules"); box.replaceChildren();
+    if (!list.length) return empty(box, "Nog geen bewakingsregels.");
+    for (const r of list) {
+      const c = el("div", "card spread");
+      const sw = el("label", "switch"); const input = el("input"); input.type = "checkbox"; input.checked = !!r.enabled;
+      input.setAttribute("aria-label", "Regel actief");
+      input.onchange = async () => renderWatchRules(await post(`api/watch-rules/${r.id}/toggle`, { enabled: input.checked }));
+      sw.append(input, el("span"));
+      const text = el("div", "grow", `${SEV[r.severity] || ""} ${r.text}` + (r.alerted ? " · nu actief" : ""));
+      if (!r.enabled) text.style.opacity = .5;
+      c.append(sw, text, btn("Verwijderen", "small danger", async () => {
+        if (confirm("Deze bewakingsregel verwijderen?")) renderWatchRules(await del(`api/watch-rules/${r.id}`));
+      }));
+      box.appendChild(c);
+    }
+  }
+  $("watch-add").onclick = async () => {
+    if (!watchDraft.entity_id || !watchDraft.value) return toast("Kies een entiteit en een waarde");
+    try { renderWatchRules(await post("api/watch-rules", watchDraft)); toast("Bewakingsregel toegevoegd"); }
+    catch (e) { toast("❌ " + e.message); }
   };
 
   /* ---------------- Routines / memory / log / pairing ---------------- */
@@ -1110,7 +1170,7 @@
   window.addEventListener("beforeunload", e => { if (changedKeys().length) { e.preventDefault(); e.returnValue = ""; } });
 
   /* ---------------- Navigation ---------------- */
-  const loaders = { incidents: refreshIncidents, agent: refreshAgent, events: refreshEvents, rules: renderRules,
+  const loaders = { incidents: refreshIncidents, agent: refreshAgent, events: refreshEvents, rules: () => Promise.all([renderRules(), renderWatchRules()]),
                     comfort: refreshComfort,
                     routines: refreshRoutines, memory: refreshMemories, log: refreshLog, settings: loadSettings, pair: refreshPair };
   let currentTab = "chat";
