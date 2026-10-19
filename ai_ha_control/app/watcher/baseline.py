@@ -50,6 +50,7 @@ SAMPLE_INTERVAL = 600     # seconds between samples of the same sensor
 LEARNING_DAYS = 14        # activity at a never-seen hour only counts after two weeks of observation
 OFFLINE_MINUTES = 60
 OFFLINE_DOMAINS = {"sensor", "binary_sensor", "lock", "camera", "climate", "alarm_control_panel"}
+HOUSE_OFFLINE_DOMAINS = {"lock", "camera", "climate", "alarm_control_panel"}  # always, also without an area
 
 
 def day_bucket(now: datetime) -> int:
@@ -100,8 +101,27 @@ def calendar_mode(index: EntityIndex) -> str | None:
     return None
 
 
+def helper_mode(index: EntityIndex, config: Config) -> str | None:
+    """The resident's own house mode helper (input_text.actieve_scene = 'afwezig', ...)."""
+    from ..house import mode_helper
+
+    ent = mode_helper(index, config)
+    if ent is None or ent.state in ("unknown", "unavailable", ""):
+        return None
+    words = set(normalize(ent.state).split())
+    mode = next((m for m, keys in MODE_SCENE_WORDS.items() if words & set(keys)), None)
+    if mode == MODE_AWAY and minutes_since(ent.last_changed) / 60 >= VACATION_HOURS:
+        return MODE_VACATION
+    return mode
+
+
 def house_mode(index: EntityIndex, config: Config, now: datetime) -> str:
     people = [e for e in index.entities.values() if e.domain == "person"]
+    from_helper = helper_mode(index, config)
+    if from_helper in (MODE_AWAY, MODE_VACATION) and any(p.state == "home" for p in people):
+        from_helper = None  # came home before the helper was switched back: presence wins
+    if from_helper:
+        return from_helper
     from_scene = scene_mode(index)
     if from_scene:
         mode, activated = from_scene
@@ -136,9 +156,10 @@ class Anomaly:
 
 
 class Baseline:
-    def __init__(self, db: Database, index: EntityIndex) -> None:
+    def __init__(self, db: Database, index: EntityIndex, config: Config | None = None) -> None:
         self._db = db
         self._index = index
+        self._config = config
         self._last_sample: dict[str, float] = {}
         self._reported_offline: set[str] = set()
         self._seen_available: set[str] = set()
@@ -201,6 +222,15 @@ class Baseline:
             text=f"{ent.name} is actief om {now:%H:%M}; dat is op dit uur nog nooit gebeurd",
         ))
 
+    def _watch_offline(self, ent: EntityInfo) -> bool:
+        """Only devices of the house: not the server room, not container/host statistics without a room."""
+        config = self._config
+        if config is None:
+            return True
+        if ent.area and ent.area.lower() in {a.lower() for a in config.offline_ignore_areas}:
+            return False
+        return not config.offline_house_only or bool(ent.area) or ent.domain in HOUSE_OFFLINE_DOMAINS
+
     def offline(self) -> list[Anomaly]:
         """Devices that went unavailable while we were watching and stayed so (once per outage).
 
@@ -209,7 +239,7 @@ class Baseline:
         """
         dropped = []
         for ent in list(self._index.entities.values()):
-            if ent.domain not in OFFLINE_DOMAINS:
+            if ent.domain not in OFFLINE_DOMAINS or not self._watch_offline(ent):
                 continue
             if ent.state != "unavailable":
                 self._seen_available.add(ent.entity_id)

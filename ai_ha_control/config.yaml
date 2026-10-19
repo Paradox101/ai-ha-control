@@ -1,5 +1,5 @@
 name: AI HA Control
-version: "0.6.18"
+version: "0.6.19"
 slug: ai_ha_control
 description: Lokale AI (Ollama) die je huis helpt beheren via Home Assistant
 url: https://github.com/paradox101/ai-ha-control
@@ -86,6 +86,11 @@ options:
   override_minutes: 120
   comfort: true
   preheat_distance_km: 15
+  outdoor_sensor: ""
+  ventilation_entity: ""
+  shade_max_wind: 25
+  mode_entity: ""
+  presence_extra: []
   leak_valve: ""
   emergency_lights: true
   emergency_fans_off: []
@@ -95,8 +100,12 @@ options:
   escalate_minutes: 5
   bedtime_check: true
   appliance_alerts: true
+  appliance_quiet: []
   leak_flow_hours: 2
   health_report: true
+  offline_ignore_areas:
+    - Server
+  offline_house_only: true
   presence_simulation: false
   calendar_context: true
   energy_context: true
@@ -149,6 +158,12 @@ schema:
   override_minutes: int(0,1440)
   comfort: bool
   preheat_distance_km: float(1,100)
+  outdoor_sensor: str?
+  ventilation_entity: str?
+  shade_max_wind: float(0,150)
+  mode_entity: str?
+  presence_extra:
+    - str
   leak_valve: str?
   emergency_lights: bool
   emergency_fans_off:
@@ -160,8 +175,13 @@ schema:
   escalate_minutes: int(0,60)
   bedtime_check: bool
   appliance_alerts: bool
+  appliance_quiet:
+    - str
   leak_flow_hours: float(0,24)
   health_report: bool
+  offline_ignore_areas:
+    - str
+  offline_house_only: bool
   presence_simulation: bool
   calendar_context: bool
   energy_context: bool

@@ -91,6 +91,11 @@ class Config:
     # Comfort
     comfort: bool = True
     preheat_distance_km: float = 15.0
+    outdoor_sensor: str = ""        # outdoor temperature sensor; empty = the weather entity
+    ventilation_entity: str = ""    # central ventilation (fan/switch/script) for every room
+    shade_max_wind: float = 25.0    # km/h: no sun shading above this wind speed (awnings break)
+    mode_entity: str = ""           # resident's own house mode helper (input_text/input_select); empty = find it
+    presence_extra: list[str] = field(default_factory=list)  # extra "someone is home" signals (on/home)
     # Safety playbooks (never doors or the alarm)
     leak_valve: str = ""
     emergency_lights: bool = True
@@ -105,9 +110,14 @@ class Config:
     bedtime_check: bool = True
     # Washer/dryer/dishwasher done (by power use) and water that never stops running (0 = off)
     appliance_alerts: bool = True
+    # Appliances whose "done" message comes from the resident's own automation (e.g. "Wasmachine")
+    appliance_quiet: list[str] = field(default_factory=list)
     leak_flow_hours: float = 2.0
     # Monday morning: broken automations, updates, dead devices (only when there is something)
     health_report: bool = True
+    # Offline warnings: never for these areas, and only for devices in a room (or locks, cameras, climate)
+    offline_ignore_areas: list[str] = field(default_factory=lambda: ["Server"])
+    offline_house_only: bool = True
     # On vacation: lights on and off in the evening like the house is normally used (opt-in)
     presence_simulation: bool = False
     calendar_context: bool = True

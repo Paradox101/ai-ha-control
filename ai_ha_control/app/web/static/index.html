@@ -151,7 +151,8 @@
   .chips .chip button { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0 4px; }
   .chips input { border: 0; background: none; flex: 1; min-width: 120px; padding: 4px; }
   .chips input:focus { outline: none; }
-  .autonomy-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; }
+  .autonomy-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; align-items: center; }
+  .autonomy-grid select { min-width: 0; max-width: 100%; }
   .checklist { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow: auto; padding: 6px 8px;
                border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
   .checklist label { display: flex; gap: 8px; align-items: center; font-size: 14px; }
@@ -689,8 +690,9 @@
   let comfortData = null, comfortEntities = null;
   async function loadComfortEntities() {
     const get = d => api(`api/entities?domain=${d}&limit=500&format=pick`);
-    const [climate, light, fans, covers] = await Promise.all([get("climate"), get("light"), get("fan,switch"), get("cover")]);
-    comfortEntities = { climate, light, fans, covers };
+    const [climate, light, fans, covers, pauses, sensors] = await Promise.all([get("climate"), get("light"), get("fan,switch"), get("cover"),
+      get("input_boolean,input_datetime,timer"), api("api/entities?domain=sensor&q=temperature&limit=300&format=pick")]);
+    comfortEntities = { climate, light, fans, covers, pauses, sensors };
   }
   function entitySelect(list, value, onchange) {
     const s = el("select"); s.appendChild(new Option("(geen)", ""));
@@ -734,7 +736,15 @@
     ph.append(pi, el("span", "meta", "min voor thuiskomst"));
     grid.append(el("div", "", "Voorverwarmen"), ph);
     grid.append(el("div", "", "Ventilatie"), entitySelect(comfortEntities.fans, draftP.ventilation_entity, v => { draftP.ventilation_entity = v; }));
+    const ts = entitySelect(comfortEntities.sensors, draftP.temperature_sensor, v => { draftP.temperature_sensor = v; }); ts.name = "temperature_sensor";
+    const pz = entitySelect(comfortEntities.pauses, draftP.pause_entity, v => { draftP.pause_entity = v; }); pz.name = "pause_entity";
+    grid.append(el("div", "", "Temperatuursensor"), ts, el("div", "", "Pauze-helper"), pz);
     card.appendChild(grid);
+    card.appendChild(el("div", "meta", "Temperatuursensor leeg = de mediaan van de kamersensoren. Pauze-helper: zolang die aan staat, loopt of in de toekomst ligt, blijft de agent van de thermostaat af."));
+    const paused = p.id && (comfortData.paused || {})[p.id];
+    if (paused) card.appendChild(el("div", "meta heat-source", `⏸️ Gepauzeerd: ${paused}`));
+    const users = [...new Set([...((comfortData.conflicts || {})[draftP.climate_entity] || []), ...((comfortData.conflicts || {})[draftP.backup_entity] || [])])];
+    if (users.length) card.appendChild(el("div", "hint warn", `⚠️ Deze automatiseringen sturen dezelfde thermostaat ook: ${users.slice(0, 5).join(", ")}${users.length > 5 ? " …" : ""}. Kies een pauze-helper of zet het profiel uit om te voorkomen dat ze tegen elkaar in werken.`));
     const now = p.id && (comfortData.heating || {})[p.id];
     if (now) card.appendChild(el("div", "meta heat-source",
       now.source === "cv" ? `🔥 Nu: cv als backup (${now.reason})` : now.source === "uit" ? `⏸️ Nu: ${now.reason}` : `❄️ Nu: airco verwarmt (${now.reason})`));

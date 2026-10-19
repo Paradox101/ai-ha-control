@@ -58,6 +58,8 @@ DOORBELL_WORDS = ("visitor", "bezoeker")
 BACKYARD_WORDS = {"achtertuin", "achter", "tuin", "achterdeur", "schuur", "garden", "backyard", "back", "patio", "terras"}
 
 HIGH_STREAM_WORDS = {"clear", "duidelijk", "main", "high", "hoog"}
+# Reolink also offers a JPEG "Foto's" stream of the same camera: same camera, not a second one.
+PHOTO_STREAM_WORDS = {"foto", "fotos", "s", "snapshots"}
 LOW_STREAM_WORDS = {"fluent", "vloeiend", "sub", "low", "laag", "balanced", "gebalanceerd"}
 
 # Readable states: small models misread "on"/"off" for doors, motion, smoke, ...
@@ -167,6 +169,7 @@ class EntityIndex:
         self.allowed: set[str] | None = None  # None = all entities allowed
         self.always: set[str] = set()  # kept even when not exposed or hidden (the kill switch)
         self.location_name: str | None = None
+        self.config: Any = None  # add-on options (extra presence signals)
         self._registry: dict[str, dict[str, Any]] = {}
         self._device_area: dict[str, str | None] = {}
         self._device_name: dict[str, str] = {}
@@ -300,11 +303,12 @@ class EntityIndex:
         return [ent for _, ent in scored[:limit]]
 
     def anyone_home(self) -> bool | None:
-        """True/False based on person entities, None when there are none."""
+        """True/False based on person entities (and the extra presence signals), None when there are none."""
         people = [e for e in self.entities.values() if e.domain == "person"]
-        if not people:
+        extra = [e for eid in getattr(self.config, "presence_extra", None) or [] if (e := self.get(eid)) is not None]
+        if not people and not extra:
             return None
-        return any(p.state == "home" for p in people)
+        return any(p.state == "home" for p in people) or any(e.state in ("on", "home") for e in extra)
 
     def alarm_armed(self) -> bool:
         return any(e.domain == "alarm_control_panel" and e.state.startswith("armed")
@@ -323,6 +327,14 @@ class EntityIndex:
             other = self.get(entity_id)
             if profile != "auto" and (entity_id == cam.entity_id or (other is not None and self._camera_key(other) == key)):
                 return profile
+        return self.guess_profile(cam)
+
+    def guess_profile(self, cam: EntityInfo) -> str:
+        """No camera (mail deliveries, a vacuum's map) or inside a bedroom/bathroom: off. Back side: private."""
+        from ..house import is_private_room_camera, is_pseudo_camera
+
+        if is_pseudo_camera(cam) or is_private_room_camera(cam):
+            return "off"
         return "private" if self.is_backyard(cam) else "door"
 
     def is_detection_sensor(self, ent: EntityInfo) -> bool:
@@ -339,13 +351,16 @@ class EntityIndex:
     @staticmethod
     def stream_rank(cam: EntityInfo) -> int:
         tokens = _object_tokens(cam)
+        if tokens & PHOTO_STREAM_WORDS:
+            return 3  # a still picture: only when there is no video stream
         if tokens & HIGH_STREAM_WORDS:
             return 0
         return 2 if tokens & LOW_STREAM_WORDS else 1
 
     @staticmethod
     def _camera_key(cam: EntityInfo) -> str:
-        words = [w for w in normalize(cam.name).split() if w not in HIGH_STREAM_WORDS | LOW_STREAM_WORDS | {"camera"}]
+        words = [w for w in normalize(cam.name).split()
+                 if w not in HIGH_STREAM_WORDS | LOW_STREAM_WORDS | PHOTO_STREAM_WORDS | {"camera"}]
         return " ".join(words) or cam.entity_id
 
     @staticmethod
@@ -360,9 +375,11 @@ class EntityIndex:
             found = self.search(query, area=area, domain="camera", limit=100)
         else:
             found = self.search(area=area, domain="camera", limit=500)
+        from ..house import is_pseudo_camera
+
         best: dict[str, EntityInfo] = {}
         for cam in found:
-            if cam.state == "unavailable":
+            if cam.state == "unavailable" or is_pseudo_camera(cam):
                 continue
             key = self._camera_key(cam)
             if key not in best or self.stream_rank(cam) < self.stream_rank(best[key]):
@@ -378,7 +395,10 @@ class EntityIndex:
 
     def camera_for(self, ent: EntityInfo) -> EntityInfo | None:
         """Camera on the same device (Reolink) or, failing that, in the same area."""
-        cameras = [e for e in self.entities.values() if e.domain == "camera" and e.state != "unavailable"]
+        from ..house import is_pseudo_camera
+
+        cameras = [e for e in self.entities.values() if e.domain == "camera" and e.state != "unavailable"
+                   and not is_pseudo_camera(e)]
         if ent.device_id:
             same_device = [c for c in cameras if c.device_id == ent.device_id]
             if same_device:

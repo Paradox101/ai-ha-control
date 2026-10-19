@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from .agent.autonomous import area_climate
+from .house import arriving_zone, house_fan, is_awning, outside_temperature, paused, sensor_value, wind_speed
 from .tools.actions import perform, queue_confirmation
 from .watcher.baseline import MODE_AWAY, MODE_GUEST, MODE_HOME, MODE_SLEEP, MODE_VACATION
 
@@ -49,6 +50,8 @@ BACKUP_MIN_MINUTES = 30        # once on, the backup runs at least this long (no
 DEFROST_GRACE_MINUTES = 15     # a short defrost cycle is normal; a long one needs the backup
 PRIMARY_FAULT = ("unavailable", "unknown")
 PRIMARY_NOT_HEATING = ("cool", "dry", "fan_only")
+CONFLICT_CACHE_SECONDS = 600
+MAX_CONFLICT_CONFIGS = 150
 
 
 def profile_target(profile: dict[str, Any], mode: str) -> float | None:
@@ -144,6 +147,9 @@ class ComfortController:
         self._defrost_since: dict[int, float] = {}
         self._backup_on: dict[int, tuple[float, str]] = {}  # profile -> (since, why)
         self.heating: dict[int, dict[str, str]] = {}  # profile -> current heat source, for the web UI
+        self.paused: dict[int, str] = {}               # profile -> why the resident's pause helper holds it
+        self._conflicts: dict[str, list[str]] = {}
+        self._conflicts_at = -1e9
 
     @property
     def config(self):
@@ -156,6 +162,27 @@ class ComfortController:
         """Entities a resident did not just adjust by hand."""
         overrides = self._ctx.db.active_overrides()
         return [e for e in entity_ids if e not in overrides]
+
+    async def conflicts(self) -> dict[str, list[str]]:
+        """Per climate entity of a profile: the resident's automations that also change it (cached)."""
+        from .tools.automations import _entity_ids_in
+
+        if time.monotonic() - self._conflicts_at < CONFLICT_CACHE_SECONDS:
+            return self._conflicts
+        wanted = {p[k] for p in self._ctx.db.profiles() for k in ("climate_entity", "backup_entity") if p.get(k)}
+        found: dict[str, list[str]] = {}
+        automations = [e for e in self._ctx.index.entities.values()
+                       if e.domain == "automation" and e.attributes.get("id")][:MAX_CONFLICT_CONFIGS]
+        for auto in automations if wanted else []:
+            try:
+                config = await self._ctx.ha.get_automation_config(str(auto.attributes["id"]))
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Automation config %s: %s", auto.entity_id, err)
+                continue
+            for eid in _entity_ids_in(config.get("actions") or config.get("action") or []) & wanted:
+                found.setdefault(eid, []).append(auto.name)
+        self._conflicts, self._conflicts_at = found, time.monotonic()
+        return found
 
     async def _act(self, domain: str, service: str, entity_ids: list[str], data: dict[str, Any],
                    reason: str) -> dict[str, Any]:
@@ -171,23 +198,42 @@ class ComfortController:
         done: list[str] = []
         air = area_climate(self._ctx.index)
         backup: dict[str, list[tuple[float, str]]] = {}
+        stale_rooms: list[str] = []
+        self.paused = {}
         for profile in self._ctx.db.profiles(enabled_only=True):
             try:
-                done += await self._climate(profile, mode, now)
-                wish = self._backup_wish(profile, mode, now, air.get(profile["area"], {}))
-                if wish is not None:
-                    backup.setdefault(profile["backup_entity"], []).append(wish)
+                room = self._room(profile, air)
+                pause = paused(self._ctx.index, profile.get("pause_entity"), now)
+                if pause:
+                    self.paused[profile["id"]] = pause  # the resident's own automation has the say for now
+                else:
+                    done += await self._climate(profile, mode, now)
+                    wish = self._backup_wish(profile, mode, now, room)
+                    if wish is not None:
+                        backup.setdefault(profile["backup_entity"], []).append(wish)
                 done += await self._dusk_lights(profile, mode, now)
-                done += await self._ventilation(profile, air.get(profile["area"], {}))
+                done += await self._ventilation(profile, room, stale_rooms)
                 done += await self._shading(profile)
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Comfort profile %s failed", profile.get("area"))
+        try:
+            done += await self._house_ventilation(stale_rooms)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Comfort house ventilation failed")
         for eid, wishes in backup.items():
             try:
                 done += await self._apply_backup(eid, max(wishes))
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Comfort backup %s failed", eid)
         return done
+
+    def _room(self, profile: dict[str, Any], air: dict[str, dict[str, float]]) -> dict[str, float]:
+        """The room's air; a chosen temperature sensor beats the room median."""
+        room = dict(air.get(profile["area"], {}))
+        value = sensor_value(self._ctx.index, profile.get("temperature_sensor"))
+        if value is not None:
+            room["temperature"] = value
+        return room
 
     # --- Temperature -------------------------------------------------------------------
 
@@ -223,11 +269,7 @@ class ComfortController:
         return target, reason
 
     def _outside(self) -> float | None:
-        weather = next((e for e in self._ctx.index.entities.values() if e.domain == "weather"), None)
-        try:
-            return float(weather.attributes["temperature"]) if weather else None
-        except (KeyError, TypeError, ValueError):
-            return None
+        return outside_temperature(self._ctx.index, self.config)
 
     # --- Backup heating (e.g. gas boiler next to an air conditioner) ----------------------
 
@@ -324,6 +366,9 @@ class ComfortController:
         outside = self._outside()
         if outside is not None and outside < 5:
             lead = int(minutes * 1.5)  # a cold house takes longer to heat
+        zone = arriving_zone(index)
+        if zone:
+            return zone
         for ent in index.entities.values():
             if ent.domain != "sensor" or not ent.entity_id.endswith("_direction_of_travel") or ent.state != "towards":
                 continue
@@ -361,7 +406,8 @@ class ComfortController:
         result = await self._act("light", "turn_on", off, {}, f"comfortprofiel {profile['area']}: schemer")
         return [f"lampen {profile['area']} aan ({result.get('status')})"]
 
-    async def _ventilation(self, profile: dict[str, Any], air: dict[str, float]) -> list[str]:
+    async def _ventilation(self, profile: dict[str, Any], air: dict[str, float],
+                           stale_rooms: list[str] | None = None) -> list[str]:
         co2, humidity = air.get("carbon_dioxide"), air.get("humidity")
         stale = (co2 is not None and co2 > CO2_HIGH) or (humidity is not None and humidity > HUMIDITY_HIGH)
         fresh = (co2 is None or co2 < CO2_OK) and (humidity is None or humidity < HUMIDITY_OK)
@@ -391,6 +437,10 @@ class ComfortController:
                                          f"comfortprofiel {profile['area']}: lucht weer goed")
                 return [f"ventilatie {profile['area']} uit ({result.get('status')})"]
             return []
+        if stale and stale_rooms is not None:
+            stale_rooms.append(f"{profile['area']}: {what}")
+        if self.config.ventilation_entity or house_fan(self._ctx.index) is not None:
+            return []  # central ventilation: handled for the whole house (or by the resident's own automations)
         if not stale or self._ctx.incidents is None:
             return []
         key = f"air:{profile['area']}"
@@ -402,17 +452,38 @@ class ComfortController:
                                          severity="info", ref=f"anomaly:comfort:{profile['area']}")
         return [f"ventilatieadvies {profile['area']}"]
 
+    async def _house_ventilation(self, stale_rooms: list[str]) -> list[str]:
+        """One central ventilation unit for all rooms: on while any room is stale, off when all are fresh."""
+        fan = self.config.ventilation_entity
+        ent = self._ctx.index.get(fan) if fan else None
+        if ent is None or not self._free([fan]):
+            return []
+        domain = fan.split(".", 1)[0]
+        if stale_rooms and self._applied.get(fan) != "on" and (domain == "script" or ent.state == "off"):
+            self._applied[fan] = "on"
+            result = await self._act(domain, "turn_on", [fan], {}, f"comfort: {'; '.join(stale_rooms[:3])}")
+            return [f"ventilatie aan ({result.get('status')})"]
+        if not stale_rooms and self._applied.get(fan) == "on" and domain != "script" and ent.state == "on":
+            self._applied[fan] = "off"
+            result = await self._act(domain, "turn_off", [fan], {}, "comfort: lucht overal weer goed")
+            return [f"ventilatie uit ({result.get('status')})"]
+        return []
+
     async def _shading(self, profile: dict[str, Any]) -> list[str]:
         covers = self._free([e for e in profile.get("shade_covers") or [] if self._ctx.index.get(e)])
         key = f"shade:{profile['id']}"
         if not covers or key in self._done_today:
             return []
         sun = self._ctx.index.get("sun.sun")
-        weather = next((e for e in self._ctx.index.entities.values() if e.domain == "weather"), None)
-        outside = weather.attributes.get("temperature") if weather else None
+        outside = self._outside()
         if sun is None or sun.state != "above_horizon" or outside is None:
             return []
         if float(sun.attributes.get("elevation") or 0) < SHADE_ELEVATION or float(outside) < SHADE_ABOVE:
+            return []
+        wind = wind_speed(self._ctx.index)
+        if wind is not None and wind > self.config.shade_max_wind:
+            covers = [c for c in covers if not is_awning(self._ctx.index.get(c))]  # an awning tears in the wind
+        if not covers:
             return []
         self._done_today.add(key)
         result = await self._act("cover", "set_cover_position", covers, {"position": SHADE_POSITION},

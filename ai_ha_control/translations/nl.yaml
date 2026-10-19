@@ -108,6 +108,30 @@ configuration:
     name: Comfortprofielen uitvoeren
   preheat_distance_km:
     name: Voorverwarmen vanaf afstand (km)
+  outdoor_sensor:
+    name: "Buitentemperatuursensor"
+    description: "Leeg = de weerentiteit"
+  ventilation_entity:
+    name: "Centrale ventilatie"
+    description: "Ventilator, schakelaar of script voor het hele huis (bijv. de WTW)"
+  shade_max_wind:
+    name: "Geen zonwering boven windkracht (km/u)"
+    description: "Zonneschermen gaan niet uit bij meer wind of vorst"
+  mode_entity:
+    name: "Eigen huismodus-helper"
+    description: "input_text of input_select met de huismodus; leeg = zelf zoeken"
+  presence_extra:
+    name: "Extra aanwezigheid"
+    description: "Entiteiten die ook 'iemand thuis' betekenen (aan/home)"
+  appliance_quiet:
+    name: "Apparaten met eigen melding"
+    description: "Bijv. Wasmachine: de add-on stuurt dan geen klaar-melding"
+  offline_ignore_areas:
+    name: "Geen offline-meldingen voor ruimtes"
+    description: "Bijv. Server"
+  offline_house_only:
+    name: "Offline alleen voor huisapparaten"
+    description: "Alleen apparaten in een ruimte, sloten, camera's en thermostaten"
   leak_valve:
     name: Hoofdkraan dicht bij lekkage
   emergency_lights:

@@ -55,24 +55,21 @@ def _fmt_time(iso: str | None, tz) -> str:
 
 
 def area_climate(index: EntityIndex) -> dict[str, dict[str, float]]:
-    """Per area: average temperature, humidity and CO₂, and the thermostat setpoint."""
-    sums: dict[str, dict[str, list[float]]] = {}
+    """Per area: temperature, humidity and CO₂ of the room sensors (median), and the thermostat setpoint."""
+    from ..house import room_air
+
+    result = room_air(index)
+    targets: dict[str, list[float]] = {}
     for ent in index.entities.values():
-        if not ent.area:
-            continue
-        key = None
-        if ent.domain == "sensor" and ent.device_class in AIR_CLASSES:
-            key = ent.device_class
-        elif ent.domain == "climate" and ent.attributes.get("temperature") is not None and ent.state != "off":
-            key = "target"
-        if key is None:
-            continue
-        try:
-            value = float(ent.state if key != "target" else ent.attributes["temperature"])
-        except (TypeError, ValueError):
-            continue
-        sums.setdefault(ent.area, {}).setdefault(key, []).append(value)
-    return {area: {k: sum(v) / len(v) for k, v in values.items()} for area, values in sums.items()}
+        if ent.area and ent.domain == "climate" and ent.attributes.get("temperature") is not None \
+                and ent.state != "off":
+            try:
+                targets.setdefault(ent.area, []).append(float(ent.attributes["temperature"]))
+            except (TypeError, ValueError):
+                continue
+    for area, values in targets.items():
+        result.setdefault(area, {})["target"] = sum(values) / len(values)
+    return result
 
 
 def _is_watched(ent: EntityInfo) -> bool:

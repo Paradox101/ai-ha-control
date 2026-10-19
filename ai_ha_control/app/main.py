@@ -44,6 +44,7 @@ from .watcher.routines import accept_suggestion
 from .watcher.rules import Watcher, apply_feedback
 from .watcher.scheduler import Scheduler
 from .watcher.simulation import PresenceSimulator
+from .watcher.signals import HouseSignals
 
 _LOGGER = logging.getLogger("ai_ha_control")
 STATIC_DIR = Path(__file__).parent / "web" / "static"
@@ -109,6 +110,7 @@ class App:
         self.config = config
         self.api_key = load_api_key(config)
         self.index = EntityIndex()
+        self.index.config = self.config
         self.db = Database(config.data_dir)
         self.confirmations = ConfirmationStore(self.db)
         self.contexts = ContextTracker()
@@ -151,7 +153,7 @@ class App:
         self.watcher = Watcher(self.ctx, self.notifier)
         self.scheduler = Scheduler(self.ctx, self.notifier, self.watcher)
         self.guardian = AutonomousAgent(self.ctx, build_autonomous_registry(), self.incidents)
-        self.baseline = Baseline(self.db, self.index)
+        self.baseline = Baseline(self.db, self.index, self.config)
         self.patrol = Patrol(self.ctx, self.incidents, self.snapshots)
         self.patrol.on_observation = lambda text: self.guardian.observe(text, urgent=True)
         self.publisher = StatusPublisher(self.ha, self.db, self.autonomy)
@@ -159,15 +161,16 @@ class App:
         self.thresholds = ThresholdMonitor(self.ctx, self.incidents)
         self.appliances = ApplianceMonitor(self.ctx, self.notifier, self.incidents)
         self.simulation = PresenceSimulator(self.ctx)
+        self.signals = HouseSignals(self.ctx, self.notifier, self.incidents)
         self.incidents.on_event = lambda data: self.ha.fire_event("ai_ha_control_incident", data)
         self.watcher.agent, self.watcher.incidents = self.guardian, self.incidents
         self.watcher.baseline, self.watcher.snapshots = self.baseline, self.snapshots
-        self.watcher.thresholds = self.thresholds
+        self.watcher.thresholds, self.watcher.signals = self.thresholds, self.signals
         s = self.scheduler
         s.agent, s.baseline, s.patrol = self.guardian, self.baseline, self.patrol
         s.incidents, s.snapshots, s.publisher = self.incidents, self.snapshots, self.publisher
         s.comfort, s.thresholds, s.appliances = self.comfort, self.thresholds, self.appliances
-        s.simulation = self.simulation
+        s.simulation, s.signals = self.simulation, self.signals
         self.ha.on_connect(self.watcher.on_connected)  # grace first: the refresh takes a while
         self.ha.on_connect(self.refresh_index)
         self.ha.on_event("homeassistant_started", self.watcher.on_ha_started)
@@ -468,6 +471,8 @@ class App:
         return web.json_response({"profiles": self.db.profiles(), "suggestions": profile_suggestions(self.db),
                                   "areas": sorted(self.index.areas.values()),
                                   "heating": {str(k): v for k, v in self.comfort.heating.items()},
+                                  "paused": {str(k): v for k, v in self.comfort.paused.items()},
+                                  "conflicts": await self.comfort.conflicts(),
                                   "enabled": self.config.comfort})
 
     async def agent_run(self, _request: web.Request) -> web.Response:
