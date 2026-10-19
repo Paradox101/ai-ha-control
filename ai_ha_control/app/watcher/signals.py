@@ -38,27 +38,42 @@ class HouseSignals:
         self._surplus_day = ""
 
     async def on_state(self, ent: EntityInfo) -> None:
-        """A vibration or tamper sensor goes off while the alarm is armed: someone may be forcing a window."""
-        if ent.domain != "binary_sensor" or ent.device_class not in TAMPER_CLASSES or ent.state != "on":
+        """An alarm sensor's extra contact goes off. Alarm on: vibration or tilt is a warning, an opened housing or
+        a cut wire is critical (someone disabling the alarm). Alarm off: only a housing, wire or detector taken off
+        its base, as a warning (👎 = changing batteries is normal)."""
+        from .guard import tamper_kind
+
+        kind = tamper_kind(ent)
+        if ent.state != "on" or kind is None:
             return
         index = self._ctx.index
-        if not index.alarm_armed():
+        armed = index.alarm_armed()
+        if not armed and kind in ("vibration", "tilt"):
+            return
+        ref = None if armed else f"anomaly:{ent.entity_id}:tamper"
+        if ref and self._ctx.db.is_muted(ref):
             return
         now = time.monotonic()
         if now - self._last.get(ent.entity_id, -1e9) < TAMPER_COOLDOWN:
             return
         self._last[ent.entity_id] = now
-        what = "trilling" if ent.device_class == "vibration" else "sabotage"
+        what = {"vibration": "trilling", "tilt": "kanteling", "wire": "een doorgeknipt of los contact",
+                "base": "dat hij van zijn voet is gehaald"}.get(kind, "sabotage (behuizing open)")
         where = f" ({ent.area})" if ent.area else ""
-        text = f"{ent.device or ent.name}{where} meldt {what} terwijl het alarm aan staat."
+        text = f"{ent.device or ent.name}{where} meldt {what}" + (" terwijl het alarm aan staat." if armed else ".")
+        critical = armed and kind in ("housing", "wire")
+        severity = "critical" if critical else "warning"
+        title = "Sabotage terwijl het alarm aan staat" if critical else (
+            "Trilling of sabotage" if armed else "Sabotagemelding")
         camera = index.camera_for(ent, self._ctx.config.camera_profiles)
         if self._incidents is not None:
-            await self._incidents.report("security", "Trilling of sabotage", text, severity="warning",
+            await self._incidents.report("security" if armed else "tamper", title, text, severity=severity,
                                          entity_id=ent.entity_id, image_entity=camera.entity_id if camera else None,
-                                         respect_quiet_hours=False, correlate_seconds=900)
+                                         critical=critical, respect_quiet_hours=not armed, correlate_seconds=900,
+                                         ref=ref)
         else:
-            await self._notifier.send("⚠️ Trilling of sabotage", text, kind="security", entity_id=ent.entity_id,
-                                      respect_quiet_hours=False)
+            await self._notifier.send(f"⚠️ {title}", text, kind="security", entity_id=ent.entity_id,
+                                      critical=critical, respect_quiet_hours=not armed, ref=ref)
 
     async def tick(self, now: datetime) -> None:
         try:

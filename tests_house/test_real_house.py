@@ -101,3 +101,34 @@ def test_status_questions_from_the_house(index):
     assert status_answer(index, config, "staat de tv aan?") == "TV Woonkamer: aan."
     assert status_answer(index, config, "staat de airco aan?") == (
         "Slaapkamer Airco (Slaapkamer achterkant): uit, nu 20 °C; Woonkamer Airco: uit, nu 19,9 °C.")
+
+
+def test_security_rules_read_the_alarm_sensors(index):
+    from collections import Counter
+
+    from app.watcher.guard import alarm_links, physical_cameras, security_batteries, tamper_kind
+
+    assert sorted(e.entity_id for e in alarm_links(index)) == [
+        "binary_sensor.inbraakalarm_mobiel_netwerk_verbonden", "binary_sensor.inbraakalarm_verbinding_meldkamer"]
+    kinds = Counter(tamper_kind(e) for e in index.entities.values())
+    assert kinds["vibration"] == kinds["tilt"] == 6 and kinds["wire"] == 6 and kinds["base"] == 5
+    assert tamper_kind(index.get("binary_sensor.inbraakalarm_deksel_geopend")) == "housing"
+    assert all(tamper_kind(e) is None for e in index.entities.values() if e.entity_id.endswith("_out_of_memory"))
+    cameras = physical_cameras(index, [])
+    assert set(cameras) >= {"achtertuin huis", "achtertuin poort", "deurbel poort", "deurbel voordeur", "schuur"}
+    assert not any("mail" in key or "imap" in key for key in cameras)
+    batteries = " ".join(security_batteries(index, threshold=100))
+    assert "Voordeur" in batteries and "Ford" not in batteries
+
+
+def test_security_question_on_the_real_house(index, tmp_path):
+    from app.config import Config
+    from app.watcher.guard import security_answer
+
+    class Ctx:
+        config = Config(data_dir=str(tmp_path))
+
+    Ctx.index = index
+    answer = security_answer(Ctx, "Staat het alarm aan?")
+    assert answer.startswith("Alarmsysteem: ingeschakeld (afwezig). Inbraakalarm: ingeschakeld (afwezig).")
+    assert "Alle deuren en ramen zijn dicht." in answer

@@ -157,6 +157,12 @@ configuration:
   health_report:
     name: Home doctor
     description: "Monday morning: broken automations, updates and dead devices"
+  alarm_reminder_minutes:
+    name: Reminder when the alarm is off after leaving (minutes)
+    description: "Everybody left and the alarm is still off after this many minutes: one notification. The agent never arms the alarm itself. 0 = off."
+  security_report:
+    name: Security report
+    description: "Sunday evening: alarm notifications, tampering, cameras offline and empty batteries of alarm sensors"
   presence_simulation:
     name: Simulate presence on vacation
     description: In vacation mode, lights go on and off in the evening the way the house is normally used (lights only)
