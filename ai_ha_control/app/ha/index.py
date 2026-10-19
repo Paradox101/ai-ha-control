@@ -81,6 +81,10 @@ ALARM_STATES = {
 LOCK_STATES = {"locked": "op slot", "unlocked": "niet op slot", "open": "open", "jammed": "geblokkeerd",
                "locking": "wordt op slot gedaan", "unlocking": "wordt ontgrendeld"}
 
+CAR_WORDS = {"fordpass", "ford", "car", "auto", "vehicle", "voertuig", "tesla", "kia", "volvo", "skoda", "bmw"}
+SEARCH_SYNONYMS = {"battery": ("batterij", "accu"), "temperature": ("temperatuur",), "humidity": ("vochtigheid",),
+                   "power": ("vermogen",), "distance": ("afstand",)}
+
 SKIP_DOMAINS = {"update", "persistent_notification", "conversation", "stt", "wake_word", "event"}
 
 
@@ -114,7 +118,11 @@ class EntityInfo:
         parts += self.aliases
         if self.device_class:
             parts.append(self.device_class)
-        return normalize(" ".join(parts))
+            # People ask in Dutch: "accu", "batterij".
+            parts.extend(SEARCH_SYNONYMS.get(self.device_class, ()))
+        text = normalize(" ".join(parts))
+        # "Hoe vol is de auto?": a FordPass sensor never says "auto" itself.
+        return text + " auto" if CAR_WORDS & set(text.split()) and "laadpaal" not in text.split() else text
 
     @property
     def readable_state(self) -> str:
