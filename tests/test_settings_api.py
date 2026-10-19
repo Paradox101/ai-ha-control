@@ -1,5 +1,7 @@
 import asyncio
 import json
+import re
+from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -30,6 +32,14 @@ def test_every_field_maps_to_an_option():
     keys = set(settings_module.option_keys())
     assert set(settings_module.FIELD_INDEX) <= keys
     assert "api_key" not in settings_module.FIELD_INDEX and "ha_token" not in keys
+
+
+def test_every_field_type_has_a_ui_builder():
+    html = (Path(settings_module.__file__).parent / "web" / "static" / "index.html").read_text()
+    block = html[html.index("const builders = {"):html.index("function renderSettings")]
+    builders = set(re.findall(r"^    (\w+)\(spec, v, set", block, re.M))
+    types = {f["type"] for f in settings_module.FIELD_INDEX.values()}
+    assert types <= builders, f"geen UI-builder voor: {sorted(types - builders)}"
 
 
 async def test_persist_without_supervisor_writes_options(tmp_path, monkeypatch):
