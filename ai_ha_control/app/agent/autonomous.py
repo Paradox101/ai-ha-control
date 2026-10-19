@@ -194,9 +194,10 @@ class AutonomousAgent:
         section("Per ruimte", self._area_lines())
         section("Buiten", self._outside_lines(now))
         overrides = db.active_overrides()
-        section("Zelf aangepast door de bewoner (niet aankomen)", [
-            f"{index.get(e).name if index.get(e) else e} tot "
-            f"{datetime.fromtimestamp(o['until'], now.tzinfo):%H:%M}" for e, o in list(overrides.items())[:8]])
+        # Name and current state only: "kamerlampen aangesloten" was the model guessing what the resident did.
+        section("Handmatig aangepast, niet aankomen (huidige stand)", [
+            f"{index.get(e).name if index.get(e) else e}: {index.get(e).state if index.get(e) else '?'} (tot "
+            f"{datetime.fromtimestamp(o['until'], now.tzinfo):%H:%M})" for e, o in list(overrides.items())[:8]])
         section("Situatie nu", [
             f"Open ramen/deuren: {', '.join(overview['open_doors_windows']) or 'geen'}",
             f"Sloten open: {', '.join(overview['unlocked']) or 'geen'}",
