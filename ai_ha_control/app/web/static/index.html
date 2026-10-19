@@ -29,7 +29,8 @@
   @media (max-width: 640px) { .bar { flex-wrap: nowrap; } .pills { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } }
   .pill { font-size: 12px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted);
           background: none; cursor: default; white-space: nowrap; }
-  button.pill, a.pill { cursor: pointer; text-decoration: none; }
+  button.pill { cursor: pointer; }
+  a.btn { text-decoration: none; color: inherit; display: inline-block; font-size: 14px; }
   .pill.ok { color: var(--ok); border-color: var(--ok); }
   .pill.bad { color: var(--bad); border-color: var(--bad); }
   .pill.warn { color: var(--warn-b); border-color: var(--warn-b); }
@@ -170,6 +171,10 @@
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
   .table-wrap { overflow-x: auto; }
   code { background: var(--soft); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+  .overlay { position: fixed; inset: 0; background: #0008; display: flex; align-items: center; justify-content: center;
+             z-index: 15; padding: 16px; }
+  .overlay .card { width: 100%; max-width: 560px; max-height: calc(100vh - 32px); overflow: auto; margin: 0; }
+  .overlay textarea { width: 100%; height: 40vh; font: 12px ui-monospace, monospace; white-space: pre; box-sizing: border-box; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -180,7 +185,7 @@
     <div class="pills">
     <span id="ha" class="pill">HA …</span>
     <span id="llm" class="pill">Ollama …</span>
-    <a id="export" class="pill" href="api/export/entities.xlsx" download title="Download alle entiteiten die de add-on ziet als Excel">⬇ Excel</a>
+    <button id="export" class="pill" type="button" title="Alle entiteiten die de add-on ziet, als Excel of tekst">⬇ Excel</button>
     <button id="mode-pill" class="pill hidden" data-goto="agent" title="Huismodus"></button>
     <button id="agent-pill" class="pill hidden" data-goto="agent" title="Autonome agent"></button>
     <button id="dry" class="pill warn hidden" data-goto="settings" title="Testmodus: er wordt niets echt uitgevoerd. Klik om te wijzigen.">🧪 testmodus</button>
@@ -317,6 +322,18 @@
   <button class="btn primary" id="settings-save" type="button">Opslaan</button>
 </div></div>
 <div class="toast" id="toast" role="status"></div>
+<div class="overlay hidden" id="export-panel" role="dialog" aria-label="Entiteiten exporteren"><div class="card">
+  <h3>Entiteiten exporteren</h3>
+  <p class="help">Alle entiteiten die de add-on ziet, plus hoe de detectiesensoren per camera zijn ingedeeld.
+    Werkt downloaden niet in de Home Assistant-app, kopieer dan de tekst en plak die in een chat of notitie.</p>
+  <div class="row">
+    <a class="btn primary" id="export-xlsx" href="api/export/entities.xlsx" download>Excel downloaden</a>
+    <button class="btn hidden" id="export-share" type="button">Delen…</button>
+    <button class="btn" id="export-copy" type="button">Kopieer als tekst</button>
+    <button class="btn" id="export-close" type="button">Sluiten</button>
+  </div>
+  <textarea id="export-text" class="hidden" readonly aria-label="Entiteiten als tekst"></textarea>
+</div></div>
 
 <script>
   // Relative URLs so the page works behind Home Assistant Ingress.
@@ -354,6 +371,50 @@
     const box = el("div", "lightbox"); const img = el("img"); img.src = src; box.appendChild(img);
     box.onclick = () => box.remove(); document.body.appendChild(box);
   }
+  /* ---------------- Export ---------------- */
+  // The Home Assistant app's web view often cannot save downloads, so the panel also offers the system share
+  // sheet (with the file) and plain text to copy.
+  async function exportFile() {
+    const r = await fetch("api/export/entities.xlsx");
+    if (!r.ok) throw new Error(r.statusText);
+    const name = (r.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || "entiteiten.xlsx";
+    return new File([await r.blob()], name, { type: r.headers.get("Content-Type") || "application/octet-stream" });
+  }
+  function copyText(text) {
+    const area = $("export-text");
+    area.value = text; area.classList.remove("hidden");
+    area.focus(); area.select(); area.setSelectionRange(0, text.length);
+    let copied = false;
+    try { copied = document.execCommand("copy"); } catch (e) {}
+    if (!copied && navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(() => true, () => false);
+    }
+    return Promise.resolve(copied);
+  }
+  $("export").onclick = () => {
+    $("export-text").classList.add("hidden");
+    let shareable = false;
+    try { shareable = !!navigator.canShare && navigator.canShare({ files: [new File([""], "x.xlsx")] }); } catch (e) {}
+    $("export-share").classList.toggle("hidden", !shareable);
+    $("export-panel").classList.remove("hidden");
+  };
+  $("export-close").onclick = () => $("export-panel").classList.add("hidden");
+  $("export-panel").onclick = ev => { if (ev.target === $("export-panel")) $("export-panel").classList.add("hidden"); };
+  $("export-share").onclick = async () => {
+    try { await navigator.share({ files: [await exportFile()], title: "Entiteiten AI Huis" }); }
+    catch (e) { if (e.name !== "AbortError") toast("Delen lukt hier niet; gebruik Kopieer als tekst"); }
+  };
+  $("export-copy").onclick = async () => {
+    try {
+      const r = await fetch("api/export/entities.txt");
+      if (!r.ok) throw new Error(r.statusText);
+      const text = await r.text();
+      const rows = text.split("\n").filter(l => l && !l.startsWith("## ")).length - 2;
+      toast(await copyText(text) ? `Gekopieerd (${rows} regels): plak het in de chat`
+                                 : "Kopiëren lukt hier niet: selecteer de tekst hieronder en kopieer die");
+    } catch (e) { toast("❌ " + e.message); }
+  };
+
   function resultText(r) {
     if (r.status === "ok") return "✅ Uitgevoerd";
     if (r.status === "dry_run") return "🧪 " + r.message;
