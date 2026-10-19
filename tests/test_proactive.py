@@ -67,7 +67,7 @@ async def test_camera_detection_only_when_away(ctx, notifier):
 
 
 async def test_camera_nothing_seen_is_not_pushed(ctx, notifier):
-    async def nothing(image, question):
+    async def nothing(image, question, priority=1):
         return "NIETS: alleen een lege oprit."
     ctx.llm.describe_image = nothing
     ctx.config.camera_alerts = "always"
@@ -191,7 +191,7 @@ async def test_startup_grace_ignores_detections_and_ticks(ctx, notifier):
 
 
 async def test_failed_camera_analysis_is_explained(ctx, notifier):
-    async def broken(image, question):
+    async def broken(image, question, priority=1):
         raise RuntimeError('model "qwen3-vl:4b" not found')
     ctx.llm.describe_image = broken
     watcher = Watcher(ctx, notifier)

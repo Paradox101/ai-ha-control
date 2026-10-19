@@ -1,14 +1,41 @@
 # Changelog
 
-## 0.3.2
-- Opgelost: persoon/voertuig-detectie van een deurbel (bijv. "Deurbel Poort Persoon") werd gemeld als "Er wordt aangebeld". Alleen de bezoeker-sensor (belknop) telt nu als aanbellen.
-- Opgelost: dubbele meldingen bij het opstarten. De eerste 2 minuten na verbinden (en na een HA-herstart) worden detecties en periodieke regels genegeerd; veiligheidsalarmen komen altijd door.
-- Eén melding per apparaat: persoon-, voertuig- en bewegingssensoren van dezelfde camera geven samen één melding.
-- Als de beeldanalyse mislukt (bijv. vision-model niet geïnstalleerd), staat de reden in de melding.
-- Camera's: `analyze_camera` accepteert een ruimte ("wat gebeurt er in de achtertuin?") en bekijkt alle camera's daar (max. 3).
-- Dubbele streams (Reolink *vloeiend*/*duidelijk*, ook Engelse namen) worden samengevoegd; de scherpe stream wordt gebruikt.
-- Een verzonnen camera-ID wordt opgelost naar de best passende camera in plaats van een fout.
-- In de chat verschijnen alleen beelden van camera's die echt bekeken zijn.
+## 0.5.0 — Autonome agent
+
+### Autonoom het huis bewaken
+- **Hartslag**: elke paar minuten (en direct bij iets opvallends) krijgt de agent een situatierapport en beslist zelf: niets doen, melden, handelen of later opnieuw kijken. Als er niets veranderd is, wordt het LLM niet aangeroepen.
+- **Incidenten** met tijdlijn en snapshots: gebeurtenissen die bij elkaar horen worden één verhaal met één melding (persoon bij de poort → in de achtertuin). Verlopen incidenten sluiten automatisch.
+- **Opvolging**: de agent plant zelf controles ("kijk over 15 minuten of het raam dicht is").
+- **Huismodus**: thuis, weg, slapen, vakantie, gast. Komt uit je modus-scènes (Afwezig/Thuis/Slapen/Gast) als je die hebt, anders uit aanwezigheid en slaaptijden.
+- **Wat is normaal**: per sensor en per uur leert de add-on een basislijn (temperatuur, stroom, CO₂, vocht…). Grote afwijkingen, beweging op een uur dat nooit eerder voorkwam en apparaten die wegvallen worden gemeld.
+- **Camerapatrouille**: als je weg bent of slaapt, worden camerabeelden goedkoop vergeleken. Alleen bij verschil kijkt het beeldmodel.
+- **Huisregels** in gewone taal waar de agent zich aan houdt.
+- **Automatiseringen**: de agent ziet wanneer automatiseringen draaien (zodat een scène-wissel niet als verdacht geldt) en kan ze bekijken; nieuwe tool `related_automations` ("wat stuurt scène Afwezig aan?").
+
+### Veilig zelf handelen
+- **Autonomie per domein**: kijken / vragen / zelf doen. Standaard: verlichting, verwarming (max. ±2 °C) en ventilatoren zelf; sloten, alarm, garage en de rest alleen na bevestiging.
+- **Noodknop** `input_boolean.ai_autonoom` (wordt automatisch aangemaakt). Uit = alleen melden.
+- Maximaal aantal eigen acties per uur, alleen omkeerbare acties, en **ongedaan maken** via de melding of de web-UI.
+
+### Minder ruis, betere meldingen
+- Het beeldmodel kiest eerst een categorie (niets / voorbijganger / bezoek / verdacht). Voorbijgangers op straat geven geen melding meer.
+- 👍/👎 op meldingen; 👎 op een afwijking betekent "dit is normaal" en dempt die.
+- Meldingen in Home Assistant vervangen elkaar in plaats van zich op te stapelen.
+- Opgelost: persoon-/voertuigdetectie van een deurbel werd als "Er wordt aangebeld" gemeld; alleen de bezoeker-sensor telt nu.
+- Geen dubbele meldingen meer tijdens het opstarten van Home Assistant (2 minuten wachttijd; alarmen gaan altijd door).
+
+### Betere antwoorden in de chat
+- Antwoordt het model zonder iets te controleren, dan wordt het eenmaal teruggestuurd om het eerst na te kijken (geen verzonnen antwoorden meer).
+- Een live momentopname van het huis (aanwezigheid, deuren/ramen, sloten, alarm, klimaat, incidenten) zit in elke vraag.
+- Deur-, bewegings- en rookmelders worden als *open/dicht*, *beweging*, *ok* doorgegeven in plaats van `on`/`off`; alarm en sloten in gewone woorden.
+- `get_history` met `today` voor vragen als "heeft de stofzuiger vandaag gedraaid?".
+- Camera's per ruimte, dubbele streams samengevoegd (scherpe stream), verzonnen camera-ID's worden opgelost.
+
+### Bediening en integratie
+- **Alle instellingen in de web-UI**: per onderwerp gegroepeerd, met uitleg, keuzelijsten met je eigen modellen (inclusief tools/beeld-ondersteuning), telefoons, speakers en spraakdienst. Direct toegepast en opgeslagen in de add-on-configuratie.
+- Nieuwe tabbladen: Incidenten, Agent, Huisregels. Statuslabels voor huismodus en autonomie.
+- Statusentiteiten in Home Assistant: `sensor.ai_huis_status`, `sensor.ai_huismodus`, `binary_sensor.ai_bezorgd`, `sensor.ai_laatste_incident`.
+- GPU-wachtrij met prioriteit: veiligheid gaat voor chat, chat voor de agent, de agent voor de patrouille.
 
 ## 0.3.1
 - Opgelost: "authentication failed: Invalid access" bij het verbinden met Home Assistant. s6-overlay startte de add-on zonder omgevingsvariabelen, waardoor `SUPERVISOR_TOKEN` ontbrak. `run.sh` gebruikt nu `with-contenv`, en het token wordt als vangnet ook uit de s6-omgeving gelezen.

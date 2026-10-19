@@ -67,6 +67,36 @@ configuration:
   announce_players:
     name: Speakers voor aankondigingen
     description: media_player-entiteiten waarop de deurbel en alarmen worden uitgesproken
+  autonomous:
+    name: Autonome agent
+    description: De AI houdt het huis zelf in de gaten (hartslag, incidenten, opvolging)
+  autonomy:
+    name: Autonomie per domein
+    description: "domein=niveau. observe = alleen kijken, ask = vragen met knop, act = zelf doen (omkeerbaar, met ongedaan maken)"
+  kill_switch:
+    name: Noodknop
+    description: input_boolean die zelfstandig handelen aan/uit zet (wordt automatisch aangemaakt). Uit = alleen melden.
+  max_climate_change:
+    name: Max. temperatuurwijziging
+    description: Hoeveel graden de AI zelf mag bijstellen
+  max_autonomous_actions_per_hour:
+    name: Max. eigen acties per uur
+  triage_model:
+    name: Triage-model
+    description: Klein, snel model voor de hartslag (bijv. qwen3:4b-instruct). Leeg = taalmodel.
+  heartbeat_minutes:
+    name: Hartslag (min.)
+    description: Hoe vaak de agent rondkijkt
+  sleep_hours:
+    name: Slaaptijden
+    description: Periode voor huismodus 'slapen', bijv. 23:00-07:00
+  camera_patrol:
+    name: Camerapatrouille
+    description: Regelmatig camerabeelden vergelijken - off, away (als niemand thuis is of iedereen slaapt) of always
+  patrol_minutes:
+    name: Patrouille-interval (min.)
+  snapshot_retention_days:
+    name: Snapshots bewaren (dagen)
   api_key:
     name: API-sleutel
     description: Voor de Assist-integratie. Leeg = automatisch gegenereerd.

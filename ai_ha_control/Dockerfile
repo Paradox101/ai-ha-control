@@ -1,7 +1,7 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-RUN apk add --no-cache python3 py3-pip tzdata
+RUN apk add --no-cache python3 py3-pip py3-pillow tzdata
 
 WORKDIR /opt/ai_ha_control
 COPY requirements.txt .

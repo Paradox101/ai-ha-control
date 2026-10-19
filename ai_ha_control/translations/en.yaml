@@ -67,6 +67,36 @@ configuration:
   announce_players:
     name: Announcement speakers
     description: media_player entities on which doorbell and alarms are announced
+  autonomous:
+    name: Autonomous agent
+    description: The AI watches the house by itself (heartbeat, incidents, follow-ups)
+  autonomy:
+    name: Autonomy per domain
+    description: "domain=level. observe = watch only, ask = ask with a button, act = do it (reversible, with undo)"
+  kill_switch:
+    name: Kill switch
+    description: input_boolean that enables acting on its own (created automatically). Off = notify only.
+  max_climate_change:
+    name: Max temperature change
+    description: How many degrees the AI may change by itself
+  max_autonomous_actions_per_hour:
+    name: Max own actions per hour
+  triage_model:
+    name: Triage model
+    description: Small fast model for the heartbeat (e.g. qwen3:4b-instruct). Empty = language model.
+  heartbeat_minutes:
+    name: Heartbeat (min)
+    description: How often the agent looks around
+  sleep_hours:
+    name: Sleep hours
+    description: Period for house mode 'sleeping', e.g. 23:00-07:00
+  camera_patrol:
+    name: Camera patrol
+    description: Regularly compare camera images - off, away (when nobody is home or everyone sleeps) or always
+  patrol_minutes:
+    name: Patrol interval (min)
+  snapshot_retention_days:
+    name: Keep snapshots (days)
   api_key:
     name: API key
     description: Used by the Assist integration. Empty = generated automatically.

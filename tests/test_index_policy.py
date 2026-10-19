@@ -34,7 +34,7 @@ def test_compact_and_overview(index):
         "sensor.woonkamer_temperatuur (Temperatuur woonkamer, Woonkamer) = 21.4 °C"
     )
     overview = index.overview()
-    assert overview["open_doors_windows"] == ["binary_sensor.raam_slaapkamer (Raam slaapkamer, Slaapkamer) = on"]
+    assert overview["open_doors_windows"] == ["binary_sensor.raam_slaapkamer (Raam slaapkamer, Slaapkamer) = open"]
     assert len(overview["lights_on"]) == 1
 
 
@@ -69,3 +69,14 @@ def test_supervisor_token_from_s6_environment(tmp_path, monkeypatch):
     assert config_module.Config.load().ha_token == ""
     (tmp_path / "SUPERVISOR_TOKEN").write_text("abc123\n")
     assert config_module.Config.load().ha_token == "abc123"
+
+
+def test_readable_states(index):
+    index.update_state({"entity_id": "binary_sensor.achterdeur", "state": "off",
+                        "attributes": {"friendly_name": "Achterdeur", "device_class": "door"}})
+    index.update_state({"entity_id": "alarm_control_panel.huis", "state": "armed_away",
+                        "attributes": {"friendly_name": "Alarm"}})
+    assert index.get("binary_sensor.achterdeur").compact().endswith("= dicht")
+    assert index.get("alarm_control_panel.huis").readable_state == "ingeschakeld (afwezig)"
+    assert index.get("lock.voordeur").readable_state == "op slot"
+    assert index.get("sensor.woonkamer_temperatuur").readable_state == "21.4 °C"

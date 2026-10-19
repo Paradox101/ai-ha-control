@@ -120,7 +120,7 @@ async def test_memory_in_system_prompt(ctx):
     assert "Vincent wil 19,5 graden" in prompt
     memory_id = ctx.db.memories()[0]["id"]
     await run(ctx, "forget", memory_id=memory_id)
-    assert "Vincent" not in agent.system_prompt()
+    assert "19,5 graden" not in agent.system_prompt()
 
 
 async def test_voice_yes_confirms_pending(ctx, notifier):

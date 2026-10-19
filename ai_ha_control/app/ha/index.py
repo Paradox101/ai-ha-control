@@ -57,7 +57,26 @@ DOORBELL_WORDS = ("visitor", "bezoeker")
 HIGH_STREAM_WORDS = {"clear", "duidelijk", "main", "high", "hoog"}
 LOW_STREAM_WORDS = {"fluent", "vloeiend", "sub", "low", "laag", "balanced", "gebalanceerd"}
 
-SKIP_DOMAINS = {"update", "persistent_notification", "conversation", "tts", "stt", "wake_word", "event"}
+# Readable states: small models misread "on"/"off" for doors, motion, smoke, ...
+BINARY_STATES = {
+    "door": ("open", "dicht"), "window": ("open", "dicht"), "opening": ("open", "dicht"),
+    "garage_door": ("open", "dicht"), "lock": ("niet op slot", "op slot"),
+    "motion": ("beweging", "geen beweging"), "occupancy": ("bezet", "vrij"), "presence": ("aanwezig", "afwezig"),
+    "smoke": ("ROOK GEDETECTEERD", "ok"), "gas": ("GAS GEDETECTEERD", "ok"), "carbon_monoxide": ("CO GEDETECTEERD", "ok"),
+    "moisture": ("NAT/LEKKAGE", "droog"), "safety": ("ONVEILIG", "veilig"), "battery": ("batterij bijna leeg", "batterij ok"),
+    "connectivity": ("verbonden", "niet verbonden"), "problem": ("probleem", "ok"), "plug": ("ingeplugd", "uitgeplugd"),
+    "power": ("stroom aan", "geen stroom"), "running": ("draait", "draait niet"), "vibration": ("trilling", "stil"),
+}
+ALARM_STATES = {
+    "disarmed": "uitgeschakeld", "armed_away": "ingeschakeld (afwezig)", "armed_home": "ingeschakeld (thuis)",
+    "armed_night": "ingeschakeld (nacht)", "armed_vacation": "ingeschakeld (vakantie)",
+    "armed_custom_bypass": "ingeschakeld (aangepast)", "arming": "wordt ingeschakeld", "disarming": "wordt uitgeschakeld",
+    "pending": "in afwachting", "triggered": "ALARM AFGEGAAN",
+}
+LOCK_STATES = {"locked": "op slot", "unlocked": "niet op slot", "open": "open", "jammed": "geblokkeerd",
+               "locking": "wordt op slot gedaan", "unlocking": "wordt ontgrendeld"}
+
+SKIP_DOMAINS = {"update", "persistent_notification", "conversation", "stt", "wake_word", "event"}
 
 
 def _object_tokens(ent: "EntityInfo") -> set[str]:
@@ -92,10 +111,24 @@ class EntityInfo:
             parts.append(self.device_class)
         return normalize(" ".join(parts))
 
+    @property
+    def readable_state(self) -> str:
+        """State in words where the raw value is ambiguous (binary sensors, alarms, locks)."""
+        if self.state in ("unknown", "unavailable"):
+            return self.state
+        if self.domain == "binary_sensor" and self.device_class in BINARY_STATES:
+            on, off = BINARY_STATES[self.device_class]
+            return on if self.state == "on" else off if self.state == "off" else self.state
+        if self.domain == "alarm_control_panel":
+            return ALARM_STATES.get(self.state, self.state)
+        if self.domain == "lock":
+            return LOCK_STATES.get(self.state, self.state)
+        if self.unit:
+            return f"{self.state} {self.unit}"
+        return self.state
+
     def compact(self, with_attributes: bool = False) -> str:
-        value = self.state
-        if self.unit and value not in ("unknown", "unavailable"):
-            value = f"{value} {self.unit}"
+        value = self.readable_state
         line = f"{self.entity_id} ({self.name}"
         if self.area:
             line += f", {self.area}"

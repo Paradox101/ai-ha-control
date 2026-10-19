@@ -246,6 +246,10 @@ class HAClient:
             timeout=120,
         )
 
+    async def related(self, item_type: str, item_id: str) -> dict[str, list[str]]:
+        """Things that reference an item (HA search), e.g. automations that use an entity."""
+        return await self.command({"type": "search/related", "item_type": item_type, "item_id": item_id})
+
     async def validate_config(self, triggers: Any, conditions: Any, actions: Any) -> dict[str, Any]:
         """Validate automation parts; returns {section: {valid, error}}."""
         payload: dict[str, Any] = {"type": "validate_config", "triggers": triggers, "actions": actions}
@@ -266,6 +270,13 @@ class HAClient:
             if raw:
                 return await resp.read()
             return await resp.json(content_type=None)
+
+    async def set_state(self, entity_id: str, state: str, attributes: dict[str, Any]) -> Any:
+        """Create/update a state-only entity (not stored by HA across restarts; republished on connect)."""
+        return await self._rest("POST", f"states/{entity_id}", json={"state": state, "attributes": attributes})
+
+    async def create_input_boolean(self, name: str, icon: str = "mdi:robot") -> Any:
+        return await self.command({"type": "input_boolean/create", "name": name, "icon": icon})
 
     async def camera_snapshot(self, entity_id: str) -> bytes:
         return await self._rest("GET", f"camera_proxy/{entity_id}", raw=True)

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from ..ha.index import normalize
 from .actions import perform
+from .agent_tools import AGENT_TOOLS, HOUSE_RULE_TOOLS
 from .automations import TOOLS as AUTOMATION_TOOLS
 from .base import Tool, ToolContext, ToolRegistry, as_list
 
@@ -54,10 +55,14 @@ def _parse_ts(item: dict[str, Any]) -> datetime | None:
     return datetime.fromisoformat(ts) if ts else None
 
 
-async def get_history(ctx: ToolContext, entity_id: str, hours: float = 24) -> dict[str, Any]:
+async def get_history(ctx: ToolContext, entity_id: str, hours: float = 24, today: bool = False) -> dict[str, Any]:
     ent = ctx.index.get(entity_id)
     if ent is None:
-        return {"error": f"entiteit '{entity_id}' bestaat niet"}
+        return {"error": f"entiteit '{entity_id}' bestaat niet; gebruik search_entities"}
+    if today:
+        local_now = datetime.now(ZoneInfo(ctx.timezone) if ctx.timezone else timezone.utc)
+        midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        hours = max(0.25, (local_now - midnight).total_seconds() / 3600)
     hours = max(0.25, min(float(hours), 24 * 31))
     start = datetime.now(timezone.utc) - timedelta(hours=hours)
     raw = await ctx.ha.history([entity_id], start.isoformat())
@@ -323,6 +328,7 @@ TOOLS = [
             "properties": {
                 "entity_id": {"type": "string"},
                 "hours": {"type": "number", "description": "Aantal uur terug (standaard 24)"},
+                "today": {"type": "boolean", "description": "true = vanaf middernacht vandaag"},
             },
             "required": ["entity_id"],
         },
@@ -414,5 +420,18 @@ TOOLS = [
 ]
 
 
+AUTONOMOUS_TOOL_NAMES = {
+    "search_entities", "get_state", "get_history", "get_forecast", "analyze_camera",
+    "control_light", "set_climate", "turn_on_off", "call_service",
+}
+AUTONOMOUS_AUTOMATION_TOOLS = {"list_automations", "get_automation", "related_automations"}
+
+
 def build_registry() -> ToolRegistry:
-    return ToolRegistry(TOOLS + AUTOMATION_TOOLS)
+    return ToolRegistry(TOOLS + AUTOMATION_TOOLS + HOUSE_RULE_TOOLS)
+
+
+def build_autonomous_registry() -> ToolRegistry:
+    """A smaller tool set for the heartbeat: fewer tokens and fewer ways for a small model to go wrong."""
+    return ToolRegistry([t for t in TOOLS if t.name in AUTONOMOUS_TOOL_NAMES]
+                        + [t for t in AUTOMATION_TOOLS if t.name in AUTONOMOUS_AUTOMATION_TOOLS] + AGENT_TOOLS)

@@ -17,6 +17,13 @@ _LOGGER = logging.getLogger(__name__)
 
 ACTION_PREFIX_CONFIRM = "AIHA_CONFIRM_"
 ACTION_PREFIX_REJECT = "AIHA_REJECT_"
+ACTION_PREFIX_UNDO = "AIHA_UNDO_"
+ACTION_PREFIX_FEEDBACK_UP = "AIHA_FB_UP_"
+ACTION_PREFIX_FEEDBACK_DOWN = "AIHA_FB_DOWN_"
+MAX_ACTIONS = 3  # Android shows at most three buttons
+
+# Kinds where 👍/👎 feedback makes sense (things the AI decided to tell you).
+FEEDBACK_KINDS = {"camera", "motion", "energy", "anomaly", "agent", "autonomous", "presence", "security", "summary"}
 
 
 def parse_quiet_hours(value: str | None) -> tuple[dtime, dtime] | None:
@@ -61,21 +68,27 @@ class Notifier:
         critical: bool = False,
         respect_quiet_hours: bool = True,
         announce: str | None = None,
-    ) -> bool:
-        """Log the event and push it unless quiet hours apply. Returns whether it was pushed."""
+        ref: str | None = None,
+        incident_id: int | None = None,
+    ) -> int:
+        """Log the event and push it unless quiet hours apply. Returns the event id."""
+        event_id = self._db.add_event(kind, title, message, entity_id, False, ref, incident_id)
         quiet = respect_quiet_hours and not critical and in_quiet_hours(self._config.quiet_hours, self.now())
-        pushed = False
-        if not quiet:
-            tag = f"aiha_{kind}_{entity_id or ''}"
-            try:
-                await self._push(title, message, tag, image_entity, actions, critical)
-                pushed = True
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning("Notification failed: %s", err)
-            if announce:
-                await self.announce(announce)
-        self._db.add_event(kind, title, message, entity_id, pushed)
-        return pushed
+        if quiet:
+            return event_id
+        buttons = list(actions or [])
+        if kind in FEEDBACK_KINDS:
+            buttons += [{"action": f"{ACTION_PREFIX_FEEDBACK_UP}{event_id}", "title": "👍 Nuttig"},
+                        {"action": f"{ACTION_PREFIX_FEEDBACK_DOWN}{event_id}", "title": "👎 Onnodig"}]
+        tag = f"aiha_{ref or kind}_{incident_id or entity_id or ''}"
+        try:
+            await self._push(title, message, tag, image_entity, buttons[:MAX_ACTIONS], critical)
+            self._db.set_event_pushed(event_id)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Notification failed: %s", err)
+        if announce:
+            await self.announce(announce)
+        return event_id
 
     async def announce(self, message: str) -> None:
         """Speak a message on the configured speakers (TTS)."""
@@ -106,8 +119,9 @@ class Notifier:
     ) -> None:
         service = self._config.notify_service.strip()
         if not service:
+            # Same tag = same notification: updates replace each other instead of piling up.
             await self._ha.call_service(
-                "persistent_notification", "create", {"title": title, "message": message}
+                "persistent_notification", "create", {"title": title, "message": message, "notification_id": tag}
             )
             return
         domain, _, name = service.partition(".")
@@ -129,7 +143,7 @@ class Notifier:
             "Bevestiging nodig" if self._config.language == "nl" else "Confirmation needed",
             f"{pending.description}\n({pending.reason})",
             kind="confirmation",
-            entity_id=pending.id,
+            ref=f"confirm:{pending.id}",
             actions=[
                 {"action": f"{ACTION_PREFIX_CONFIRM}{pending.id}",
                  "title": "Uitvoeren" if self._config.language == "nl" else "Execute"},
@@ -137,4 +151,15 @@ class Notifier:
                  "title": "Annuleren" if self._config.language == "nl" else "Cancel"},
             ],
             respect_quiet_hours=False,
+        )
+
+    async def action_done(self, action_id: int, description: str, reason: str = "") -> None:
+        """Tell the user what the agent did by itself, with an undo button."""
+        message = description + (f"\nWaarom: {reason}" if reason else "")
+        await self.send(
+            "🤖 Zelf gedaan",
+            message,
+            kind="autonomous",
+            ref=f"action:{action_id}",
+            actions=[{"action": f"{ACTION_PREFIX_UNDO}{action_id}", "title": "↩️ Ongedaan maken"}],
         )

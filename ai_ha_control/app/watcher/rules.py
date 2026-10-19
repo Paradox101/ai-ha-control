@@ -10,9 +10,18 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..ha.index import OPENING_CLASSES, SAFETY_CLASSES, EntityInfo
-from ..notify import ACTION_PREFIX_CONFIRM, ACTION_PREFIX_REJECT, Notifier
+from ..autonomy import undo_action
+from ..notify import (
+    ACTION_PREFIX_CONFIRM,
+    ACTION_PREFIX_FEEDBACK_DOWN,
+    ACTION_PREFIX_FEEDBACK_UP,
+    ACTION_PREFIX_REJECT,
+    ACTION_PREFIX_UNDO,
+    Notifier,
+)
 from ..tools.actions import describe_service, queue_confirmation, resolve_confirmation
 from ..tools.base import ToolContext
+from .vision import QUIET_CATEGORIES, SUSPICIOUS, UNKNOWN, classify
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +33,6 @@ SAFETY_LABELS = {
     "safety": "een onveilige situatie",
     "heat": "hitte",
 }
-NOTHING_MARKER = "NIETS"
 # After (re)connecting, Home Assistant may still be starting: entities, areas and states settle over
 # a minute or two and sensors flip on. Ignore detections and periodic rules during that time.
 STARTUP_GRACE_SECONDS = 120
@@ -71,6 +79,11 @@ class Watcher:
         self._done: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
         self._grace_until = 0.0
+        # Optional collaborators, wired up by the app (tests may leave them out).
+        self.agent = None       # AutonomousAgent: receives observations
+        self.incidents = None   # IncidentManager: groups notifications into incidents
+        self.baseline = None    # Baseline: learns activity patterns
+        self.snapshots = None   # SnapshotStore: keeps images for incident timelines
 
     @property
     def config(self):
@@ -91,6 +104,11 @@ class Watcher:
     @property
     def in_grace(self) -> bool:
         return time.monotonic() < self._grace_until
+
+    def _now(self) -> datetime:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo(self._ctx.timezone) if self._ctx.timezone else None)
 
     def _allowed(self, key: str, seconds: float) -> bool:
         now = time.monotonic()
@@ -128,18 +146,43 @@ class Watcher:
         if old.get("state") in ("unavailable", "unknown"):
             return
         ent = self._ctx.index.get(new["entity_id"])
-        if ent is None or ent.domain != "binary_sensor" or ent.state != "on":
+        if ent is None:
             return
+        if self.agent is not None and not self.in_grace:
+            self.agent.note_state_change(ent, old.get("state"), new.get("state"))
+        if ent.domain != "binary_sensor" or ent.state != "on":
+            return
+        if self.baseline is not None and not self.in_grace:
+            anomaly = self.baseline.activity(ent, self._now())
+            if anomaly:
+                await self.report_anomaly(anomaly)
         if ent.device_class in SAFETY_CLASSES:
             await self._safety_alert(ent)
         elif self._ctx.index.is_detection_sensor(ent) and not self.in_grace:
             self._spawn(self._detection(ent))
+
+    async def report_anomaly(self, anomaly) -> None:
+        """Something outside the learned normal: one incident (👎 = 'this is normal') and tell the agent."""
+        if self.agent is not None:
+            self.agent.observe(f"Afwijking: {anomaly.text}", urgent=anomaly.severity != "info")
+        if self.incidents is not None:
+            await self.incidents.report(anomaly.key, "Ongebruikelijk", anomaly.text, severity=anomaly.severity,
+                                        entity_id=anomaly.entity_id, ref=anomaly.key, correlate_seconds=6 * 3600)
 
     async def _safety_alert(self, ent: EntityInfo) -> None:
         if not self._allowed(f"safety:{ent.entity_id}", 600):
             return
         label = SAFETY_LABELS.get(ent.device_class or "", "een alarm")
         where = f" in {ent.area}" if ent.area else ""
+        if self.agent is not None:
+            self.agent.observe(f"ALARM: {ent.name}{where} detecteert {label}", urgent=True)
+        if self.incidents is not None:
+            await self.incidents.report(
+                f"safety:{ent.entity_id}", f"Alarm: {label}", f"{ent.name}{where} detecteert {label}!",
+                severity="critical", entity_id=ent.entity_id, critical=True,
+                announce=f"Let op! {ent.name}{where} detecteert {label}.",
+            )
+            return
         await self._notifier.send(
             f"⚠️ Alarm: {label}",
             f"{ent.name}{where} detecteert {label}!",
@@ -174,25 +217,38 @@ class Watcher:
             )
             return
 
-        description, failure = "", ""
+        description, failure, snapshot, category = "", "", None, UNKNOWN
         try:
             image = await self._ctx.ha.camera_snapshot(camera.entity_id)
-            description = await self._ctx.llm.describe_image(
-                image,
-                f"Dit is het actuele beeld van camera '{camera.name}'. De sensor '{ent.name}' ging net af. "
-                "Beschrijf in maximaal twee zinnen wie of wat je ziet (personen, voertuigen, dieren, pakketjes) "
-                f"en of het verdacht lijkt. Begin je antwoord met '{NOTHING_MARKER}' als er niets relevants "
-                "te zien is. Antwoord in het Nederlands.",
+            if self.snapshots is not None:
+                snapshot = self.snapshots.save(camera.entity_id, image)
+            category, description = await classify(
+                self._ctx.llm, image, camera.name,
+                "Er werd net aangebeld." if doorbell else f"De sensor '{ent.name}' ging net af.",
             )
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Camera analysis for %s failed: %s", camera.entity_id, err)
             failure = f" (geen beeldanalyse: {str(err)[:120] or type(err).__name__})"
 
-        if description.upper().startswith(NOTHING_MARKER) and not doorbell:
+        if category in QUIET_CATEGORIES and not doorbell:
+            # Nothing, or people passing by on the street: keep it in the history, don't disturb.
             self._ctx.db.add_event("camera", f"Detectie bij {where}", description, camera.entity_id, False)
             return
         title = "🔔 Er wordt aangebeld" if doorbell else f"📷 Detectie bij {where}"
-        message = description.removeprefix(NOTHING_MARKER).strip(" :.") or f"{ent.name} ging af.{failure}"
+        message = description or f"{ent.name} ging af.{failure}"
+        severity = "warning" if category in (SUSPICIOUS, UNKNOWN) else "info"
+        if self.agent is not None and not doorbell:
+            self.agent.observe(f"{title.lstrip('📷 ')} ({ent.name}): {message}", urgent=True)
+        if self.incidents is not None:
+            await self.incidents.report(
+                "doorbell" if doorbell else "presence",
+                "Er wordt aangebeld" if doorbell else f"Detectie bij {where}",
+                message, severity="info" if doorbell else severity, entity_id=camera.entity_id,
+                snapshot=snapshot, image_entity=camera.entity_id, correlate_seconds=60 if doorbell else 600,
+                announce=f"Er wordt aangebeld. {message}" if doorbell else None,
+                respect_quiet_hours=not doorbell,
+            )
+            return
         await self._notifier.send(title, message, kind="camera", entity_id=camera.entity_id,
                                   image_entity=camera.entity_id,
                                   announce=f"Er wordt aangebeld. {message}" if doorbell else None,
@@ -201,6 +257,16 @@ class Watcher:
     async def handle_notification_action(self, data: dict[str, Any]) -> None:
         """Buttons pressed in a Companion app notification."""
         action = data.get("action") or ""
+        if action.startswith(ACTION_PREFIX_UNDO):
+            result = await undo_action(self._ctx, int(action[len(ACTION_PREFIX_UNDO):]))
+            text = "↩️ Teruggedraaid" if result.get("status") == "ok" else f"❌ {result.get('error', result.get('status'))}"
+            await self._notifier.send(text, result.get("description", ""), kind="confirmation_result",
+                                      respect_quiet_hours=False)
+            return
+        for prefix, value in ((ACTION_PREFIX_FEEDBACK_UP, 1), (ACTION_PREFIX_FEEDBACK_DOWN, -1)):
+            if action.startswith(prefix):
+                apply_feedback(self._ctx.db, int(action[len(prefix):]), value)
+                return
         for prefix, approve in ((ACTION_PREFIX_CONFIRM, True), (ACTION_PREFIX_REJECT, False)):
             if action.startswith(prefix):
                 result = await resolve_confirmation(self._ctx, action[len(prefix):], approve)
@@ -238,12 +304,14 @@ class Watcher:
             nearby = [h for h in heating if not ent.area or not h.area or h.area == ent.area]
             if not nearby or not self._once(f"window:{ent.entity_id}:{ent.last_changed}"):
                 continue
-            await self._notifier.send(
-                "🪟 Raam open, verwarming aan",
-                f"{ent.name} staat al {int(open_minutes)} minuten open terwijl {nearby[0].name} verwarmt.",
-                kind="energy",
-                entity_id=ent.entity_id,
-            )
+            text = f"{ent.name} staat al {int(open_minutes)} minuten open terwijl {nearby[0].name} verwarmt."
+            if self.agent is not None:
+                self.agent.observe(text, urgent=True)
+            if self.incidents is not None:
+                await self.incidents.report(f"energy:{ent.entity_id}", "Raam open, verwarming aan", text,
+                                            severity="info", entity_id=ent.entity_id)
+                continue
+            await self._notifier.send("🪟 Raam open, verwarming aan", text, kind="energy", entity_id=ent.entity_id)
 
     async def _unsecured_while_away(self) -> None:
         index = self._ctx.index
@@ -257,6 +325,8 @@ class Watcher:
         for ent in list(index.entities.values()):
             if not is_unsecured(ent) or not self._once(f"away:{ent.entity_id}:{left_at}"):
                 continue
+            if self.agent is not None:
+                self.agent.observe(f"{ent.name} staat open terwijl niemand thuis is ({int(away_minutes)} min)")
             domain, service = ("lock", "lock") if ent.domain == "lock" else ("cover", "close_cover")
             args = {"domain": domain, "service": service, "entity_ids": [ent.entity_id], "data": {}}
             await queue_confirmation(
@@ -267,3 +337,11 @@ class Watcher:
                 f"{'Op slot doen' if domain == 'lock' else 'Sluiten'}? ({describe_service(domain, service, [ent.entity_id], {})})",
                 f"niemand is al {int(away_minutes)} minuten thuis",
             )
+
+
+def apply_feedback(db, event_id: int, value: int) -> None:
+    """👍/👎 on a notification; 👎 on an anomaly means 'this is normal' and mutes it."""
+    db.set_event_feedback(event_id, value)
+    event = db.get_event(event_id)
+    if value < 0 and event and (event.get("ref") or "").startswith("anomaly:"):
+        db.mute(event["ref"])

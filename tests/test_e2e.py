@@ -65,7 +65,8 @@ def fake_ollama(requests: list, replies: list | None = None) -> web.Application:
 
     async def chat(request):
         requests.append(await request.json())
-        return web.json_response({"message": replies.pop(0)})
+        reply = replies.pop(0) if len(replies) > 1 else replies[0]  # the last reply repeats
+        return web.json_response({"message": reply})
 
     async def tags(_request):
         return web.json_response({"models": [{"name": "qwen3:8b"}]})
