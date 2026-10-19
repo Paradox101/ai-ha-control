@@ -34,7 +34,7 @@ jobs:
           echo "base=$(grep '${{ matrix.arch }}:' ai_ha_control/build.yaml | awk '{print $2}')" >> "$GITHUB_OUTPUT"
           echo "platform=$([ '${{ matrix.arch }}' = aarch64 ] && echo linux/arm64 || echo linux/amd64)" >> "$GITHUB_OUTPUT"
           echo "repo=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: ai_ha_control
           platforms: ${{ steps.meta.outputs.platform }}
