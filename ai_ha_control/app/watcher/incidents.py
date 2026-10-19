@@ -125,6 +125,13 @@ class IncidentManager:
         self._db.add_incident_event(incident_id, note)
         self._db.update_incident(incident_id, status="resolved")
 
+    def resolve_motion_only(self) -> int:
+        """Up to 0.6.23 plain motion (no person) opened an incident: close those leftovers once."""
+        old = [i for i in self.active() if i["kind"] == "presence" and i["title"].startswith("Detectie bij")]
+        for incident in old:
+            self.resolve(incident["id"], "Afgesloten: alleen beweging, geen persoon gezien")
+        return len(old)
+
     def resolve_stale(self, hours: float = AUTO_RESOLVE_HOURS) -> int:
         limit = time.time() - hours * 3600
         stale = [i for i in self.active() if i["updated"] < limit]

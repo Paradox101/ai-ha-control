@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.25
+
+- **De auto is geen huisdeur**: sloten en deuren van een auto (FordPass, Tesla, ...) tellen niet meer mee voor "staat open terwijl niemand thuis is" of een mogelijke inbraak. De auto rijdt mee als je weg bent. In de nachtronde staat de auto nog wel apart, als "(auto)".
+- **"Niemand thuis" volgt de huismodus**: de vraag om af te sluiten komt alleen als de huismodus (de badge bovenin) ook "weg" of "vakantie" zegt. Zegt je eigen modus-helper of scène "thuis", dan wint die van een tracker die achterloopt. Camerameldingen bij "alleen als je weg bent" gebruiken dezelfde bron.
+- **Detectie wordt alleen een incident bij een persoon**: gewone beweging (zoals "Schuur Beweging") zonder persoon op het beeld, of als de camera niet kon kijken, komt alleen in de geschiedenis. Een persoon in een privézone met het alarm aan blijft kritiek.
+- **Opgeruimd bij de update**: openstaande incidenten van alleen beweging en de vraag om de auto op slot te doen worden één keer automatisch gesloten.
+
 ## 0.6.24
 
 - **"Handmatig aangepast" klopt weer**: alleen wat een bewoner echt zelf deed (app, dashboard, spraak) houdt de agent op afstand. Integraties die zelf iets veranderen (Spotify, de auto op afstand starten, een schijnwerper op zijn eigen sensor, het laden van de auto) tellen niet meer mee; een wandschakelaar alleen bij apparaten die de agent zelf regelt (comfortprofielen) of als hij een actie van de agent terugdraait.
