@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -76,6 +77,7 @@ class FakeHA:
         self.connected = True
         self.states_set: dict = {}
         self.created_booleans: list = []
+        self.timelines: dict[str, list[tuple[datetime, str]]] = {}  # entity_id -> [(when, state)], oldest first
 
     async def call_service(self, domain, service, data=None, target=None, return_response=False):
         self.calls.append((domain, service, data, target))
@@ -105,7 +107,20 @@ class FakeHA:
         return [e for e in self.logbook_entries if e["entity_id"] in entity_ids]
 
     async def history(self, entity_ids, start_time, end_time=None):
-        return {entity_ids[0]: [{"s": "20.0", "lu": 1.0}, {"s": "22.0", "lu": 2.0}, {"s": "21.0", "lu": 3.0}]}
+        if not any(e in self.timelines for e in entity_ids):
+            return {entity_ids[0]: [{"s": "20.0", "lu": 1.0}, {"s": "22.0", "lu": 2.0}, {"s": "21.0", "lu": 3.0}]}
+        # Like Home Assistant: the state at the start time first, then every change until the end time.
+        start = datetime.fromisoformat(start_time)
+        end = datetime.fromisoformat(end_time) if end_time else datetime.max.replace(tzinfo=timezone.utc)
+        result = {}
+        for eid in entity_ids:
+            rows = self.timelines.get(eid, [])
+            before = [state for when, state in rows if when <= start]
+            items = [{"s": before[-1], "lu": start.timestamp()}] if before else []
+            items += [{"s": state, "lu": when.timestamp()} for when, state in rows if start < when <= end]
+            if items:
+                result[eid] = items
+        return result
 
     async def camera_snapshot(self, entity_id):
         return b"jpeg"

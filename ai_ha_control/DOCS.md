@@ -8,6 +8,7 @@ Een **lokale AI (Ollama)** die je huis helpt beheren via Home Assistant. Alles b
   - "Welke ramen staan open?" · "Hoe warm was het gisteren gemiddeld in de woonkamer?"
   - "Zet de thermostaat op 20,5 graden" · "Doe de lampen in de woonkamer op 30% warm wit"
   - "Staat er een pakketje voor de deur?" (camerabeeld wordt bekeken en in de chat getoond)
+  - "Hoe vaak is er vandaag iemand bij de voordeur geweest?" · "Hoe laat werd er gisteren aangebeld?" · "Hoe lang stond het raam open?" · "Wanneer kwam Vincent thuis?" (de add-on telt zelf uit de HA-geschiedenis; Duidelijk/Vloeiend-streams tellen als één camera)
   - "Gaat het morgen regenen?" · "Hoeveel stroom hebben we vandaag verbruikt?"
   - "Maak een automatisering die de gang-lamp 's nachts op 10% zet bij beweging"
   - "Onthoud dat ik doordeweeks om 7 uur opsta"
@@ -47,6 +48,8 @@ Elke wijziging in het situatierapport staat met **wie** het deed (bewoner, autom
 ### Comfort
 
 In het tabblad **🌡️ Comfort** leg je per ruimte vast wat je wilt: temperatuur per huismodus, voorverwarmen voor de thuiskomst, lampen die aangaan bij schemer, ventilatie bij hoog CO₂ (>1000 ppm) of vocht (>75%) en zonwering bij felle zon (>24 °C). Je kunt het ook in de chat zeggen. Vaste regels voeren dit uit (niet het taalmodel), via dezelfde autonomie-instellingen. Ze handelen alleen als de wens verandert (andere huismodus, schemer), dus een handmatige aanpassing wordt niet teruggedraaid. Zet je de thermostaat vaak met de hand anders, dan stelt de add-on voor het profiel aan te passen.
+
+**Airco met cv als backup.** Verwarm je primair met een airco (warmtepomp), kies die als thermostaat en zet onder *Backup-verwarming (cv)* de cv-thermostaat. De cv staat dan op stand-by (standaard 15 °C) en springt pas bij als: de buitentemperatuur onder de ingestelde drempel zakt, de ruimte langer dan de ingestelde tijd (standaard 60 min) meer dan 0,5 °C onder de setpoint blijft, de airco onbereikbaar is of langer dan 15 minuten ontdooit. Eenmaal aan blijft de cv minstens 30 minuten aan en tot de setpoint gehaald is. Koelt de airco (of staat hij op drogen/ventileren), dan gaat de cv direct terug naar stand-by, zodat ze nooit tegen elkaar in werken; zet je de airco zelf uit, dan laat de add-on de cv ook met rust. Delen meerdere ruimtes één cv-thermostaat, dan wint de warmste wens. Het Comfort-tabblad toont per ruimte welke bron nu verwarmt en waarom.
 
 Voorverwarmen gebeurt als iemand onderweg naar huis is (de [proximity-integratie](https://www.home-assistant.io/integrations/proximity/): `sensor.*_direction_of_travel` = towards en de afstand kleiner dan `preheat_distance_km`) of op basis van de geleerde thuiskomsttijd per weekdag.
 
@@ -227,9 +230,13 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 
 Gebruik de officiële Reolink-integratie. De add-on koppelt detectiesensoren (persoon, voertuig, dier, bezoeker) automatisch aan de camera van hetzelfde apparaat en gebruikt de *clear*-stream voor de beste beeldkwaliteit.
 
+## Entiteiten delen
+
+De knop **⬇ Excel** bovenaan de web-UI downloadt alle entiteiten die de add-on ziet (naam, ruimte, apparaat, status, eigenschappen) en een tweede blad met hoe de detectiesensoren per camera gegroepeerd zijn. Handig om mee te sturen als een vraag verkeerd beantwoord wordt.
+
 ## Modellen vergelijken
 
-Met `scripts/benchmark.py` in de repository test je modellen op een gesimuleerd huis (er wordt niets in HA uitgevoerd):
+Met `scripts/benchmark.py` in de repository test je modellen op een gesimuleerd huis (er wordt niets in HA uitgevoerd), inclusief een dag geschiedenis voor vragen als "hoe vaak", "wanneer" en "hoe lang":
 
 ```bash
 python scripts/benchmark.py --ollama http://<ip-homeserver>:11434 --models qwen3:8b qwen3:4b

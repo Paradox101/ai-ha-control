@@ -5,6 +5,7 @@ Home Assistant must reach the add-on at ADDON_URL (both on the host network in C
 """
 
 import asyncio
+import json
 import os
 
 import aiohttp
@@ -73,6 +74,20 @@ async def test_addon_and_integration_with_real_home_assistant(tmp_path, monkeypa
                 async with session.get(f"{HA_URL}/api/states/input_boolean.ai_autonoom", headers=headers) as r:
                     return r.status == 200 and (await r.json())["state"] == "on"
             await wait_for(kill_switch, what="kill switch")
+
+            # "How often was someone at the front door?" is counted from the real recorder history.
+            for value, wait in (("off", 1.5), ("on", 2), ("off", 65), ("on", 2), ("off", 1.5)):
+                async with session.post(f"{HA_URL}/api/states/binary_sensor.voordeur_persoon", headers=headers,
+                                        json={"state": value, "attributes": {"friendly_name": "Voordeur Persoon"}}):
+                    pass
+                await asyncio.sleep(wait)  # two visits, more than a minute apart
+
+            async def counted():
+                result = json.loads(await state.registry.run(state.ctx, "get_detections",
+                                                             {"what": "persoon", "where": "voordeur", "hours": 1}))
+                return result if result.get("total") == 2 else None
+            detections = await wait_for(counted, timeout=30, what="detections in the recorder history")
+            assert detections["places"][0]["sensors"] == {"binary_sensor.voordeur_persoon": 2}
 
             # Set up the integration through the real config flow.
             async with session.post(f"{HA_URL}/api/config/config_entries/flow", headers=headers,
