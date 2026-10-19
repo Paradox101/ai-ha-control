@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.22
+
+Tweede ronde verbeteringen aan bestaande functies, na een review van chat, tools, camera's en de web-UI.
+
+- **"Prima" of "ok" voert niets meer uit**: alleen een duidelijk "ja" bevestigt, en alleen wat in de vorige beurt gevraagd werd. Een oude, nog openstaande vraag (zoals de voordeur van het slot) gaat niet meer mee met een later "ja".
+- **Camera's in slaap- en badkamers blijven privé**: een deur- of sabotagemelding stuurt geen beeld meer van een camera met profiel "uit", de agent kijkt er niet zelf in en een melding van de agent hangt er geen beeld van aan. Namen als "Babykamer", "Ouderslaapkamer", "Douche" en "Toilet" worden nu ook herkend.
+- **Web-UI op oudere iPhones/iPads** (vóór iOS 16.4) werkt weer: de opmaak van chatantwoorden gebruikte iets dat Safari daar niet kent, waardoor de hele pagina stilviel.
+- **Web-UI geeft altijd een foutmelding** als een knop niet lukt; schakelaars springen dan terug en je tekst blijft staan. Verlopen of op de telefoon bevestigde vragen verdwijnen uit de chat. Lange namen schuiven de pagina niet meer opzij op een telefoon.
+- **Keuzelijsten tonen alle entiteiten** (was maximaal 500), en blijven niet leeg als je het tabblad opent terwijl de add-on nog opstart.
+- **Chat**: na "Nieuw gesprek" komt een laat antwoord niet meer in het nieuwe gesprek; de agent gebruikt alleen de laatste 6 uur van een gesprek als context. Tekst die vóór een tool-aanroep al gestreamd werd, plakt niet meer aan het antwoord vast.
+- **Geschiedenis**: een kleine dip in een energiemeter telt niet meer als reset (gaf soms duizenden kWh); "sinds 23:00" in de ochtend betekent gisteravond; tijden van automations staan in je eigen tijdzone; "wat is er gebeurd" toont echte acties in plaats van je eigen vragen.
+- **Aanwezigheid nabootsen** weet na een herstart nog welke lampen hij aanzette.
+- **Kleinere fixes**: de agent doet niet meer tool-aanroepen dan ingesteld, ook niet in één keer; de noodknop en "nu controleren" geven een nette fout als HA of de agent hapert; een verkeerde Ollama-URL wordt niet meer als "bereikbaar" getoond; pauzehelpers gebruiken de tijdzone van Home Assistant.
+
 ## 0.6.21
 
 - **Chatgeschiedenis blijft staan**: na herladen of het opnieuw openen van de app zie je het gesprek weer, met dezelfde opmaak. Met **Nieuw gesprek** begin je opnieuw.

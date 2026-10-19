@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 from dataclasses import replace
 from datetime import datetime, timedelta
 
@@ -31,6 +32,7 @@ class PresenceSimulator:
         self._ctx = replace(ctx, source="simulation", conversation_id="simulation",
                             reason="aanwezigheidssimulatie (vakantie)")
         self._on: set[str] = set()  # lights the simulation turned on
+        self._restored = False
 
     def _dark(self, now: datetime) -> bool:
         sun = self._ctx.index.get("sun.sun")
@@ -67,8 +69,23 @@ class PresenceSimulator:
             return False
         return self.in_use(area, moment)
 
+    def _restore(self) -> None:
+        """After a restart: which lights did we switch on (and not off) in the last day? From the audit log."""
+        self._restored = True
+        for row in self._ctx.db.audit_since("simulation", time.time() - 86400):
+            args = row["arguments"]
+            if row["action"] != "service" or args.get("domain") != "light" or row["decision"] not in ("executed", "dry_run"):
+                continue
+            for eid in args.get("entity_ids") or []:
+                if args.get("service") == "turn_on":
+                    self._on.add(eid)
+                elif args.get("service") == "turn_off":
+                    self._on.discard(eid)
+
     async def tick(self, mode: str, now: datetime) -> None:
         config, autonomy = self._ctx.config, self._ctx.autonomy
+        if not self._restored:
+            self._restore()
         active = config.presence_simulation and mode == MODE_VACATION and (autonomy is None or autonomy.enabled)
         if not active:
             if mode in (MODE_AWAY, MODE_VACATION) and (autonomy is None or autonomy.enabled):

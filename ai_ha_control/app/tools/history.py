@@ -91,6 +91,11 @@ def resolve_period(ctx: ToolContext, period: str | None = None, hours: float | N
     if start:
         begin = _parse_when(start, now)
         finish = _parse_when(end, now, end=True) if end else now
+        clock = re.compile(r"\s*\d{1,2}:\d{2}\s*")
+        if clock.fullmatch(str(start)) and begin > now:
+            begin -= timedelta(days=1)  # "since 23:00" asked at 08:00 means last night
+        if end and clock.fullmatch(str(end)) and finish <= begin:
+            finish += timedelta(days=1)  # "23:00 to 06:00" runs past midnight
     elif hours:
         begin, finish = now - timedelta(hours=max(0.25, min(float(hours), 24 * MAX_DAYS))), now
     else:
@@ -297,7 +302,13 @@ async def get_history(ctx: ToolContext, entity_id: str, hours: float | None = No
         summary["samples"] = len(items)
         if ent.attributes.get("state_class") in ("total", "total_increasing"):
             # Meter (kWh, m³): the increase is what matters; a drop means the meter was reset.
-            increase = sum(b - a if b >= a else b for a, b in zip(values, values[1:]))
+            # A small dip (DSMR, Shelly rounding) is noise, not a reset: only a drop of more than 10% is.
+            increase, base = 0.0, values[0]
+            for value in values[1:]:
+                if value >= base:
+                    increase, base = increase + value - base, value
+                elif value < 0.9 * base:
+                    increase, base = increase + value, value
             summary.update({"increase": round(increase, 3), "last": values[-1], "unit": ent.unit})
             return summary
         summary.update({"min": round(min(values), 2), "max": round(max(values), 2),

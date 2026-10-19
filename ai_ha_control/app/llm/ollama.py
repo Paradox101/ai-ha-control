@@ -331,10 +331,14 @@ class OllamaClient:
         base = (url or self.base_url).rstrip("/")
         try:
             async with self._session.get(f"{base}/api/tags", timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                data = await resp.json()
+                if resp.status != 200:
+                    return {"reachable": False, "error": f"HTTP {resp.status}: dit lijkt geen Ollama-server"}
+                data = await resp.json(content_type=None)
         except Exception as err:  # noqa: BLE001
             return {"reachable": False, "error": str(err) or type(err).__name__}
-        installed = {m.get("name") for m in data.get("models", [])}
+        if not isinstance(data, dict) or not isinstance(data.get("models", []), list):
+            return {"reachable": False, "error": "onverwacht antwoord: dit lijkt geen Ollama-server"}
+        installed = {m.get("name") for m in data.get("models", []) if isinstance(m, dict)}
 
         def has(name: str) -> bool:
             return name in installed or f"{name}:latest" in installed

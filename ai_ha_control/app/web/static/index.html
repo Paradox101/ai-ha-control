@@ -57,6 +57,7 @@
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
   .spread { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
   .grow { flex: 1; min-width: 0; }
+  .card, .grow { overflow-wrap: anywhere; }
   .btn { border-radius: 8px; padding: 7px 14px; cursor: pointer; border: 1px solid var(--border);
          background: var(--panel); white-space: nowrap; }
   .btn:hover { background: var(--soft); }
@@ -370,7 +371,12 @@
     if (text !== undefined && text !== null) e.textContent = text;
     return e;
   }
-  function btn(text, cls, onclick) { const b = el("button", "btn " + (cls || ""), text); b.type = "button"; b.onclick = onclick; return b; }
+  // A failing request behind a button must not fail silently: every rejected click shows its error.
+  function btn(text, cls, onclick) {
+    const b = el("button", "btn " + (cls || ""), text); b.type = "button";
+    b.onclick = ev => { const r = onclick && onclick(ev); if (r && r.catch) r.catch(e => toast("❌ " + e.message)); };
+    return b;
+  }
   function empty(box, text) { box.replaceChildren(el("div", "empty", text)); }
   let toastTimer;
   function toast(text) {
@@ -438,13 +444,16 @@
   // The model answers in markdown. Built from DOM nodes and textContent only (never innerHTML), so nothing in an
   // answer can become markup; supported: bold, italic, `code`, headings, and nested bullet and numbered lists.
   function inlineMarkdown(parent, text) {
-    const re = /(\*\*|__)(?=\S)(.+?)(?<=\S)\1|`([^`]+)`|(?<![\w*])\*(?=\S)([^*]+?)(?<=\S)\*(?![\w*])/g;
+    // No lookbehind: Safari before iOS 16.4 cannot parse it, and one such regex would stop the whole page.
+    // The character before an italic * is captured instead (group 4) and kept as plain text.
+    const re = /(\*\*|__)(\S(?:.*?\S)?)\1|`([^`]+)`|(^|[^\w*])\*([^\s*](?:[^*]*?[^\s*])?)\*(?![\w*])/g;
     let last = 0, m;
     while ((m = re.exec(text))) {
-      if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const start = m.index + (m[4] || "").length;
+      if (start > last) parent.appendChild(document.createTextNode(text.slice(last, start)));
       if (m[2] !== undefined) inlineMarkdown(parent.appendChild(el("strong")), m[2]);
       else if (m[3] !== undefined) parent.appendChild(el("code", "", m[3]));
-      else parent.appendChild(el("em", "", m[4]));
+      else parent.appendChild(el("em", "", m[5]));
       last = re.lastIndex;
     }
     if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
@@ -515,7 +524,9 @@
       $("new-chat").classList.toggle("hidden", !messages.length);
     } catch (e) {}
   }
+  let chatGeneration = 0;  // an answer that arrives after "Nieuw gesprek" belongs to the old chat
   $("new-chat").onclick = () => {
+    chatGeneration++;
     conversationId = null;
     try { localStorage.removeItem("conv"); sessionStorage.removeItem("conv"); } catch (e) {}
     $("chat").replaceChildren(); $("new-chat").classList.add("hidden"); $("suggest").classList.remove("hidden");
@@ -527,9 +538,10 @@
     if (!text) return;
     $("input").value = ""; $("send").disabled = true;
     addMessage(text, "user"); $("new-chat").classList.remove("hidden");
-    const typing = addMessage("Bezig…", "typing");
+    const typing = addMessage("Bezig…", "typing"), generation = chatGeneration;
     try {
       const r = await post("api/chat", { message: text, conversation_id: conversationId });
+      if (generation !== chatGeneration) return;
       conversationId = r.conversation_id;
       try { localStorage.setItem("conv", conversationId); } catch (e) {}
       typing.remove();
@@ -549,7 +561,7 @@
         m.appendChild(d);
       }
       (r.pending || []).forEach(addPending);
-    } catch (e) { typing.remove(); addMessage("Fout: " + e.message, "error"); }
+    } catch (e) { typing.remove(); if (generation === chatGeneration) addMessage("Fout: " + e.message, "error"); }
     finally { $("send").disabled = false; $("input").focus(); }
   };
 
@@ -576,7 +588,14 @@
       $("incident-badge").textContent = s.active_incidents;
       $("incident-badge").classList.toggle("hidden", !s.active_incidents);
     } catch (e) {}
-    try { (await api("api/pending")).forEach(addPending); } catch (e) {}
+    try {
+      const list = await api("api/pending"), ids = new Set(list.map(p => "p-" + p.id));
+      // Expired, or confirmed on the phone: drop the card (unless it is showing the result of a click here).
+      document.querySelectorAll("#pending > .confirm").forEach(c => {
+        if (!ids.has(c.id) && !c.querySelector("button:disabled")) c.remove();
+      });
+      list.forEach(addPending);
+    } catch (e) {}
     try {
       const n = (await api("api/suggestions")).length;
       $("routine-badge").textContent = n; $("routine-badge").classList.toggle("hidden", !n);
@@ -606,7 +625,9 @@
       const toggle = btn("Tijdlijn tonen", "small", async () => {
         if (timeline.classList.toggle("hidden")) { toggle.textContent = "Tijdlijn tonen"; return; }
         toggle.textContent = "Tijdlijn verbergen";
-        const detail = await api(`api/incidents/${i.id}`);
+        let detail;
+        try { detail = await api(`api/incidents/${i.id}`); }
+        catch (e) { timeline.classList.add("hidden"); toggle.textContent = "Tijdlijn tonen"; throw e; }
         timeline.replaceChildren();
         for (const ev of detail.events) {
           const e = el("div", "ev");
@@ -760,9 +781,9 @@
   const PROFILE_MODES = [["thuis", "🏠 Thuis"], ["slapen", "🌙 Slapen"], ["weg", "🚪 Weg"], ["vakantie", "🧳 Vakantie"]];
   let comfortData = null, comfortEntities = null;
   async function loadComfortEntities() {
-    const get = d => api(`api/entities?domain=${d}&limit=500&format=pick`);
+    const get = d => api(`api/entities?domain=${d}&limit=5000&format=pick`);
     const [climate, light, fans, covers, pauses, sensors] = await Promise.all([get("climate"), get("light"), get("fan,switch"), get("cover"),
-      get("input_boolean,input_datetime,timer"), api("api/entities?domain=sensor&q=temperature&limit=300&format=pick")]);
+      get("input_boolean,input_datetime,timer"), api("api/entities?domain=sensor&q=temperature&limit=1000&format=pick")]);
     comfortEntities = { climate, light, fans, covers, pauses, sensors };
   }
   function entitySelect(list, value, onchange) {
@@ -877,7 +898,8 @@
     data.profiles.forEach(p => box.appendChild(profileCard(p)));
   }
   async function refreshComfort() {
-    if (!comfortEntities) await loadComfortEntities();
+    // Reload while the lists are empty (tab opened while the index was still loading after a restart).
+    if (!comfortEntities || !(comfortEntities.climate.length || comfortEntities.light.length)) await loadComfortEntities();
     renderComfort(await api("api/profiles"));
   }
   $("profile-add").onclick = () => {
@@ -945,7 +967,10 @@
       const c = el("div", "card spread");
       const sw = el("label", "switch"); sw.title = r.enabled ? "Aan" : "Uit";
       const input = el("input"); input.type = "checkbox"; input.checked = !!r.enabled;
-      input.onchange = async () => renderRules(await post(`api/rules/${r.id}/toggle`, { enabled: input.checked }));
+      input.onchange = async () => {
+        try { renderRules(await post(`api/rules/${r.id}/toggle`, { enabled: input.checked })); }
+        catch (e) { input.checked = !input.checked; toast("❌ " + e.message); }
+      };
       sw.append(input, el("span"));
       const text = el("div", "grow", r.text); if (!r.enabled) text.style.opacity = .5;
       c.append(sw, text, btn("Verwijderen", "small danger", async () => {
@@ -956,15 +981,18 @@
   }
   $("rule-add").onclick = async () => {
     const text = $("rule-input").value.trim(); if (!text) return $("rule-input").focus();
-    renderRules(await post("api/rules", { text })); $("rule-input").value = ""; toast("Huisregel toegevoegd");
+    try { renderRules(await post("api/rules", { text })); $("rule-input").value = ""; toast("Huisregel toegevoegd"); }
+    catch (e) { toast("❌ " + e.message); }
   };
 
   /* ---------------- Watch rules ---------------- */
   const watchDraft = { entity_id: "", operator: ">", value: "", minutes: 0, severity: "warning" };
   let watchFormReady = false;
   async function buildWatchForm() {
-    if (watchFormReady) return; watchFormReady = true;
-    const list = await api("api/entities?domain=sensor,binary_sensor,lock,cover,climate,input_boolean&limit=500&format=pick");
+    if (watchFormReady) return;
+    const list = await api("api/entities?domain=sensor,binary_sensor,lock,cover,climate,input_boolean&limit=5000&format=pick");
+    if (watchFormReady || !list.length) return;  // built meanwhile, or the index is still loading: try again later
+    watchFormReady = true;
     const ent = entitySelect(list, "", v => { watchDraft.entity_id = v; }); ent.id = "watch-entity"; ent.setAttribute("aria-label", "Entiteit");
     const op = el("select"); op.id = "watch-op"; op.setAttribute("aria-label", "Voorwaarde");
     [[">", "boven"], ["<", "onder"], ["=", "is"], ["!=", "is niet"]].forEach(([v, t]) => op.appendChild(new Option(t, v)));
@@ -988,7 +1016,10 @@
       const c = el("div", "card spread");
       const sw = el("label", "switch"); const input = el("input"); input.type = "checkbox"; input.checked = !!r.enabled;
       input.setAttribute("aria-label", "Regel actief");
-      input.onchange = async () => renderWatchRules(await post(`api/watch-rules/${r.id}/toggle`, { enabled: input.checked }));
+      input.onchange = async () => {
+        try { renderWatchRules(await post(`api/watch-rules/${r.id}/toggle`, { enabled: input.checked })); }
+        catch (e) { input.checked = !input.checked; toast("❌ " + e.message); }
+      };
       sw.append(input, el("span"));
       const text = el("div", "grow", `${SEV[r.severity] || ""} ${r.text}` + (r.alerted ? " · nu actief" : ""));
       if (!r.enabled) text.style.opacity = .5;
@@ -1036,7 +1067,8 @@
   $("memory-form").onsubmit = async ev => {
     ev.preventDefault();
     const text = $("memory-input").value.trim(); if (!text) return;
-    $("memory-input").value = ""; refreshMemories(await post("api/memories", { text }));
+    try { refreshMemories(await post("api/memories", { text })); $("memory-input").value = ""; }
+    catch (e) { toast("❌ " + e.message); }  // the text stays in the field
   };
   async function refreshLog() {
     const rows = await api("api/audit?limit=200");

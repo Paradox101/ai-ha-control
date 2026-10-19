@@ -42,11 +42,20 @@ async def save_automation(ctx: ToolContext, config: dict[str, Any], confirmed: b
     return {"status": "ok", "automation_id": automation_id, "alias": config.get("alias")}
 
 
+def _local_time(ctx: ToolContext, iso: str) -> str:
+    """Home Assistant gives last_triggered in UTC; the resident thinks in local time."""
+    try:
+        return datetime.fromisoformat(iso).astimezone(ZoneInfo(ctx.timezone) if ctx.timezone else None) \
+            .strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return str(iso)[:16]
+
+
 async def list_automations(ctx: ToolContext) -> dict[str, Any]:
     items = []
     for ent in ctx.index.search(domain="automation", limit=200):
         last = ent.attributes.get("last_triggered")
-        items.append(f"{ent.entity_id} ({ent.name}) = {ent.state}" + (f", laatst: {last[:16]}" if last else ""))
+        items.append(f"{ent.entity_id} ({ent.name}) = {ent.state}" + (f", laatst: {_local_time(ctx, last)}" if last else ""))
     return {"automations": items}
 
 
@@ -74,7 +83,7 @@ async def related_automations(ctx: ToolContext, entity_id: str) -> dict[str, Any
         for eid in ids or []:
             ent = ctx.index.get(eid)
             last = ent.attributes.get("last_triggered") if ent else None
-            out.append(f"{eid} ({ent.name if ent else eid})" + (f", laatst: {last[:16]}" if last else ""))
+            out.append(f"{eid} ({ent.name if ent else eid})" + (f", laatst: {_local_time(ctx, last)}" if last else ""))
         return out
 
     return {"automations": describe(related.get("automation", [])), "scripts": describe(related.get("script", [])),
@@ -154,8 +163,7 @@ async def get_recent_events(ctx: ToolContext, hours: float = 24) -> dict[str, An
     actions = [
         f"{datetime.fromtimestamp(a['ts'], tz):%d-%m %H:%M} {a['action']} {a['decision']}: "
         f"{json.dumps(a['arguments'], ensure_ascii=False)[:150]}"
-        for a in ctx.db.audit_log(limit=20)
-        if a["ts"] >= since
+        for a in ctx.db.audit_actions(since, exclude=("assist", "settings"), limit=20)
     ]
     return {"events": events, "ai_actions": actions}
 
