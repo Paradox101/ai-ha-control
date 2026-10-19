@@ -44,7 +44,7 @@ class Patrol:
         self._incidents = incidents
         self._snapshots = snapshots
         self._previous: dict[str, list[int]] = {}
-        self._last_run = 0.0
+        self._last_run = -1e9
         self.on_observation = None  # callback(text) to inform the autonomous agent
 
     def active(self, mode: str) -> bool:

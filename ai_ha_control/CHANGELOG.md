@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- Inbraakmelding en de melding "AI-server niet bereikbaar" werkten niet vlak na het opstarten van het systeem (de klok begon te dicht bij nul en telde als "net thuisgekomen").
+
 ## 0.6.0 — Nauwkeuriger, veiliger en comfort
 
 ### Beveiliging

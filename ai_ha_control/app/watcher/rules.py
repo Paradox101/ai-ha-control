@@ -93,7 +93,7 @@ class Watcher:
         self._done: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
         self._grace_until = 0.0
-        self._last_arrival = 0.0
+        self._last_arrival = -1e9
         self._rang: dict[str, float] = {}  # camera key -> when the doorbell last rang
         self.linger_seconds = LINGER_SECONDS
         # Optional collaborators, wired up by the app (tests may leave them out).
