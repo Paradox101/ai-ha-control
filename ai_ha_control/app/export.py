@@ -131,10 +131,25 @@ def workbook(sheets: list[tuple[str, list[str], list[list[Any]]]]) -> bytes:
     return buffer.getvalue()
 
 
+def sheets(index: EntityIndex) -> list[tuple[str, list[str], list[list[Any]]]]:
+    return [("Entiteiten", ENTITY_COLUMNS, entity_rows(index)),
+            ("Camera's en detectie", PLACE_COLUMNS, place_rows(index))]
+
+
 def entities_xlsx(index: EntityIndex) -> bytes:
-    return workbook([("Entiteiten", ENTITY_COLUMNS, entity_rows(index)),
-                     ("Camera's en detectie", PLACE_COLUMNS, place_rows(index))])
+    return workbook(sheets(index))
 
 
-def export_filename(now: datetime | None = None) -> str:
-    return f"ai-huis-entiteiten-{(now or datetime.now()):%Y%m%d-%H%M}.xlsx"
+def entities_text(index: EntityIndex) -> str:
+    """The same as tab-separated text: copy/paste works where the app's web view cannot download files."""
+    def line(values: list[Any]) -> str:
+        return "\t".join(" ".join(str(v).split()) for v in values)
+
+    parts = []
+    for name, header, rows in sheets(index):
+        parts.append("\n".join([f"## {name} ({len(rows)})", line(header), *map(line, rows)]))
+    return "\n\n".join(parts) + "\n"
+
+
+def export_filename(now: datetime | None = None, extension: str = "xlsx") -> str:
+    return f"ai-huis-entiteiten-{(now or datetime.now()):%Y%m%d-%H%M}.{extension}"

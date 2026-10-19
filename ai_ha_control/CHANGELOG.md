@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.10
+
+- **⬇ Excel** opent nu een venster met *Excel downloaden*, *Delen…* (deelmenu van de telefoon, waar dat kan) en *Kopieer als tekst*. In de Home Assistant-app kon het bestand niet worden opgeslagen; de tekst kopiëren en plakken werkt daar wel.
+
 ## 0.6.7
 
 - Opslaan van instellingen gaf soms "builders[spec.type] is not a function": na een update draaide de browser nog een oude, gecachte pagina. De pagina wordt nu altijd opnieuw gecontroleerd en een onbekend veld toont een melding in plaats van het formulier te breken.
