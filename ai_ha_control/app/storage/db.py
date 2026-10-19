@@ -425,6 +425,11 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def unpushed_events(self, kinds: set[str], since: float) -> list[dict[str, Any]]:
+        """Events of these kinds that were not pushed yet, newest first (no limit: a digest must not drop any)."""
+        return self._rows(f"SELECT * FROM events WHERE ts >= ? AND pushed = 0 AND kind IN "
+                          f"({','.join('?' * len(kinds))}) ORDER BY id DESC", (since, *sorted(kinds)))
+
     def events_between(self, since: float, until: float, kind: str | None = None,
                        entity_ids: list[str] | None = None) -> list[dict[str, Any]]:
         sql, params = "SELECT * FROM events WHERE ts >= ? AND ts < ?", [since, until]
@@ -542,6 +547,12 @@ class Database:
 
     def pending_followups(self) -> list[dict[str, Any]]:
         return self._rows("SELECT * FROM followups WHERE done = 0 ORDER BY due")
+
+    def postpone_followups(self, ids: list[int], seconds: float) -> None:
+        if ids:
+            self._conn.execute(f"UPDATE followups SET due = ? WHERE id IN ({','.join('?' * len(ids))})",
+                               (time.time() + seconds, *ids))
+            self._conn.commit()
 
     def complete_followups(self, ids: list[int]) -> None:
         self._conn.executemany("UPDATE followups SET done = 1 WHERE id = ?", [(i,) for i in ids])

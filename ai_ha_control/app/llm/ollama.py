@@ -226,9 +226,13 @@ class OllamaClient:
                     message = data.get("message") or {}
                 else:
                     data, message = await self._read_stream(resp, on_delta)
-        except aiohttp.ClientError as err:
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             self.stats.record(payload["model"], time.monotonic() - started, {}, error=True)
-            raise LLMError(f"Cannot reach Ollama at {self.base_url}: {err}") from err
+            reason = f"no answer within {timeout:g} s" if isinstance(err, asyncio.TimeoutError) else err
+            raise LLMError(f"Cannot reach Ollama at {self.base_url}: {reason}") from err
+        except json.JSONDecodeError as err:
+            self.stats.record(payload["model"], time.monotonic() - started, {}, error=True)
+            raise LLMError(f"Unreadable answer from Ollama: {err}") from err
         except LLMError:
             self.stats.record(payload["model"], time.monotonic() - started, {}, error=True)
             raise

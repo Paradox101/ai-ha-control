@@ -43,6 +43,10 @@ async def agenda(ctx: ToolContext, days: int = 1, start: datetime | None = None)
     """Events from all calendars, 'dd-mm HH:MM Title (Calendar)'; all-day events without a time."""
     tz = _tz(ctx)
     start = start or datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        days = int(float(days))
+    except (TypeError, ValueError):
+        days = 1
     end = start + timedelta(days=max(1, min(days, 14)))
     rows: list[tuple[str, str]] = []
     for cal in calendars(ctx):

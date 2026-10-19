@@ -17,7 +17,7 @@ import json
 import aiohttp
 from aiohttp import web
 
-from .agent.autonomous import AutonomousAgent
+from .agent.autonomous import MANUAL_CHECK, AutonomousAgent
 from .comfort import ComfortController, profile_suggestions, save_profile
 from .agent.loop import Agent
 from .autonomy import Autonomy, undo_action
@@ -69,6 +69,11 @@ SECURITY_HEADERS = {
 }
 
 
+def feedback_value(body: dict) -> int:
+    value = body.get("value", 0)
+    return 1 if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0 else -1
+
+
 def query_int(request: web.Request, name: str, default: int, maximum: int) -> int:
     try:
         return max(1, min(int(request.query.get(name, default)), maximum))
@@ -118,6 +123,7 @@ class App:
         self.scheduler: Scheduler | None = None
         self.guardian: AutonomousAgent | None = None
         self._refresh_task: asyncio.Task | None = None
+        self._refreshing = self._refresh_again = False
 
     async def startup(self, _app: web.Application) -> None:
         self.session = aiohttp.ClientSession()
@@ -162,8 +168,8 @@ class App:
         s.incidents, s.snapshots, s.publisher = self.incidents, self.snapshots, self.publisher
         s.comfort, s.thresholds, s.appliances = self.comfort, self.thresholds, self.appliances
         s.simulation = self.simulation
+        self.ha.on_connect(self.watcher.on_connected)  # grace first: the refresh takes a while
         self.ha.on_connect(self.refresh_index)
-        self.ha.on_connect(self.watcher.on_connected)
         self.ha.on_event("homeassistant_started", self.watcher.on_ha_started)
         # Order matters: the index must be updated before the watcher looks at it.
         self.ha.on_state_changed(self.index.handle_state_changed)
@@ -198,14 +204,12 @@ class App:
         self.comfort.set_timezone(self.ctx.timezone)
         self.index.location_name = ha_config.get("location_name")
         allowed = await self.ha.exposed_entities() if self.config.only_exposed_entities else None
-        self.index.load(
-            states=await self.ha.get_states(),
-            areas=await self.ha.area_registry(),
-            devices=await self.ha.device_registry(),
-            entities=await self.ha.entity_registry(),
-            services=await self.ha.get_services(),
-            allowed=allowed,
-        )
+        areas, devices = await self.ha.area_registry(), await self.ha.device_registry()
+        entities, services = await self.ha.entity_registry(), await self.ha.get_services()
+        # States last and then load at once: changes that arrive while the registries load are not lost.
+        self.index.always = {self.config.kill_switch} if self.config.kill_switch else set()
+        self.index.load(states=await self.ha.get_states(), areas=areas, devices=devices, entities=entities,
+                        services=services, allowed=allowed)
         if self.config.autonomous and self.config.kill_switch:
             await ensure_kill_switch(self.ha, self.index, self.config.kill_switch)
         self.publisher.reset()
@@ -213,15 +217,24 @@ class App:
     def schedule_refresh(self, _data: dict) -> None:
         """Reload the index shortly after entities, devices or areas change."""
         if self._refresh_task and not self._refresh_task.done():
+            if self._refreshing:
+                self._refresh_again = True  # never cancel a running refresh (e.g. halfway creating the kill switch)
+                return
             self._refresh_task.cancel()
         self._refresh_task = asyncio.create_task(self._delayed_refresh())
 
     async def _delayed_refresh(self) -> None:
         await asyncio.sleep(REFRESH_DELAY)
-        try:
-            await self.refresh_index()
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Index refresh failed: %s", err)
+        while True:
+            self._refreshing, self._refresh_again = True, False
+            try:
+                await self.refresh_index()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Index refresh failed: %s", err)
+            finally:
+                self._refreshing = False
+            if not self._refresh_again:
+                return
 
     async def announce_discovery(self) -> None:
         """Let the Assist integration find this add-on automatically (Supervisor discovery)."""
@@ -276,7 +289,7 @@ class App:
     async def chat(self, request: web.Request) -> web.Response:
         assert self.agent
         body = await json_body(request)
-        message = (body.get("message") or "").strip()[:MAX_TEXT_LENGTH]
+        message = str(body.get("message") or "").strip()[:MAX_TEXT_LENGTH]
         if not message:
             return web.json_response({"error": "empty message"}, status=400)
         conversation_id = body.get("conversation_id") or uuid.uuid4().hex
@@ -297,7 +310,7 @@ class App:
         """Endpoint for the Assist conversation agent integration."""
         assert self.agent
         body = await json_body(request)
-        text = (body.get("text") or "").strip()[:MAX_TEXT_LENGTH]
+        text = str(body.get("text") or "").strip()[:MAX_TEXT_LENGTH]
         conversation_id = body.get("conversation_id") or uuid.uuid4().hex
         if not text:
             return web.json_response({"error": "empty text"}, status=400)
@@ -321,15 +334,23 @@ class App:
         """Like /api/conversation, but streams the answer as NDJSON: {"delta": ...} lines, then {"done": true}."""
         assert self.agent
         body = await json_body(request)
-        text = (body.get("text") or "").strip()[:MAX_TEXT_LENGTH]
+        text = str(body.get("text") or "").strip()[:MAX_TEXT_LENGTH]
         conversation_id = body.get("conversation_id") or uuid.uuid4().hex
         if not text:
             return web.json_response({"error": "empty text"}, status=400)
         resp = web.StreamResponse(headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-store"})
         await resp.prepare(request)
 
+        gone = False
+
         async def send(data: dict) -> None:
-            await resp.write((json.dumps(data, ensure_ascii=False) + "\n").encode())
+            nonlocal gone
+            if gone:
+                return
+            try:
+                await resp.write((json.dumps(data, ensure_ascii=False) + "\n").encode())
+            except ConnectionError:
+                gone = True  # Assist gave up waiting: finish the run anyway so actions and history stay complete
 
         streamed = False
 
@@ -346,7 +367,11 @@ class App:
             _LOGGER.warning("Assist request failed: %s", err)
             speech = self._unreachable()
         await send({"done": True, "conversation_id": conversation_id, "speech": speech, "streamed": streamed})
-        await resp.write_eof()
+        if not gone:
+            try:
+                await resp.write_eof()
+            except ConnectionError:
+                pass
         return resp
 
     async def pending(self, _request: web.Request) -> web.Response:
@@ -366,7 +391,7 @@ class App:
 
     async def memories(self, request: web.Request) -> web.Response:
         if request.method == "POST":
-            text = ((await json_body(request)).get("text") or "").strip()
+            text = str((await json_body(request)).get("text") or "").strip()
             if not text:
                 return web.json_response({"error": "empty"}, status=400)
             self.db.add_memory(text[:500])
@@ -418,12 +443,12 @@ class App:
         })
 
     async def action_feedback(self, request: web.Request) -> web.Response:
-        value = 1 if (await json_body(request)).get("value", 0) > 0 else -1
+        value = feedback_value(await json_body(request))
         self.db.set_action_feedback(int(request.match_info["action_id"]), value)
         return web.json_response({"status": "ok", "shadow": self.db.shadow_scores()})
 
     async def run_feedback(self, request: web.Request) -> web.Response:
-        value = 1 if (await json_body(request)).get("value", 0) > 0 else -1
+        value = feedback_value(await json_body(request))
         self.db.set_run_feedback(int(request.match_info["run_id"]), value)
         return web.json_response({"status": "ok"})
 
@@ -449,9 +474,9 @@ class App:
         assert self.guardian
         if self.guardian.running:
             return web.json_response({"error": "de agent is al bezig"}, status=409)
-        self.guardian.observe("Handmatige controle gevraagd vanuit de web-UI")
+        self.guardian.observe(f"{MANUAL_CHECK} vanuit de web-UI")
         try:
-            summary = await self.guardian.run("handmatig")
+            summary = await self.guardian.run("handmatig", raise_llm_error=True)
         except LLMError as err:
             return web.json_response({"error": str(err)}, status=502)
         return web.json_response({"summary": summary or "Niets bijzonders"})
@@ -476,7 +501,7 @@ class App:
         return web.json_response({"status": "ok"})
 
     async def feedback(self, request: web.Request) -> web.Response:
-        value = 1 if (await json_body(request)).get("value", 0) > 0 else -1
+        value = feedback_value(await json_body(request))
         apply_feedback(self.db, int(request.match_info["event_id"]), value)
         return web.json_response({"status": "ok"})
 
@@ -513,7 +538,7 @@ class App:
 
     async def rules(self, request: web.Request) -> web.Response:
         if request.method == "POST":
-            text = ((await json_body(request)).get("text") or "").strip()
+            text = str((await json_body(request)).get("text") or "").strip()
             if not text:
                 return web.json_response({"error": "lege regel"}, status=400)
             self.db.add_rule(text[:300])
@@ -565,18 +590,22 @@ class App:
     async def settings_save(self, request: web.Request) -> web.Response:
         assert self.session
         changes = (await json_body(request)).get("values") or {}
+        if not isinstance(changes, dict):
+            return web.json_response({"error": "values moet een object zijn"}, status=400)
         try:
             clean = settings_module.validate(self.config, changes)
         except settings_module.SettingsError as err:
             return web.json_response({"error": "Controleer de gemarkeerde velden", "fields": err.errors}, status=400)
         settings_module.apply(self.config, clean)
+        if clean.keys() & {"only_exposed_entities", "kill_switch", "autonomous"}:
+            self.schedule_refresh({})  # which entities the AI sees, and the kill switch, come from the index
         warning = await settings_module.persist(self.session, self.config)
         self.db.audit("settings", {"changed": sorted(clean)}, "executed", warning or "ok", "web")
         return web.json_response({"values": settings_module.current_values(self.config), "warning": warning})
 
     async def test_ollama(self, request: web.Request) -> web.Response:
         assert self.llm
-        url = ((await json_body(request)).get("url") or "").strip()
+        url = str((await json_body(request)).get("url") or "").strip()
         return web.json_response(await self.llm.status(url or None))
 
     async def integration_state(self, _request: web.Request) -> web.Response:

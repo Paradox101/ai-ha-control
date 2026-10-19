@@ -82,13 +82,19 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             return json.dumps({"error": f"onbekende tool '{name}'", "available": self.names})
-        if isinstance(arguments, str):
+        for _ in range(2):  # small models sometimes encode the arguments twice
+            if not isinstance(arguments, str):
+                break
             try:
                 arguments = json.loads(arguments) if arguments.strip() else {}
             except json.JSONDecodeError:
                 return json.dumps({"error": "argumenten zijn geen geldige JSON"})
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return json.dumps({"error": "argumenten moeten een JSON-object zijn"})
         allowed = set(tool.parameters.get("properties", {}))
-        arguments = {k: v for k, v in (arguments or {}).items() if k in allowed}
+        arguments = {k: v for k, v in arguments.items() if k in allowed}
         try:
             result = await tool.handler(ctx, **arguments)
         except TypeError as err:
