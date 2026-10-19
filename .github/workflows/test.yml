@@ -95,6 +95,10 @@ jobs:
           docker exec addon ai-ha-backup
           docker exec addon test -s /data/ai_ha_control.backup.db
           docker exec addon test -s /data/api_key
+          echo "container: $(docker exec addon cat /proc/1/attr/current)"
+          echo "add-on:    $(docker exec addon sh -c 'cat /proc/$(pgrep -f app.main | head -1)/attr/current')"
+          echo "exec:      $(docker exec addon python3 -c "print(open('/proc/self/attr/current').read())")"
+          docker exec addon sh -c 'ls -l /usr/bin/python3*'
           if docker exec addon python3 -c "open('/opt/ai_ha_control/x', 'w')"; then
             echo "profile allowed writing the code directory"; exit 1
           fi
