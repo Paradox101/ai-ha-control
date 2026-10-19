@@ -12,6 +12,23 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+S6_ENV_DIR = Path("/run/s6/container_environment")
+
+
+def container_env(name: str) -> str:
+    """Read a container variable, also when s6-overlay started us with a clean environment."""
+    value = os.environ.get(name)
+    if value:
+        return value
+    try:
+        return (S6_ENV_DIR / name).read_text().strip()
+    except OSError:
+        return ""
+
+
+def supervisor_token() -> str:
+    return container_env("SUPERVISOR_TOKEN") or container_env("HASSIO_TOKEN")
+
 
 @dataclass
 class Config:
@@ -77,7 +94,7 @@ class Config:
                 if hasattr(cfg, key) and value is not None:
                     setattr(cfg, key, value)
 
-        cfg.ha_token = os.environ.get("HA_TOKEN") or os.environ.get("SUPERVISOR_TOKEN", "")
+        cfg.ha_token = os.environ.get("HA_TOKEN") or supervisor_token()
         cfg.ha_url = os.environ.get("HA_URL", cfg.ha_url)
         cfg.data_dir = os.environ.get("DATA_DIR", cfg.data_dir)
         cfg.port = int(os.environ.get("PORT", cfg.port))

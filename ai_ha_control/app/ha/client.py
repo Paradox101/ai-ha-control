@@ -91,7 +91,8 @@ class HAClient:
             await ws.send_json({"type": "auth", "access_token": self._config.ha_token})
             msg = await ws.receive_json()
             if msg.get("type") != "auth_ok":
-                raise HAError(f"authentication failed: {msg.get('message', msg)}")
+                hint = "" if self._config.ha_token else " (no token: SUPERVISOR_TOKEN missing)"
+                raise HAError(f"authentication failed: {msg.get('message', msg)}{hint}")
             self.ha_version = msg.get("ha_version")
             _LOGGER.info("Connected to Home Assistant %s", self.ha_version)
 

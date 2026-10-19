@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.1
+- Opgelost: "authentication failed: Invalid access" bij het verbinden met Home Assistant. s6-overlay startte de add-on zonder omgevingsvariabelen, waardoor `SUPERVISOR_TOKEN` ontbrak. `run.sh` gebruikt nu `with-contenv`, en het token wordt als vangnet ook uit de s6-omgeving gelezen.
+
 ## 0.3.0
 - Weersverwachting-tool (`weather.get_forecasts`).
 - Meterstanden (kWh, m³): geschiedenis toont het verbruik (toename, ook over een reset heen).

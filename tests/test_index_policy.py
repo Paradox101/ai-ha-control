@@ -56,3 +56,16 @@ def test_detection_sensor_tokens(index):
     assert index.is_detection_sensor(index.get("binary_sensor.oprit_vehicle"))
     assert index.is_doorbell(index.get("binary_sensor.voordeur_visitor"))
     assert not index.is_doorbell(index.get("binary_sensor.voordeur_person"))
+
+
+def test_supervisor_token_from_s6_environment(tmp_path, monkeypatch):
+    import app.config as config_module
+
+    monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
+    monkeypatch.delenv("HASSIO_TOKEN", raising=False)
+    monkeypatch.delenv("HA_TOKEN", raising=False)
+    monkeypatch.setattr(config_module, "S6_ENV_DIR", tmp_path)
+    monkeypatch.setenv("OPTIONS_FILE", str(tmp_path / "missing.json"))
+    assert config_module.Config.load().ha_token == ""
+    (tmp_path / "SUPERVISOR_TOKEN").write_text("abc123\n")
+    assert config_module.Config.load().ha_token == "abc123"

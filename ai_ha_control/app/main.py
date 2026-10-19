@@ -17,7 +17,7 @@ import aiohttp
 from aiohttp import web
 
 from .agent.loop import Agent
-from .config import Config
+from .config import Config, container_env, supervisor_token
 from .ha.client import HAClient
 from .ha.index import EntityIndex
 from .llm.ollama import LLMError, OllamaClient
@@ -158,8 +158,8 @@ class App:
 
     async def announce_discovery(self) -> None:
         """Let the Assist integration find this add-on automatically (Supervisor discovery)."""
-        token = os.environ.get("SUPERVISOR_TOKEN")
-        host = os.environ.get("HOSTNAME")
+        token = supervisor_token()
+        host = container_env("HOSTNAME")
         if not token or not host or self.session is None:
             return
         payload = {"service": DISCOVERY_SERVICE,
@@ -300,7 +300,7 @@ class App:
         return web.Response(body=image, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     async def integration(self, _request: web.Request) -> web.Response:
-        host = os.environ.get("HOSTNAME", "localhost")
+        host = container_env("HOSTNAME") or "localhost"
         return web.json_response({"url": f"http://{host}:{self.config.port}", "api_key": self.api_key})
 
     async def entities(self, request: web.Request) -> web.Response:
@@ -336,7 +336,7 @@ def access_middleware(api_key: str, supervised: bool):
 
 def create_app(config: Config) -> web.Application:
     state = App(config)
-    supervised = bool(os.environ.get("SUPERVISOR_TOKEN"))
+    supervised = bool(supervisor_token())
     app = web.Application(middlewares=[access_middleware(state.api_key, supervised)])
     app["state"] = state
     app.on_startup.append(state.startup)
@@ -374,6 +374,8 @@ def main() -> None:
     )
     if not config.ha_token:
         _LOGGER.error("No Home Assistant token (SUPERVISOR_TOKEN / HA_TOKEN) available")
+    else:
+        _LOGGER.info("Home Assistant token found (%s)", "HA_TOKEN" if os.environ.get("HA_TOKEN") else "Supervisor")
     _LOGGER.info(
         "Starting AI HA Control: model=%s vision=%s ollama=%s dry_run=%s proactive=%s",
         config.model,
