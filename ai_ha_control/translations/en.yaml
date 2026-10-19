@@ -108,6 +108,30 @@ configuration:
     name: Run comfort profiles
   preheat_distance_km:
     name: Preheat from distance (km)
+  outdoor_sensor:
+    name: "Outdoor temperature sensor"
+    description: "Empty = the weather entity"
+  ventilation_entity:
+    name: "Central ventilation"
+    description: "Fan, switch or script for the whole house"
+  shade_max_wind:
+    name: "No sun shading above wind speed (km/h)"
+    description: "Awnings stay in with more wind or frost"
+  mode_entity:
+    name: "Own house mode helper"
+    description: "input_text or input_select with the house mode; empty = find it"
+  presence_extra:
+    name: "Extra presence"
+    description: "Entities that also mean someone is home (on/home)"
+  appliance_quiet:
+    name: "Appliances with their own notification"
+    description: "E.g. Wasmachine: no done message from the add-on"
+  offline_ignore_areas:
+    name: "No offline warnings for areas"
+    description: "E.g. Server"
+  offline_house_only:
+    name: "Offline only for house devices"
+    description: "Only devices in a room, locks, cameras and thermostats"
   leak_valve:
     name: Close main valve on a leak
   emergency_lights:
@@ -123,7 +147,7 @@ configuration:
     name: Report an unreachable AI server after (minutes)
   bedtime_check:
     name: Bedtime check
-    description: When the house goes to sleep: one notification with open windows/doors, locks and lights still on
+    description: "When the house goes to sleep: one notification with open windows/doors, locks and lights still on"
   appliance_alerts:
     name: Appliance done
     description: Notify when the washer, dryer or dishwasher is done (power sensor with that name)
@@ -132,7 +156,7 @@ configuration:
     description: Water meter or flow sensor without a pause; three times as long during the day. 0 = off
   health_report:
     name: Home doctor
-    description: Monday morning: broken automations, updates and dead devices
+    description: "Monday morning: broken automations, updates and dead devices"
   presence_simulation:
     name: Simulate presence on vacation
     description: In vacation mode, lights go on and off in the evening the way the house is normally used (lights only)

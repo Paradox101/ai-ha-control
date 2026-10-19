@@ -27,6 +27,7 @@ DONE_AFTER_SECONDS = 10 * 60   # low power this long = finished (washers pause w
 REST_SECONDS = 15 * 60         # a water meter standing still this long = no leak
 QUIET_MODES = (MODE_SLEEP, MODE_AWAY, MODE_VACATION)
 DAYTIME_FACTOR = 3             # during the day long showers/garden watering are normal: wait longer
+PHASE_WORDS = {"fase", "phase", "l1", "l2", "l3"}
 
 
 def _float(value) -> float | None:
@@ -41,6 +42,24 @@ def appliance_name(ent: EntityInfo) -> str | None:
         return None
     text = f"{ent.entity_id} {ent.name}".lower()
     return next((name for word, name in APPLIANCE_WORDS.items() if word in text), None)
+
+
+def appliance_sensors(entities, quiet: list[str] | None = None) -> dict[str, str]:
+    """entity_id -> appliance name, one power sensor per device (a meter often also reports per phase).
+
+    Appliances in `quiet` are left out: the resident's own automation already says they are done.
+    """
+    skip = {q.strip().lower() for q in quiet or []}
+    best: dict[str, tuple[tuple[bool, str], str, str]] = {}
+    for ent in entities:
+        name = appliance_name(ent)
+        if name is None or name.lower() in skip or any(word in ent.entity_id for word in skip if word):
+            continue
+        rank = (bool(set(ent.entity_id.split(".", 1)[1].split("_")) & PHASE_WORDS), ent.entity_id)
+        key = ent.device_id or ent.entity_id
+        if key not in best or rank < best[key][0]:
+            best[key] = (rank, ent.entity_id, name)
+    return {eid: name for _, eid, name in best.values()}
 
 
 @dataclass
@@ -68,10 +87,12 @@ class ApplianceMonitor:
     async def tick(self, mode: str, now: float | None = None) -> None:
         now = now or time.time()
         config = self._ctx.config
-        for ent in list(self._ctx.index.entities.values()):
-            if config.appliance_alerts and (name := appliance_name(ent)):
-                await self._appliance(ent, name, now)
-            elif config.leak_flow_hours > 0 and ent.domain == "sensor" and (
+        entities = list(self._ctx.index.entities.values())
+        appliances = appliance_sensors(entities, config.appliance_quiet) if config.appliance_alerts else {}
+        for ent in entities:
+            if ent.entity_id in appliances:
+                await self._appliance(ent, appliances[ent.entity_id], now)
+            elif appliance_name(ent) is None and config.leak_flow_hours > 0 and ent.domain == "sensor" and (
                     ent.device_class == "volume_flow_rate"
                     or (ent.device_class == "water" and ent.attributes.get("state_class") in
                         ("total", "total_increasing"))):

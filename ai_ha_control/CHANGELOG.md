@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.19
+
+Beter gebruik van wat er echt in huis hangt (op basis van een entiteitenexport van ~3700 entiteiten).
+
+- **Kamertemperatuur klopt**: per ruimte de mediaan van de echte kamersensoren. Koelkast-/vriezersensoren, thermostaat-setpoints die als temperatuursensor binnenkomen, dauwpunt, omvormer, laadpaal en ventilatie-unit tellen niet meer mee. Per comfortprofiel kun je ook één vaste temperatuursensor kiezen.
+- **Comfort werkt samen met je eigen automatiseringen**: een pauze-helper per profiel (input_boolean aan, timer loopt of input_datetime "gepauzeerd tot" in de toekomst = afblijven), en het profiel waarschuwt als automatiseringen dezelfde thermostaat ook aansturen.
+- **Ventilatie**: één centrale ventilatie voor alle ruimtes (`ventilation_entity`). Heeft het huis een ventilatie-unit en is er niets ingesteld, dan geen "zet een raam open"-advies meer elke 3 uur.
+- **Zonnescherm** gaat niet uit bij harde wind (`shade_max_wind`); buitentemperatuur kan van een eigen sensor komen (`outdoor_sensor`).
+- **Voorverwarmen** ook als iemand een zone als "Voorloop thuiskomst" binnenkomt.
+- **Huismodus** volgt je eigen helper (`input_text.actieve_scene` of `mode_entity`); extra aanwezigheid via `presence_extra`.
+- **Wasmachine/vaatwasser** melden nog maar één keer (meters die ook per fase meten) en kunnen stil (`appliance_quiet`) als je eigen automatisering het al meldt.
+- **Camera's**: mail-bezorg-"camera's", Buienradar en de stofzuigerkaart tellen niet meer als camera; babycam en camera's in slaap- en badkamers staan standaard op negeren; de Reolink-"Foto's"-stream is dezelfde camera.
+- **Offline-meldingen** alleen nog voor het huis (niet voor de serverruimte en containers, `offline_ignore_areas`, `offline_house_only`).
+- **Energie**: de CO₂-intensiteit wordt niet meer als stroomprijs gezien; zonneprognose in een logische volgorde; actuele net-afname/teruglevering en zonne-opwek in de context; melding bij een zonne-overschot met een tip (wasmachine, vaatwasser, auto laden).
+- **Stroomstoring**: een UPS die op de accu gaat geeft een kritieke melding met de resterende tijd, en een melding als de stroom terug is.
+- **Trilling of sabotage** op deur- en raamsensoren terwijl het alarm aan staat wordt gemeld; een algemeen "onveilig"-contact is bij een uitgeschakeld alarm een waarschuwing in plaats van een alarm.
+- **Auto-slot** heet in meldingen en de nachtronde "(auto)" in plaats van een huisdeur.
+- **Afval** van vandaag/morgen in de ochtendsamenvatting; **huisdokter** meldt mislukte rookmelder-/gasmeldertests, dubbele entiteiten en instellingen die je kunt invullen; de **export** heeft een tabblad *Opruimen*.
+- Vertalingen van de add-on-opties met een dubbele punt in de tekst waren ongeldige YAML.
+
 ## 0.6.18
 
 Alleen verbeteringen aan wat er al was, na een code-review.

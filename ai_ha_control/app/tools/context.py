@@ -19,7 +19,14 @@ PRICE_LIST_ATTRIBUTES = ("raw_today", "raw_tomorrow", "prices_today", "prices_to
                          "tomorrow", "forecast")
 TIME_KEYS = ("start", "from", "time", "datetime", "starts_at", "startsAt", "readingDate")
 VALUE_KEYS = ("value", "price", "total", "electricity_price", "marketPrice", "price_ct_per_kwh")
-FORECAST_WORDS = ("forecast", "verwacht", "estimated", "prognose", "solcast", "voorspel")
+FORECAST_WORDS = ("forecast", "verwacht", "estimated", "prognose", "solcast", "voorspel", "geschat")
+# Most useful first: what is left today, then today and tomorrow; hourly values last.
+FORECAST_ORDER = (("remaining", "resterend"), ("today", "vandaag"), ("tomorrow", "morgen"))
+
+
+def _forecast_rank(ent: EntityInfo) -> int:
+    text = normalize(f"{ent.entity_id} {ent.name}")
+    return next((i for i, keys in enumerate(FORECAST_ORDER) if any(k in text for k in keys)), len(FORECAST_ORDER))
 
 
 def _tz(ctx: ToolContext):
@@ -96,8 +103,9 @@ def _price_points(value: Any) -> list[tuple[datetime, float]]:
 
 
 def price_sensor(ctx: ToolContext) -> EntityInfo | None:
-    candidates = [e for e in ctx.index.entities.values() if e.domain == "sensor" and e.unit
-                  and e.unit.replace(" ", "").lower().endswith("/kwh")]
+    from ..house import is_price_unit
+
+    candidates = [e for e in ctx.index.entities.values() if e.domain == "sensor" and is_price_unit(e.unit)]
     with_lists = [e for e in candidates if any(_price_points(e.attributes.get(k)) for k in PRICE_LIST_ATTRIBUTES)]
     return (with_lists or candidates or [None])[0]
 
@@ -141,9 +149,18 @@ def energy_info(ctx: ToolContext, hours: float = 3, now: datetime | None = None)
         if upcoming:
             info["range_ahead"] = f"{min(upcoming):.3f} - {max(upcoming):.3f} {sensor.unit}"
     solar = [e for e in ctx.index.entities.values() if e.domain == "sensor" and e.device_class == "energy"
-             and any(w in normalize(f"{e.name} {e.entity_id}") for w in FORECAST_WORDS)]
+             and any(w in normalize(f"{e.name} {e.entity_id} {e.device or ''}") for w in FORECAST_WORDS)]
     if solar:
+        solar.sort(key=lambda e: (_forecast_rank(e), e.entity_id))
         info["solar_forecast"] = [f"{e.name}: {e.state} {e.unit or ''}".strip() for e in solar[:4]]
+    from ..house import grid_power, solar_power
+
+    grid, pv = grid_power(ctx.index), solar_power(ctx.index)
+    if grid is not None:
+        watts = float(grid.state)
+        info["grid_now"] = (f"{-watts:.0f} W teruglevering" if watts < 0 else f"{watts:.0f} W afname") + f" ({grid.name})"
+    if pv is not None:
+        info["solar_now"] = f"{float(pv.state):.0f} W ({pv.name})"
     return info
 
 
