@@ -94,6 +94,7 @@
   form.chat .inner { max-width: 900px; margin: 0 auto; display: flex; gap: 8px; }
   form.chat input { flex: 1; }
   .typing { color: var(--muted); font-style: italic; }
+  .new-chat { display: flex; justify-content: center; margin-top: 10px; }
   .suggest { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 
   /* incidents */
@@ -217,6 +218,7 @@
   <section id="tab-chat">
     <div class="suggest" id="suggest"></div>
     <div id="pending"></div><div id="chat"></div>
+    <div class="new-chat"><button type="button" class="btn small hidden" id="new-chat">Nieuw gesprek</button></div>
   </section>
 
   <section id="tab-incidents" class="hidden">
@@ -359,7 +361,8 @@
   const MODE = { thuis: "🏠 thuis", weg: "🚪 weg", slapen: "🌙 slapen", vakantie: "🧳 vakantie", gast: "👥 gast" };
   const SEV = { info: "ℹ️", warning: "⚠️", critical: "🚨" };
   let conversationId = null;
-  try { conversationId = sessionStorage.getItem("conv"); } catch (e) {}
+  // localStorage: the Home Assistant app drops sessionStorage when it is closed, and the chat should still be there.
+  try { conversationId = localStorage.getItem("conv") || sessionStorage.getItem("conv"); } catch (e) {}
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -503,17 +506,32 @@
     box.appendChild(row);
     $("pending").appendChild(box);
   }
+  async function loadHistory() {
+    if (!conversationId) return;
+    try {
+      const { messages } = await api(`api/chat/history?conversation_id=${encodeURIComponent(conversationId)}`);
+      if ($("chat").children.length) return;  // something was asked meanwhile
+      for (const m of messages) addMessage(m.content, m.role === "user" ? "user" : "");
+      $("new-chat").classList.toggle("hidden", !messages.length);
+    } catch (e) {}
+  }
+  $("new-chat").onclick = () => {
+    conversationId = null;
+    try { localStorage.removeItem("conv"); sessionStorage.removeItem("conv"); } catch (e) {}
+    $("chat").replaceChildren(); $("new-chat").classList.add("hidden"); $("suggest").classList.remove("hidden");
+  };
+  loadHistory();
   $("form").onsubmit = async ev => {
     ev.preventDefault();
     const text = $("input").value.trim();
     if (!text) return;
     $("input").value = ""; $("send").disabled = true;
-    addMessage(text, "user");
+    addMessage(text, "user"); $("new-chat").classList.remove("hidden");
     const typing = addMessage("Bezig…", "typing");
     try {
       const r = await post("api/chat", { message: text, conversation_id: conversationId });
       conversationId = r.conversation_id;
-      try { sessionStorage.setItem("conv", conversationId); } catch (e) {}
+      try { localStorage.setItem("conv", conversationId); } catch (e) {}
       typing.remove();
       const m = addMessage(r.answer);
       for (const a of r.actions || []) {
