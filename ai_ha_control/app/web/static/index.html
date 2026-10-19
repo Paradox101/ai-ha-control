@@ -76,6 +76,12 @@
   #chat { display: flex; flex-direction: column; gap: 10px; }
   .msg { padding: 10px 14px; border-radius: 12px; max-width: 85%; white-space: pre-wrap; word-wrap: break-word;
          background: var(--panel); border: 1px solid var(--border); }
+  .msg .md { white-space: normal; }
+  .md p { margin: 0 0 6px; } .md > :last-child { margin-bottom: 0; }
+  .md p.md-h { font-weight: 600; margin-top: 8px; } .md > p.md-h:first-child { margin-top: 0; }
+  .md ul, .md ol { margin: 0 0 6px; padding-left: 20px; } .md li ul, .md li ol { margin: 2px 0; }
+  .md li { margin: 2px 0; } .md code { font: 12px ui-monospace, monospace; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+  .md hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
   .msg.user { align-self: flex-end; background: var(--user); border-color: transparent; }
   .msg.error { border-color: var(--bad); color: var(--bad); }
   .msg img { display: block; max-width: 100%; border-radius: 8px; margin-top: 8px; cursor: zoom-in; }
@@ -305,7 +311,7 @@
     <div class="card">
       <h3>Ochtendsamenvatting</h3>
       <div class="row"><button class="btn" id="summary">Samenvatting nu sturen</button></div>
-      <p id="summary-out" class="meta"></p>
+      <div id="summary-out" class="meta"></div>
     </div>
   </section>
 </main>
@@ -426,8 +432,55 @@
   /* ---------------- Chat ---------------- */
   ["Hoe gaat het thuis?", "Welke ramen staan open?", "Wat gebeurt er in de achtertuin?", "Is er vandaag iets gebeurd?"]
     .forEach(q => $("suggest").appendChild(btn(q, "small", () => { $("input").value = q; $("form").requestSubmit(); })));
+  // The model answers in markdown. Built from DOM nodes and textContent only (never innerHTML), so nothing in an
+  // answer can become markup; supported: bold, italic, `code`, headings, and nested bullet and numbered lists.
+  function inlineMarkdown(parent, text) {
+    const re = /(\*\*|__)(?=\S)(.+?)(?<=\S)\1|`([^`]+)`|(?<![\w*])\*(?=\S)([^*]+?)(?<=\S)\*(?![\w*])/g;
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+      if (m[2] !== undefined) inlineMarkdown(parent.appendChild(el("strong")), m[2]);
+      else if (m[3] !== undefined) parent.appendChild(el("code", "", m[3]));
+      else parent.appendChild(el("em", "", m[4]));
+      last = re.lastIndex;
+    }
+    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+  function renderMarkdown(text) {
+    const root = el("div", "md");
+    const stack = [];  // open lists: {indent, node}
+    let para = null;
+    for (const raw of String(text).replace(/\r/g, "").split("\n")) {
+      const item = raw.match(/^(\s*)([-*+•]|\d+[.)])\s+(.*)$/);
+      const line = raw.trim();
+      if (item) {
+        const indent = item[1].replace(/\t/g, "  ").length, tag = /\d/.test(item[2]) ? "ol" : "ul";
+        while (stack.length && (indent < stack.at(-1).indent || (indent === stack.at(-1).indent && stack.at(-1).node.tagName.toLowerCase() !== tag))) stack.pop();
+        if (!stack.length || indent > stack.at(-1).indent) {
+          const list = el(tag);
+          const host = stack.length ? (stack.at(-1).node.lastElementChild || stack.at(-1).node) : root;
+          if (tag === "ol") list.start = parseInt(item[2], 10) || 1;
+          host.appendChild(list); stack.push({ indent, node: list });
+        }
+        inlineMarkdown(stack.at(-1).node.appendChild(el("li")), item[3]);
+        para = null; continue;
+      }
+      if (!line) { stack.length = 0; para = null; continue; }
+      if (/^([-*_])(\s*\1){2,}$/.test(line)) { stack.length = 0; para = null; root.appendChild(el("hr")); continue; }
+      const heading = line.match(/^#{1,6}\s+(.*)$/);
+      if (heading) { stack.length = 0; para = null; inlineMarkdown(root.appendChild(el("p", "md-h")), heading[1]); continue; }
+      if (stack.length && /^\s/.test(raw)) {  // continuation of a list item
+        const li = stack.at(-1).node.lastElementChild; li.appendChild(document.createTextNode(" ")); inlineMarkdown(li, line); continue;
+      }
+      stack.length = 0;
+      if (para) para.appendChild(el("br")); else para = root.appendChild(el("p"));
+      inlineMarkdown(para, line);
+    }
+    return root;
+  }
   function addMessage(text, cls) {
-    const m = el("div", "msg " + (cls || ""), text);
+    const m = el("div", "msg " + (cls || ""), cls ? text : null);
+    if (!cls) m.appendChild(renderMarkdown(text));
     $("chat").appendChild(m);
     $("suggest").classList.add("hidden");
     window.scrollTo(0, document.body.scrollHeight);
@@ -989,7 +1042,7 @@
   };
   $("summary").onclick = async () => {
     $("summary").disabled = true; $("summary-out").textContent = "Bezig…";
-    try { $("summary-out").textContent = (await post("api/jobs/summary")).text || "(leeg)"; }
+    try { $("summary-out").replaceChildren(renderMarkdown((await post("api/jobs/summary")).text || "(leeg)")); }
     catch (e) { $("summary-out").textContent = "❌ " + e.message; } finally { $("summary").disabled = false; }
   };
 
