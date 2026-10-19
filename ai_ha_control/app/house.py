@@ -131,6 +131,52 @@ def readings_text(readings: dict[str, dict[str, float]], nl: bool = True) -> str
     return "; ".join(parts)
 
 
+HVAC_NL = {"off": "uit", "heat": "verwarmen", "cool": "koelen", "heat_cool": "verwarmen/koelen", "auto": "auto",
+           "dry": "drogen", "fan_only": "ventileren", "heating": "verwarmt", "cooling": "koelt", "idle": "rust",
+           "drying": "droogt", "fan": "ventileert", "preheating": "voorverwarmen", "defrosting": "ontdooit"}
+WEATHER_NL = {"clear-night": "helder", "cloudy": "bewolkt", "fog": "mist", "hail": "hagel", "lightning": "onweer",
+              "lightning-rainy": "onweer en regen", "partlycloudy": "half bewolkt", "pouring": "zware regen",
+              "rainy": "regen", "snowy": "sneeuw", "snowy-rainy": "natte sneeuw", "sunny": "zonnig",
+              "windy": "wind", "windy-variant": "wind en wolken", "exceptional": "uitzonderlijk weer"}
+
+
+def climate_text(ent: EntityInfo, nl: bool = True) -> str:
+    """"Woonkamer Airco (Woonkamer, climate.x): uit, nu 19,9 °C" instead of every attribute: hvac_modes,
+    min_temp and max_temp took a third of the snapshot and the model never needs them to answer."""
+    a = ent.attributes
+
+    def word(v: str) -> str:
+        return HVAC_NL.get(v, v) if nl else v.replace("_", " ")
+
+    parts = [word(ent.state)]
+    action = a.get("hvac_action")
+    if action and ent.state != "off" and action != ent.state:
+        parts[0] += f" ({word(action)})"
+    current, target = _number(a.get("current_temperature")), _number(a.get("temperature"))
+    if current is not None:
+        parts.append(f"{'nu' if nl else 'now'} {fmt_number(current, nl)} °C")
+    if target is not None and ent.state != "off":
+        parts.append(f"{'doel' if nl else 'target'} {fmt_number(target, nl)} °C")
+    if a.get("preset_mode") and a.get("preset_mode") != "none":
+        parts.append(f"preset {a['preset_mode']}")
+    where = f"{ent.area}, " if ent.area and normalize(ent.area) not in normalize(ent.name) else ""
+    return f"{ent.name} ({where}{ent.entity_id}): {', '.join(parts)}"
+
+
+def weather_text(index: EntityIndex, nl: bool = True) -> str | None:
+    """"bewolkt, 14,4 °C, wind 18 km/u" from the weather entity."""
+    w = weather(index)
+    if w is None:
+        return None
+    parts = [WEATHER_NL.get(w.state, w.state) if nl else w.state]
+    temp, wind = _number(w.attributes.get("temperature")), _number(w.attributes.get("wind_speed"))
+    if temp is not None:
+        parts.append(f"{fmt_number(temp, nl)} °C")
+    if wind is not None:
+        parts.append(f"wind {wind:.0f} {w.attributes.get('wind_speed_unit') or 'km/h'}")
+    return ", ".join(parts)
+
+
 def sensor_value(index: EntityIndex, entity_id: str | None) -> float | None:
     ent = index.get(entity_id) if entity_id else None
     return _number(ent.state) if ent else None

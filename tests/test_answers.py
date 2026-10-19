@@ -1,0 +1,65 @@
+"""Plain status questions are answered from Home Assistant, without the model (0.6.30)."""
+
+from app.answers import status_answer
+
+from .conftest import FakeLLM
+
+
+def ask(ctx, question, **kw):
+    return status_answer(ctx.index, ctx.config, question, **kw)
+
+
+def test_lights_on_per_room(ctx):
+    assert ask(ctx, "Welke lampen staan aan?") == "Aan in Keuken: Keukenlamp."
+    assert ask(ctx, "Staan er lampen aan in de woonkamer?") == "Er staan geen lampen aan in Woonkamer."
+    assert ask(ctx, "hoeveel lampen branden er nog") == "Aan in Keuken: Keukenlamp."
+
+
+def test_open_windows(ctx):
+    assert ask(ctx, "Staan er ramen open?") == "Open: Slaapkamer: Raam slaapkamer."
+    ctx.index.entities["binary_sensor.raam_slaapkamer"].state = "off"
+    assert ask(ctx, "Zijn alle ramen dicht?") == "Alle ramen en deuren met een sensor zijn dicht."
+
+
+def test_temperatures(ctx):
+    assert ask(ctx, "Hoe warm is het buiten?") == "Buiten is het 12 °C."
+    assert ask(ctx, "Wat is de temperatuur in de woonkamer?") == "Woonkamer 21,4 °C."
+    full = ask(ctx, "Graag alle temperaturen")
+    assert full.startswith("Temperatuur per ruimte:\n- Woonkamer 21,4 °C") and full.endswith("Buiten is het 12 °C.")
+    assert "\n" not in ask(ctx, "hoe warm is het?", voice=True)
+
+
+def test_who_is_home(ctx):
+    assert ask(ctx, "Wie is er thuis?") == "Thuis: Vincent."
+    assert ask(ctx, "Is Vincent thuis?") == "Vincent is thuis."
+    ctx.index.entities["person.vincent"].state = "Werk Vincent"
+    assert ask(ctx, "Is er iemand thuis?") == "Er is niemand thuis: Vincent is in Werk Vincent."
+
+
+def test_everything_else_goes_to_the_agent(ctx):
+    for question in ("Doe de lampen in de keuken aan", "staat de keukenlamp aan?", "wanneer ging de lamp aan?",
+                     "Hoe warm was het vannacht in de slaapkamer?", "is de voordeur op slot?", "hoe gaat het thuis?",
+                     "zet de verwarming aan", "waarom staat de lamp aan?", "open het raam", "bedankt",
+                     "Welke lampen staan aan in de garage?", "hoe warm is het in de meterkast?"):
+        assert ask(ctx, question) is None, question
+
+
+async def test_the_model_is_not_asked(ctx):
+    from app.agent.loop import Agent
+    from app.tools.home import build_registry
+
+    ctx.db.add_message("c1", "user", "Welke lampen staan aan?")
+    ctx.db.add_message("c1", "assistant", "Geen enkele lamp staat aan.")
+    ctx.llm = FakeLLM([{"role": "assistant", "content": "Er staan geen lampen aan."}])
+    result = await Agent(ctx, build_registry()).run("Welke lampen staan aan?", "c1")
+    assert result.answer == "Aan in Keuken: Keukenlamp." and not ctx.llm.requests
+
+
+def test_snapshot_is_compact(ctx):
+    from app.agent.loop import Agent
+    from app.tools.home import build_registry
+
+    prompt = Agent(ctx, build_registry()).system_prompt()
+    assert "- Klimaat: Thermostaat (climate.thermostaat): verwarmen, nu 20,5 °C, doel 20 °C" in prompt
+    assert "hvac_modes" not in prompt and "min_temp" not in prompt
+    assert "- Weer: bewolkt, 12 °C" in prompt
