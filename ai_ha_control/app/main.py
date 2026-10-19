@@ -641,16 +641,25 @@ class App:
         return web.json_response([e.compact(with_attributes=True) for e in results])
 
     async def export_entities(self, request: web.Request) -> web.Response:
-        return web.Response(body=entities_xlsx(self.index), headers={
+        try:
+            body = entities_xlsx(self.index)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.exception("Excel export failed")
+            return web.json_response({"error": f"export mislukt: {err}"}, status=500)
+        return web.Response(body=body, headers={
             "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "Content-Disposition": f'attachment; filename="{export_filename()}"'})
 
     async def export_entities_text(self, request: web.Request) -> web.Response:
+        try:
+            text = entities_text(self.index)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.exception("Text export failed")
+            return web.json_response({"error": f"export mislukt: {err}"}, status=500)
         headers = {}
         if request.query.get("download"):
             headers["Content-Disposition"] = f'attachment; filename="{export_filename(extension="txt")}"'
-        return web.Response(text=entities_text(self.index), content_type="text/plain", charset="utf-8",
-                            headers=headers)
+        return web.Response(text=text, content_type="text/plain", charset="utf-8", headers=headers)
 
 
 def access_middleware(api_key: str, supervised: bool):

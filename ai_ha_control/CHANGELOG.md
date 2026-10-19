@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.17
+
+- **Zoeken en de Excel-export werkten niet met een echte Home Assistant**: HA zet tegenwoordig `None` in de aliaslijst van elke entiteit ("de eigen naam"). Daardoor liep het zoeken naar entiteiten vast en gaf de export een fout. Die lege aliassen worden nu genegeerd.
+- Lukt de export toch niet, dan toont de web-UI de echte foutmelding in plaats van een lege ❌, en één vreemde entiteit breekt de export niet meer.
+
 ## 0.6.16
 
 - **Aanwezigheid nabootsen op vakantie** (`presence_simulation`, standaard uit): in de huismodus vakantie gaan 's avonds na zonsondergang in de ruimtes die je normaal gebruikt lampen aan en uit, op basis van de geleerde bewegingsactiviteit per uur (zonder leerdata: woonkamer/keuken 18-23 uur), met wat willekeur in tijd en dagen. Alleen lampen, één per ruimte; na middernacht alles uit. Stopt bij thuiskomst of als *Zelf handelen* uit staat.
