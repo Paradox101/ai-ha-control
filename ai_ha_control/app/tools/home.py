@@ -72,6 +72,11 @@ async def get_history(ctx: ToolContext, entity_id: str, hours: float = 24) -> di
             pass
     summary: dict[str, Any] = {"entity": ent.compact(), "period_hours": hours, "samples": len(items)}
     if values and len(values) >= len(items) / 2:
+        if ent.attributes.get("state_class") in ("total", "total_increasing"):
+            # Meter (kWh, m³): the increase is what matters; a drop means the meter was reset.
+            increase = sum(b - a if b >= a else b for a, b in zip(values, values[1:]))
+            summary.update({"increase": round(increase, 3), "last": values[-1], "unit": ent.unit})
+            return summary
         summary.update(
             {
                 "min": round(min(values), 2),
@@ -98,6 +103,28 @@ async def get_history(ctx: ToolContext, entity_id: str, hours: float = 24) -> di
     summary["changes"] = changes[-20:]
     summary["minutes_per_state"] = {k: round(v) for k, v in durations.items()}
     return summary
+
+
+async def get_forecast(ctx: ToolContext, entity_id: str | None = None, kind: str = "daily") -> dict[str, Any]:
+    if entity_id is None:
+        weather = ctx.index.search(domain="weather", limit=1)
+        if not weather:
+            return {"error": "geen weer-entiteit gevonden"}
+        entity_id = weather[0].entity_id
+    kind = kind if kind in ("daily", "hourly", "twice_daily") else "daily"
+    response = await ctx.ha.call_service(
+        "weather", "get_forecasts", {"type": kind}, {"entity_id": [entity_id]}, return_response=True
+    )
+    forecast = ((response or {}).get(entity_id) or {}).get("forecast") or []
+    keys = ("condition", "temperature", "templow", "precipitation", "precipitation_probability", "wind_speed")
+    tz = ZoneInfo(ctx.timezone) if ctx.timezone else timezone.utc
+    rows = []
+    for item in forecast[: 7 if kind != "hourly" else 12]:
+        when = datetime.fromisoformat(item["datetime"]).astimezone(tz)
+        label = when.strftime("%a %d-%m") if kind != "hourly" else when.strftime("%H:%M")
+        rows.append(label + ": " + ", ".join(f"{k}={item[k]}" for k in keys if item.get(k) is not None))
+    current = ctx.index.get(entity_id)
+    return {"now": current.compact(with_attributes=True) if current else None, "forecast": rows}
 
 
 # --- Controlling -------------------------------------------------------------
@@ -269,6 +296,18 @@ TOOLS = [
             "required": ["entity_id"],
         },
         get_history,
+    ),
+    Tool(
+        "get_forecast",
+        "Weersverwachting (dagelijks of per uur). Gebruik voor vragen over regen, temperatuur of wind later.",
+        {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "weather.* entiteit (optioneel)"},
+                "kind": {"type": "string", "enum": ["daily", "hourly"]},
+            },
+        },
+        get_forecast,
     ),
     Tool(
         "control_light",

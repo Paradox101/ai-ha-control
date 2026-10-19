@@ -7,13 +7,14 @@ Een **lokale AI (Ollama)** die je huis helpt beheren via Home Assistant. Alles b
 - **Chatten met je huis** via *AI Huis* in de zijbalk, of via **Assist/spraak** met de bijbehorende integratie.
   - "Welke ramen staan open?" · "Hoe warm was het gisteren gemiddeld in de woonkamer?"
   - "Zet de thermostaat op 20,5 graden" · "Doe de lampen in de woonkamer op 30% warm wit"
-  - "Staat er een pakketje voor de deur?" (camerabeeld wordt bekeken)
+  - "Staat er een pakketje voor de deur?" (camerabeeld wordt bekeken en in de chat getoond)
+  - "Gaat het morgen regenen?" · "Hoeveel stroom hebben we vandaag verbruikt?"
   - "Maak een automatisering die de gang-lamp 's nachts op 10% zet bij beweging"
   - "Onthoud dat ik doordeweeks om 7 uur opsta"
 - **Proactief** (zonder dat je iets vraagt):
   - 🔥 Rook, gas, koolmonoxide of lekkage → direct een kritieke melding
   - 📷 Reolink detecteert een persoon/voertuig terwijl niemand thuis is → de AI bekijkt het beeld en stuurt een beschrijving met foto. Bij "niets te zien" geen melding.
-  - 🔔 Er wordt aangebeld → melding met beschrijving van wie er staat
+  - 🔔 Er wordt aangebeld → melding met beschrijving van wie er staat (ook tijdens stille uren), optioneel uitgesproken op je speakers
   - 🪟 Raam open terwijl de verwarming aan staat
   - 🔓 Slot of garagedeur open terwijl niemand thuis is → melding met knop om het te sluiten
   - ☀️ Ochtendsamenvatting (weer, bijzonderheden van de nacht, lege batterijen, onbereikbare apparaten)
@@ -99,6 +100,8 @@ De integratie geeft ook de actie `ai_ha_control.ask` (met antwoord), te gebruike
 | `daily_summary_time` | `07:30` | Tijd van de ochtendsamenvatting, leeg = uit |
 | `quiet_hours` | `23:00-07:00` | Geen niet-kritieke pushmeldingen (alarmen komen altijd door) |
 | `routine_learning` | `true` | Routines herkennen (elke nacht om 03:30) |
+| `tts_entity` | – | Bijv. `tts.piper` of `tts.google_translate_nl_nl`; nodig voor aankondigingen |
+| `announce_players` | – | Speakers (`media_player.*`) waarop deurbel en alarmen worden uitgesproken |
 | `api_key` | automatisch | Sleutel voor de Assist-integratie |
 
 "Niemand thuis" wordt bepaald aan de hand van je `person.*`-entiteiten. Zonder personen worden afwezigheidsregels overgeslagen.

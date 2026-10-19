@@ -47,6 +47,8 @@ class Config:
     daily_summary_time: str = "07:30"
     quiet_hours: str = "23:00-07:00"
     routine_learning: bool = True
+    tts_entity: str = ""
+    announce_players: list[str] = field(default_factory=list)
     api_key: str = ""
     log_level: str = "info"
 

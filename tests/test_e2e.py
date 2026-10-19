@@ -111,6 +111,8 @@ async def test_end_to_end(tmp_path):
         assert llm_requests[0]["options"]["num_ctx"] == config.context_size
         assert "Thuis" in llm_requests[0]["messages"][0]["content"]
 
+        assert (await client.get("/api/health")).status == 200
+        assert (await client.get("/api/camera/light.keuken")).status == 404
         audit = await (await client.get("/api/audit")).json()
         assert audit[0]["decision"] == "executed"
         assert (await client.get("/")).status == 200

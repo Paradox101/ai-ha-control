@@ -33,6 +33,10 @@ STATES = [
     {"entity_id": "binary_sensor.voordeur_visitor", "state": "off", "attributes": {"friendly_name": "Voordeur Bezoeker"}},
     {"entity_id": "binary_sensor.rookmelder_zolder", "state": "off",
      "attributes": {"friendly_name": "Rookmelder zolder", "device_class": "smoke"}},
+    {"entity_id": "weather.thuis", "state": "cloudy", "attributes": {"friendly_name": "Thuis", "temperature": 12}},
+    {"entity_id": "sensor.stroom_totaal", "state": "1203.5",
+     "attributes": {"friendly_name": "Stroomverbruik totaal", "device_class": "energy",
+                    "state_class": "total_increasing", "unit_of_measurement": "kWh"}},
     {"entity_id": "cover.garagedeur", "state": "closed",
      "attributes": {"friendly_name": "Garagedeur", "device_class": "garage"}},
 ]
@@ -71,8 +75,13 @@ class FakeHA:
         self.validation: dict = {"triggers": {"valid": True, "error": None}, "actions": {"valid": True, "error": None}}
         self.connected = True
 
-    async def call_service(self, domain, service, data=None, target=None):
+    async def call_service(self, domain, service, data=None, target=None, return_response=False):
         self.calls.append((domain, service, data, target))
+        if return_response and (domain, service) == ("weather", "get_forecasts"):
+            return {"weather.thuis": {"forecast": [
+                {"datetime": "2026-10-20T10:00:00+00:00", "condition": "rainy", "temperature": 14, "templow": 8,
+                 "precipitation": 4.2, "precipitation_probability": 90},
+            ]}}
 
     async def validate_config(self, triggers, conditions, actions):
         return self.validation

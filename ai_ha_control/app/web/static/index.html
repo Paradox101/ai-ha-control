@@ -195,6 +195,15 @@
       try { sessionStorage.setItem("conv", conversationId); } catch (e) {}
       typing.remove();
       const m = addMessage(r.answer);
+      for (const a of r.actions || []) {
+        if (a.tool === "analyze_camera" && a.arguments && a.arguments.entity_id) {
+          const img = el("img");
+          img.src = `api/camera/${encodeURIComponent(a.arguments.entity_id)}?t=${Date.now()}`;
+          img.alt = a.arguments.entity_id;
+          img.style.cssText = "display:block;max-width:100%;border-radius:8px;margin-top:8px";
+          m.appendChild(img);
+        }
+      }
       if (r.actions && r.actions.length) {
         const d = el("details");
         d.appendChild(el("summary", "", `${r.actions.length} tool-aanroep(en)`));

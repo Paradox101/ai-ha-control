@@ -60,6 +60,7 @@ class Notifier:
         actions: list[dict[str, str]] | None = None,
         critical: bool = False,
         respect_quiet_hours: bool = True,
+        announce: str | None = None,
     ) -> bool:
         """Log the event and push it unless quiet hours apply. Returns whether it was pushed."""
         quiet = respect_quiet_hours and not critical and in_quiet_hours(self._config.quiet_hours, self.now())
@@ -71,8 +72,28 @@ class Notifier:
                 pushed = True
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Notification failed: %s", err)
+            if announce:
+                await self.announce(announce)
         self._db.add_event(kind, title, message, entity_id, pushed)
         return pushed
+
+    async def announce(self, message: str) -> None:
+        """Speak a message on the configured speakers (TTS)."""
+        players = [p for p in self._config.announce_players if p]
+        if not players:
+            return
+        if not self._config.tts_entity:
+            _LOGGER.warning("announce_players is set but tts_entity is empty")
+            return
+        try:
+            await self._ha.call_service(
+                "tts",
+                "speak",
+                {"media_player_entity_id": players, "message": message, "cache": False},
+                {"entity_id": [self._config.tts_entity]},
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Announcement failed: %s", err)
 
     async def _push(
         self,

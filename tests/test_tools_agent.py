@@ -60,6 +60,21 @@ async def test_history_numeric(ctx):
     assert (result["min"], result["max"], result["last"]) == (20.0, 22.0, 21.0)
 
 
+async def test_history_meter_increase(ctx):
+    async def history(entity_ids, start_time, end_time=None):
+        return {entity_ids[0]: [{"s": v, "lu": i} for i, v in enumerate(["100", "101.5", "103", "0.5", "2"])]}
+    ctx.ha.history = history
+    result = await run(ctx, "get_history", entity_id="sensor.stroom_totaal", hours=24)
+    assert result["increase"] == 5.0  # 1.5 + 1.5 + reset to 0.5 + 1.5
+    assert result["unit"] == "kWh"
+
+
+async def test_forecast(ctx):
+    result = await run(ctx, "get_forecast")
+    assert "rainy" in result["forecast"][0] and "precipitation_probability=90" in result["forecast"][0]
+    assert ctx.ha.calls[0][:2] == ("weather", "get_forecasts")
+
+
 async def test_camera(ctx):
     result = await run(ctx, "analyze_camera", entity_id="camera.voordeur_fluent", question="Pakketje?")
     assert "pakketje" in result["description"]

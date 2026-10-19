@@ -61,6 +61,12 @@ configuration:
   routine_learning:
     name: Routines leren
     description: Herken terugkerende handmatige acties en stel automatiseringen voor
+  tts_entity:
+    name: TTS-entiteit
+    description: Bijv. tts.piper. Nodig om meldingen uit te spreken.
+  announce_players:
+    name: Speakers voor aankondigingen
+    description: media_player-entiteiten waarop de deurbel en alarmen worden uitgesproken
   api_key:
     name: API-sleutel
     description: Voor de Assist-integratie. Leeg = automatisch gegenereerd.

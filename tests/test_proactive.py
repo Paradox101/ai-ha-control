@@ -79,11 +79,17 @@ async def test_camera_nothing_seen_is_not_pushed(ctx, notifier):
 
 
 async def test_doorbell_always_pushes(ctx, notifier):
+    ctx.config.quiet_hours = "00:00-23:59"  # doorbell ignores quiet hours
+    ctx.config.tts_entity = "tts.piper"
+    ctx.config.announce_players = ["media_player.woonkamer"]
     watcher = Watcher(ctx, notifier)
     await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.voordeur_visitor"))
     await watcher.wait_idle()
     (_, _, data, _), = pushes(ctx)
     assert "aangebeld" in data["title"]
+    (tts,) = [c for c in ctx.ha.calls if c[0] == "tts"]
+    assert tts[2]["media_player_entity_id"] == ["media_player.woonkamer"]
+    assert tts[2]["message"].startswith("Er wordt aangebeld")
 
 
 async def test_window_open_while_heating(ctx, notifier):

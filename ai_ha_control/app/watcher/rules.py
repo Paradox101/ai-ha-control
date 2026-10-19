@@ -129,6 +129,7 @@ class Watcher:
             kind="safety",
             entity_id=ent.entity_id,
             critical=True,
+            announce=f"Let op! {ent.name}{where} detecteert {label}.",
         )
 
     async def _detection(self, ent: EntityInfo) -> None:
@@ -174,7 +175,9 @@ class Watcher:
         title = "🔔 Er wordt aangebeld" if doorbell else f"📷 Detectie bij {where}"
         message = description.removeprefix(NOTHING_MARKER).strip(" :.") or f"{ent.name} ging af."
         await self._notifier.send(title, message, kind="camera", entity_id=camera.entity_id,
-                                  image_entity=camera.entity_id)
+                                  image_entity=camera.entity_id,
+                                  announce=f"Er wordt aangebeld. {message}" if doorbell else None,
+                                  respect_quiet_hours=not doorbell)
 
     async def handle_notification_action(self, data: dict[str, Any]) -> None:
         """Buttons pressed in a Companion app notification."""

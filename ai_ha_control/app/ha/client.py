@@ -185,12 +185,17 @@ class HAClient:
         service: str,
         data: dict[str, Any] | None = None,
         target: dict[str, Any] | None = None,
+        return_response: bool = False,
     ) -> Any:
         payload: dict[str, Any] = {"type": "call_service", "domain": domain, "service": service}
         if data:
             payload["service_data"] = data
         if target:
             payload["target"] = target
+        if return_response:
+            payload["return_response"] = True
+            result = await self.command(payload)
+            return (result or {}).get("response")
         return await self.command(payload)
 
     async def history(

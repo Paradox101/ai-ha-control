@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+- Weersverwachting-tool (`weather.get_forecasts`).
+- Meterstanden (kWh, m³): geschiedenis toont het verbruik (toename, ook over een reset heen).
+- Camerabeeld zichtbaar in de chat bij een cameravraag.
+- Aankondigingen op speakers via TTS (`tts_entity`, `announce_players`) voor deurbel en alarmen.
+- Deurbelmeldingen komen ook tijdens stille uren door.
+- Watchdog: de Supervisor herstart de add-on als die niet meer reageert.
+- Integratietests tegen een echte Home Assistant.
+
 ## 0.2.0
 - Assist-integratie (`custom_components/ai_ha_control`): gebruik de lokale AI als gespreksagent, automatisch gevonden via Supervisor discovery.
 - Proactief: alarm bij rook/gas/lekkage, Reolink-detectie → camerabeeld laten beoordelen, deurbel, raam open + verwarming, slot/garage open terwijl niemand thuis is (bevestigen via knop op de telefoon).

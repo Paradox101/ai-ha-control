@@ -61,6 +61,12 @@ configuration:
   routine_learning:
     name: Learn routines
     description: Detect repeated manual actions and suggest automations
+  tts_entity:
+    name: TTS entity
+    description: E.g. tts.piper. Needed to speak announcements.
+  announce_players:
+    name: Announcement speakers
+    description: media_player entities on which doorbell and alarms are announced
   api_key:
     name: API key
     description: Used by the Assist integration. Empty = generated automatically.

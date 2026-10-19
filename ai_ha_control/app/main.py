@@ -246,6 +246,21 @@ class App:
         except LLMError as err:
             return web.json_response({"error": str(err)}, status=502)
 
+    async def health(self, _request: web.Request) -> web.Response:
+        return web.json_response({"ok": True})
+
+    async def camera(self, request: web.Request) -> web.Response:
+        assert self.ha
+        entity_id = request.match_info["entity_id"]
+        ent = self.index.get(entity_id)
+        if ent is None or ent.domain != "camera":
+            raise web.HTTPNotFound()
+        try:
+            image = await self.ha.camera_snapshot(entity_id)
+        except Exception as err:  # noqa: BLE001
+            return web.json_response({"error": str(err)}, status=502)
+        return web.Response(body=image, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
     async def integration(self, _request: web.Request) -> web.Response:
         host = os.environ.get("HOSTNAME", "localhost")
         return web.json_response({"url": f"http://{host}:{self.config.port}", "api_key": self.api_key})
@@ -306,6 +321,8 @@ def create_app(config: Config) -> web.Application:
             web.post(r"/api/jobs/{job:summary|routines}", state.run_job),
             web.get("/api/entities", state.entities),
             web.get("/api/integration", state.integration),
+            web.get("/api/health", state.health),
+            web.get(r"/api/camera/{entity_id:camera\.[a-z0-9_]+}", state.camera),
         ]
     )
     return app
