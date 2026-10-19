@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.24
+
+- **"Handmatig aangepast" klopt weer**: alleen wat een bewoner echt zelf deed (app, dashboard, spraak) houdt de agent op afstand. Integraties die zelf iets veranderen (Spotify, de auto op afstand starten, een schijnwerper op zijn eigen sensor, het laden van de auto) tellen niet meer mee; een wandschakelaar alleen bij apparaten die de agent zelf regelt (comfortprofielen) of als hij een actie van de agent terugdraait.
+- **Een handmatige aanpassing vervalt zodra het apparaat terug is in de stand van ervoor**: zet je de airco aan en later weer uit, dan staat hij niet meer in de lijst.
+- **Samenvatting van de agent**: hij krijgt bij handmatig aangepaste apparaten nu de huidige stand mee, zodat hij niet meer gokt wat de bewoner deed ("kamerlampen aangesloten").
+
 ## 0.6.23
 
 - **Temperaturen per ruimte in de chat**: "Graag alle temperaturen" geeft nu per ruimte de juiste sensor (de mediaan van de kamersensoren, de gekozen sensor van een comfortprofiel, anders de thermostaat), met vocht en CO₂ waar die er zijn, plus buiten. Ruimtes zonder sensor worden weggelaten in plaats van "geen temperatuur beschikbaar". Ook `get_home_overview` geeft ze (`room_readings`).

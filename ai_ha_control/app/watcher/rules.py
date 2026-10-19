@@ -98,6 +98,7 @@ class Watcher:
         self._tasks: set[asyncio.Task] = set()
         self._grace_until = 0.0
         self._last_arrival = -1e9
+        self._override_from: dict[str, tuple] = {}  # entity -> its state before the manual change
         self._rang: dict[str, float] = {}  # camera key -> when the doorbell last rang
         self._bedtime_lights: dict[int, list[str]] = {}  # bedtime notification -> lights that were on
         self.linger_seconds = LINGER_SECONDS
@@ -212,18 +213,47 @@ class Watcher:
 
     # --- Who did it: manual overrides and arrivals --------------------------------------
 
+    @staticmethod
+    def _state_key(ent_id: str, state: dict) -> tuple:
+        attrs = state.get("attributes") or {}
+        return (state.get("state"), attrs.get("temperature") if ent_id.startswith("climate.") else None)
+
+    def _managed(self) -> set[str]:
+        """Entities the agent itself steers (comfort profiles): only there does a device-side change matter."""
+        managed: set[str] = set()
+        for p in self._ctx.db.profiles(enabled_only=True):
+            managed.update(filter(None, [p.get("climate_entity"), p.get("backup_entity"), p.get("ventilation_entity")]))
+            managed.update(p.get("lights") or [])
+            managed.update(p.get("shade_covers") or [])
+        return managed
+
     async def _note_manual(self, ent: EntityInfo, origin: str, old: dict, new: dict, setpoint_changed: bool) -> None:
-        """A resident (or the device itself) changed something: the agent backs off from it for a while."""
-        if origin not in (RESIDENT, DEVICE) or ent.domain not in COMFORT_DOMAINS:
-            return
+        """A resident changed something: the agent backs off from it for a while."""
         db, now = self._ctx.db, time.time()
+        before = self._override_from.get(ent.entity_id)
+        if before is not None and self._state_key(ent.entity_id, new) == before:
+            # Back to how it was before (the airco is off again): nothing left to keep the agent away from.
+            self._override_from.pop(ent.entity_id, None)
+            db.clear_override(ent.entity_id)
+            return
+        if ent.domain not in COMFORT_DOMAINS or is_car(ent):
+            return
         action = db.last_action_on(ent.entity_id, now - REVERSAL_SECONDS)
+        if origin == DEVICE:
+            # No user behind it: an integration (Spotify, a car, a charger, a floodlight on its own sensor) or a
+            # wall switch. Only counts where the agent itself is in charge, or when it undoes the agent's action.
+            if not action and ent.entity_id not in self._managed():
+                return
+        elif origin != RESIDENT:
+            return
         if action and followed(ent, action["domain"], action["service"], action["data"]):
             return  # the device reporting the agent's own change (e.g. a polling thermostat), not a person
         mode = house_mode(self._ctx.index, self.config, self._now())
         if ent.domain == "climate" and setpoint_changed and origin == RESIDENT:
             setpoint = (new.get("attributes") or {}).get("temperature")
             db.add_manual_change(ent.entity_id, mode, float(setpoint) if setpoint is not None else None)
+        if ent.entity_id not in db.active_overrides():
+            self._override_from[ent.entity_id] = self._state_key(ent.entity_id, old)
         db.set_override(ent.entity_id, now + self.config.override_minutes * 60, f"aangepast door {origin}")
         if action:
             db.set_action_feedback(action["id"], -1)
