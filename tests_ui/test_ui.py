@@ -85,6 +85,16 @@ async def test_ui_tabs_chat_and_settings(addon):
         assert await answer.locator("ul > li > ul > li code").inner_text() == "10:00"
         assert await answer.locator("img").count() == 0
         assert "<img src=x" in await answer.inner_text()
+        # After a reload (or reopening the app) the conversation is still there, formatted the same way.
+        await page.reload()
+        await page.wait_for_selector(".msg.user:has-text('Hoe gaat het thuis?')")
+        answer = page.locator(".msg:not(.user)").last
+        assert await answer.locator("strong").first.inner_text() == "Alles" and "*" not in await answer.inner_text()
+        await page.click("#new-chat")
+        assert await page.locator(".msg").count() == 0
+        await page.reload()
+        await page.wait_for_selector("#suggest button")
+        assert await page.locator(".msg").count() == 0
 
         await page.click("#nav button[data-tab='agent']")
         await page.wait_for_selector("#agent-perf .card:has-text('qwen3:8b')")
