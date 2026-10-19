@@ -12,6 +12,7 @@ from typing import Any
 from ..ha.context import DEVICE, RESIDENT
 from ..ha.index import OPENING_CLASSES, SAFETY_CLASSES, EntityInfo
 from ..house import is_car
+from ..house import words as house_words
 from ..house import label as house_label
 from ..autonomy import undo_action
 from ..notify import (
@@ -28,6 +29,9 @@ from ..tools.actions import describe_service, execute, followed, queue_confirmat
 from ..tools.base import ToolContext
 from .baseline import MODE_AWAY, MODE_SLEEP, MODE_VACATION, house_mode
 from .vision import QUIET_CATEGORIES, SUSPICIOUS, UNKNOWN, VISITOR, classify
+
+# Detection sensors that only fire for people (not for any motion, an animal or a branch in the wind).
+PERSON_WORDS = {"person", "persoon", "personen", "people", "mens", "human", "visitor", "bezoeker"}
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,6 +82,15 @@ def is_heating(ent: EntityInfo) -> bool:
     if ent.state in ("heat", "heat_cool", "auto") and current is not None and target is not None:
         return float(current) < float(target)
     return False
+
+
+def is_vehicle(ent: EntityInfo) -> bool:
+    """A car's own doors and lock (FordPass, Tesla, ...): it drives along when you leave, not part of the house."""
+    return is_car(ent) and ent.device_class not in ("garage", "garage_door", "gate")
+
+
+def is_person_sensor(ent: EntityInfo) -> bool:
+    return bool(house_words(ent) & PERSON_WORDS)
 
 
 def is_unsecured(ent: EntityInfo) -> bool:
@@ -198,6 +211,8 @@ class Watcher:
             return
         if ent.domain != "binary_sensor" or ent.state != "on":
             return
+        if is_vehicle(ent):
+            return  # the car's doors are no burglary, no house activity
         if ent.device_class in OPENING_CLASSES and not self.in_grace:
             await self._opening_while_away(ent)
         if self.baseline is not None and not self.in_grace:
@@ -413,10 +428,11 @@ class Watcher:
             return
         index = self._ctx.index
         doorbell = index.is_doorbell(ent)
-        home = index.anyone_home()
+        away = house_mode(index, self.config, self._now()) in (MODE_AWAY, MODE_VACATION)
         armed = index.alarm_armed()
-        if mode == "away" and not doorbell and home is not False and not armed:
+        if mode == "away" and not doorbell and not away and not armed:
             return
+        person_sensor = is_person_sensor(ent)
         camera = index.camera_for(ent)
         if camera is not None:
             camera = index.best_stream(camera)
@@ -433,6 +449,8 @@ class Watcher:
         where = ent.area or (index.camera_label(camera) if camera else ent.name)
 
         if camera is None:
+            if not person_sensor:
+                return  # plain motion without a picture: nothing to go on
             await self._notifier.send(
                 "🚶 Beweging terwijl niemand thuis is",
                 f"{ent.name} ({where}) detecteert beweging.",
@@ -476,7 +494,13 @@ class Watcher:
                                      severity="warning")
             return
 
-        title = "Er wordt aangebeld" if doorbell else f"Detectie bij {where}"
+        if not doorbell and category not in (VISITOR, SUSPICIOUS) and not (category == UNKNOWN and person_sensor):
+            # Motion without a person on the picture (or the camera couldn't look): history, no incident.
+            self._ctx.db.add_event("camera", f"Detectie bij {where}", description or f"{ent.name} ging af.",
+                                   camera.entity_id, False)
+            return
+
+        title = "Er wordt aangebeld" if doorbell else f"Persoon bij {where}"
         message = description or f"{ent.name} ging af.{failure}"
         severity = "info" if doorbell else ("warning" if category in (SUSPICIOUS, UNKNOWN) else "info")
         await self._camera_alert(title, message, camera, snapshot, severity=severity, doorbell=doorbell)
@@ -594,13 +618,15 @@ class Watcher:
         index = self._ctx.index
         if index.anyone_home() is not False:
             return
+        if house_mode(index, self.config, self._now()) not in (MODE_AWAY, MODE_VACATION):
+            return  # the house mode (header badge) says someone is home: trust that over stale trackers
         people = [e for e in index.entities.values() if e.domain == "person"]
         away_minutes = min(minutes_since(p.last_changed) for p in people)
         if away_minutes < self.config.unlocked_away_minutes:
             return
         left_at = max((p.last_changed or "") for p in people)
         for ent in list(index.entities.values()):
-            if not is_unsecured(ent) or not self._once(f"away:{ent.entity_id}:{left_at}"):
+            if not is_unsecured(ent) or is_vehicle(ent) or not self._once(f"away:{ent.entity_id}:{left_at}"):
                 continue
             if self.agent is not None:
                 self.agent.observe(f"{house_label(ent)} staat open terwijl niemand thuis is ({int(away_minutes)} min)")

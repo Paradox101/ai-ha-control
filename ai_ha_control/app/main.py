@@ -135,6 +135,8 @@ class App:
         self.notifier = Notifier(self.config, self.ha, self.db)
         self.autonomy = Autonomy(self.config, self.index, self.db)
         self.incidents = IncidentManager(self.db, self.notifier)
+        self.incidents.resolve_motion_only()
+        self.confirmations.drop_vehicle_locks()
         self.snapshots = SnapshotStore(self.config.data_dir)
         self.ctx = ToolContext(
             config=self.config,

@@ -278,3 +278,77 @@ async def test_failed_camera_analysis_is_explained(ctx, notifier):
     await watcher.wait_idle()
     (_, _, data, _), = pushes(ctx)
     assert "geen beeldanalyse" in data["message"] and "qwen3-vl:4b" in data["message"]
+
+
+def shed_motion(index):
+    index.update_state({"entity_id": "binary_sensor.schuur_beweging", "state": "on",
+                        "attributes": {"friendly_name": "Schuur Beweging", "device_class": "motion"}})
+    index.get("binary_sensor.schuur_beweging").device_id = "cam1"
+    return {"entity_id": "binary_sensor.schuur_beweging", "old_state": {"state": "off"},
+            "new_state": {"entity_id": "binary_sensor.schuur_beweging", "state": "on"}}
+
+
+async def test_plain_motion_with_camera_is_no_incident(ctx, notifier):
+    async def broken(image, question, priority=1, schema=None):
+        raise RuntimeError("timeout")
+    ctx.llm.describe_image = broken
+    ctx.config.camera_alerts = "always"
+    watcher = Watcher(ctx, notifier)
+    await watcher.handle_state_changed(shed_motion(ctx.index))
+    await watcher.wait_idle()
+    assert pushes(ctx) == []  # no person seen: only in the history
+    assert ctx.db.events()[0]["pushed"] == 0
+
+
+async def test_motion_with_a_person_on_the_picture_is_reported(ctx, notifier):
+    async def person(image, question, priority=1, schema=None):
+        return "VERDACHT: persoon bij de schuur"
+    ctx.llm.describe_image = person
+    ctx.config.camera_alerts = "always"
+    watcher = Watcher(ctx, notifier)
+    await watcher.handle_state_changed(shed_motion(ctx.index))
+    await watcher.wait_idle()
+    (_, _, data, _), = pushes(ctx)
+    assert "Persoon bij" in data["title"]
+
+
+async def test_car_lock_is_not_a_house_door_while_away(ctx, notifier):
+    ctx.config.notify_service = "notify.mobile_app_telefoon"
+    ctx.index.update_state({"entity_id": "lock.fordpass_wf0rpaef3ssm50705_doorlock", "state": "unlocked",
+                            "attributes": {"friendly_name": "Deuren"}, "last_changed": ago(60)})
+    ctx.index.update_state({"entity_id": "binary_sensor.fordpass_wf0rpaef3ssm50705_door", "state": "off",
+                            "attributes": {"friendly_name": "Deur bestuurder", "device_class": "door"}})
+    set_state(ctx.index, "person.vincent", "not_home", 60)
+    watcher = Watcher(ctx, notifier)
+    await watcher.tick()
+    await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.fordpass_wf0rpaef3ssm50705_door"))
+    await watcher.wait_idle()
+    assert pushes(ctx) == []
+
+
+async def test_house_mode_home_beats_stale_trackers(ctx, notifier):
+    ctx.config.notify_service = "notify.mobile_app_telefoon"
+    ctx.index.update_state({"entity_id": "input_text.actieve_scene", "state": "thuis",
+                            "attributes": {"friendly_name": "Actieve Scene"}, "last_changed": ago(5)})
+    set_state(ctx.index, "person.vincent", "not_home", 60)
+    set_state(ctx.index, "cover.garagedeur", "open", 60)
+    watcher = Watcher(ctx, notifier)
+    await watcher.tick()
+    assert pushes(ctx) == []  # the badge says "thuis": no "niemand thuis" question
+
+
+async def test_leftovers_from_before_are_cleaned_up(ctx, notifier):
+    from app.tools.actions import ConfirmationStore, PendingAction
+    from app.watcher.incidents import IncidentManager
+
+    incidents = IncidentManager(ctx.db, notifier)
+    await incidents.report("presence", "Detectie bij Achtertuin", "Schuur Beweging ging af.", severity="warning")
+    incidents.resolve_motion_only()
+    assert incidents.active() == []
+    store = ConfirmationStore(ctx.db)
+    store.add(PendingAction("a1", "service", "Op slot?", "weg", {"domain": "lock", "service": "lock",
+              "entity_ids": ["lock.fordpass_wf0rpaef3ssm50705_doorlock"], "data": {}}, None))
+    store.add(PendingAction("a2", "service", "Op slot?", "weg", {"domain": "lock", "service": "lock",
+              "entity_ids": ["lock.voordeur"], "data": {}}, None))
+    assert store.drop_vehicle_locks() == 1
+    assert [a.id for a in ConfirmationStore(ctx.db).list()] == ["a2"]

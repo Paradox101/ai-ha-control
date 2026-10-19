@@ -76,6 +76,20 @@ class ConfirmationStore:
             actions = [a for a in actions if a.conversation_id == conversation_id]
         return actions
 
+    def drop_vehicle_locks(self) -> int:
+        """Up to 0.6.23 a car's lock was asked about like a house door: drop those questions."""
+        from ..ha.index import EntityInfo
+        from ..house import is_car
+
+        def car(entity_id: str) -> bool:
+            return is_car(EntityInfo(entity_id=entity_id, name="", domain=entity_id.split(".", 1)[0]))
+
+        stale = [k for k, a in self._pending.items()
+                 if a.payload.get("domain") == "lock" and any(car(e) for e in a.payload.get("entity_ids") or [])]
+        for key in stale:
+            self.pop(key)
+        return len(stale)
+
     def _purge(self) -> None:
         now = time.time()
         for key in [k for k, a in self._pending.items() if now - a.created > CONFIRMATION_TTL]:
