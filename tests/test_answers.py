@@ -37,8 +37,8 @@ def test_who_is_home(ctx):
 
 
 def test_everything_else_goes_to_the_agent(ctx):
-    for question in ("Doe de lampen in de keuken aan", "staat de keukenlamp aan?", "wanneer ging de lamp aan?",
-                     "Hoe warm was het vannacht in de slaapkamer?", "is de voordeur op slot?", "hoe gaat het thuis?",
+    for question in ("Doe de lampen in de keuken aan", "hoe fel staat de keukenlamp?", "wanneer ging de lamp aan?",
+                     "Hoe warm was het vannacht in de slaapkamer?", "hoe gaat het thuis?",
                      "zet de verwarming aan", "waarom staat de lamp aan?", "open het raam", "bedankt",
                      "Welke lampen staan aan in de garage?", "hoe warm is het in de meterkast?"):
         assert ask(ctx, question) is None, question
@@ -63,3 +63,37 @@ def test_snapshot_is_compact(ctx):
     assert "- Klimaat: Thermostaat (climate.thermostaat): verwarmen, nu 20,5 °C, doel 20 °C" in prompt
     assert "hvac_modes" not in prompt and "min_temp" not in prompt
     assert "- Weer: bewolkt, 12 °C" in prompt
+
+
+async def test_only_tools_the_question_needs(ctx):
+    from app.agent.loop import Agent, chat_tools
+    from app.tools.home import build_registry
+
+    registry = build_registry()
+    plain = chat_tools(registry, ["Hoe vaak is er vandaag iemand bij de voordeur geweest?"])
+    assert {"get_detections", "get_history", "search_entities", "remember"} <= plain
+    assert not plain & {"add_watch_rule", "schedule_action", "create_automation", "add_house_rule"}
+    assert "schedule_action" in chat_tools(registry, ["zet de lamp om 22:00 uit"])
+    assert "add_watch_rule" in chat_tools(registry, ["waarschuw me als de co2 boven 1000 komt"])
+    assert "create_automation" in chat_tools(registry, ["maak een automatisering voor de koffie"])
+    # The previous question counts: "en om 23:00?" after a light question.
+    assert "schedule_action" in chat_tools(registry, ["doe de lamp uit", "en om 23:00?"])
+
+    ctx.llm = FakeLLM([{"role": "assistant", "content": "", "tool_calls": [
+        {"function": {"name": "list_watch_rules", "arguments": {}}}]},
+        {"role": "assistant", "content": "Er zijn geen bewakingsregels."}])
+    result = await Agent(ctx, registry).run("Wat doe je eigenlijk allemaal voor me?", "t1")
+    offered = {t["function"]["name"] for t in ctx.llm.requests[0]["tools"]}
+    assert "list_watch_rules" not in offered
+    # A tool that was not offered still runs when the model asks for it.
+    assert result.actions[0]["tool"] == "list_watch_rules" and "error" not in result.actions[0]["result"]
+
+
+def test_one_device_by_name(ctx):
+    assert ask(ctx, "Staat de keukenlamp aan?") == "Keukenlamp: aan."
+    assert ask(ctx, "Is het voordeur slot dicht?") == ask(ctx, "is de voordeur op slot?") == "Voordeur slot: op slot."
+    assert ask(ctx, "staat de thermostaat aan?") == "Thermostaat: verwarmen, nu 20,5 °C, doel 20 °C."
+    assert ask(ctx, "staat het koffiezetapparaat aan?") == "Koffiezetapparaat: uit."
+    # Not a device name, or a command: the agent.
+    assert ask(ctx, "staat de vaatwasser aan?") is None
+    assert ask(ctx, "zet het koffiezetapparaat aan") is None
