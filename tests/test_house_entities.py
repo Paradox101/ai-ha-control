@@ -432,3 +432,81 @@ async def test_car_question_reads_the_car_line(ctx):
     assert f"- Auto: {FORD}: laadtoestand (EV-accu) 75 %, NU AAN HET LADEN" in prompt
     assert "75 %" in (await get_home_overview(ctx))["car"][0]
     assert ctx.index.search("auto accu")[0].entity_id.startswith("sensor.fordpass")
+
+
+# --- found against the full export: servers, geofencing, batteries, look-alikes -------------------
+
+def test_server_hardware_is_no_room(ctx):
+    temp(ctx, "sensor.192_168_7_10_tctl_temperature", 54, "Server", "192.168.7.10 Tctl temperature",
+         device="192.168.7.10")
+    temp(ctx, "sensor.192_168_7_11_systin_temperature", 31, "Zolder", "192.168.7.11 SYSTIN temperature",
+         device="192.168.7.11")
+    temp(ctx, "sensor.zolder_temperatuur", 20.2, "Zolder", "Zolder")
+    air = area_climate(ctx.index)
+    assert "Server" not in air and air["Zolder"]["temperature"] == 20.2
+    baseline = Baseline(ctx.db, ctx.index, ctx.config)
+    assert not baseline.learnable(ctx.index.get("sensor.192_168_7_10_tctl_temperature"))
+    assert baseline.learnable(ctx.index.get("sensor.zolder_temperatuur"))
+
+
+def test_tado_geofencing_and_tamper_contacts_are_no_detection(ctx):
+    home = put(ctx, "binary_sensor.home", "on", area="Meterkast", device="Tado CE Hub",
+               friendly_name="Tado CE Hub Geofencing", device_class="presence")
+    lid = put(ctx, "binary_sensor.bewegingsmelder_slaapkamer_achterkant_openen", "on", area="Slaapkamer",
+              friendly_name="Bewegingsmelder Slaapkamer Achterkant Openen", device_class="occupancy")
+    motion = put(ctx, "binary_sensor.bewegingsmelder_zolder_bezetting", "on", area="Zolder",
+                 friendly_name="Bewegingsmelder Zolder Bezetting", device_class="occupancy")
+    assert not ctx.index.is_detection_sensor(home) and not ctx.index.is_detection_sensor(lid)
+    assert ctx.index.is_detection_sensor(motion)
+    assert Baseline(ctx.db, ctx.index, ctx.config).activity(home, datetime(2026, 10, 19, 3, 0)) is None
+
+
+def test_predicted_window_is_no_open_window(ctx):
+    guess = put(ctx, "binary_sensor.woonkamer_window_predicted", "on", area="Woonkamer", device="Woonkamer",
+                friendly_name="Woonkamer Venster Voorspeld", device_class="window")
+    assert not ctx.index.is_opening(guess)
+    assert ctx.index.is_opening(ctx.index.get("binary_sensor.raam_slaapkamer"))
+
+
+def test_camera_vehicle_sensor_and_vacuum_are_no_car(ctx):
+    from app.house import is_car
+
+    vehicle = put(ctx, "binary_sensor.schuur_voertuig", "on", area="Achtertuin", device="Schuur",
+                  friendly_name="Schuur Voertuig", device_class="motion")
+    vacuum = put(ctx, "sensor.pluisje_auto_empty_status", "idle", device="Pluisje",
+                 friendly_name="Pluisje Automatisch legen-status")
+    lock = put(ctx, "lock.fordpass_doorlock", "locked", friendly_name="Deuren", device="Ford Explorer")
+    assert not is_car(vehicle) and not is_car(vacuum) and is_car(lock)
+
+
+def test_low_batteries_skip_phones_and_the_car_once_per_device(ctx):
+    from app.watcher.scheduler import low_batteries
+
+    put(ctx, "sensor.sm_s908b_battery_level", "12", device="SM_S908B", device_id="phone", device_class="battery")
+    put(ctx, "sensor.sm_s908b_battery_state", "discharging", device="SM_S908B", device_id="phone")
+    put(ctx, "sensor.fordpass_soc", "10", device="Ford Explorer", device_id="ford", device_class="battery",
+        friendly_name="Laadtoestand")
+    put(ctx, "sensor.raam_batterij", "9", device="Raam", device_id="raam", device_class="battery",
+        friendly_name="Raam Batterij")
+    put(ctx, "sensor.raam_battery_plus", "9", device="Raam", device_id="raam", device_class="battery",
+        friendly_name="Raam Batterij+")
+    assert low_batteries(ctx) == ["Raam Batterij (9%)"]
+
+
+def test_same_name_in_two_rooms_is_no_duplicate(ctx):
+    from app.house import duplicates
+
+    put(ctx, "sensor.sirene_batterij", "100", area="Zolder", friendly_name="Sirene Batterij")
+    put(ctx, "sensor.sirene_batterij_2", "100", area="Overloop", friendly_name="Sirene Batterij")
+    put(ctx, "camera.schuur_vloeiend", "idle", area="Achtertuin", friendly_name="Schuur Vloeiend")
+    put(ctx, "camera.schuur_vloeiend_2", "idle", friendly_name="Schuur Vloeiend")
+    assert [d.entity_id for _, d in duplicates(ctx.index)] == ["camera.schuur_vloeiend_2"]
+
+
+async def test_car_lock_only_in_the_car_line(ctx):
+    from app.agent.loop import Agent
+    from app.tools.home import build_registry
+
+    put(ctx, "lock.fordpass_doorlock", "locked", friendly_name="Deuren", device="Ford Explorer")
+    prompt = Agent(ctx, build_registry()).system_prompt()
+    assert "Slot: Deuren" not in prompt and "Slot: Voordeur slot" in prompt

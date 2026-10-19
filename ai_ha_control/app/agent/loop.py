@@ -12,7 +12,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..ha.index import normalize
-from ..house import car_status, fmt_number, outside_temperature, readings_text, room_readings
+from ..house import car_status, fmt_number, is_car, outside_temperature, readings_text, room_readings
 from ..llm.ollama import PRIORITY_CHAT, DeltaCallback
 from ..watcher.baseline import house_mode
 from ..tools.actions import resolve_confirmation
@@ -223,7 +223,9 @@ class Agent:
             # All of them, per room: cutting at 8 made the model leave the rest out.
             f"- Lampen aan ({len(lights)}): {index.area_text(index.group_by_area(lights)) or 'geen'}",
             self._openings_line(index),
-            *[f"- Slot: {e.name} = {e.readable_state}" for e in index.entities.values() if e.domain == "lock"][:6],
+            # The car's lock is in its own "Auto" line: "Slot: Deuren = op slot" read as the front door.
+            *[f"- Slot: {e.name} = {e.readable_state}" for e in index.entities.values()
+              if e.domain == "lock" and not is_car(e)][:6],
             *[f"- Auto: {c}" for c in car_status(index, nl)],
             *[f"- Alarm: {e.name} = {e.readable_state}" for e in index.entities.values()
               if e.domain == "alarm_control_panel"],
