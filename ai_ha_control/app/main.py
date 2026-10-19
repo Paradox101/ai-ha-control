@@ -31,6 +31,7 @@ from .llm.ollama import LLMError, OllamaClient
 from .notify import Notifier
 from .policy import Policy
 from .storage.db import Database
+from .text import plain_text, strip_emphasis
 from .tools.actions import ConfirmationStore, resolve_confirmation
 from .tools.base import ToolContext
 from .tools.home import build_autonomous_registry, build_registry
@@ -323,7 +324,7 @@ class App:
                       conversation_id)
         try:
             result = await self.agent.run(text, conversation_id, source="assist", area=body.get("area"))
-            speech = result.answer
+            speech = plain_text(result.answer)
         except LLMError as err:
             _LOGGER.warning("Assist request failed: %s", err)
             speech = self._unreachable()
@@ -360,12 +361,12 @@ class App:
         async def on_delta(piece: str) -> None:
             nonlocal streamed
             streamed = True
-            await send({"delta": piece})
+            await send({"delta": strip_emphasis(piece)})
 
         try:
             result = await self.agent.run(text, conversation_id, source="assist", area=body.get("area"),
                                           on_delta=on_delta)
-            speech = result.answer
+            speech = plain_text(result.answer)
         except LLMError as err:
             _LOGGER.warning("Assist request failed: %s", err)
             speech = self._unreachable()
