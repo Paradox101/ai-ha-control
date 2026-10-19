@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2 — Camera-analyse zonder GPU-geheugenfouten
+
+- Camerabeelden worden verkleind (max. 1280 px) voordat ze naar het beeldmodel gaan, en het beeldmodel draait met een kleine context (4096). Dat scheelt veel VRAM.
+- Bij "request exceeds the available context size" wordt het opnieuw geprobeerd met een kleiner beeld.
+- Bij "CUDA error: out of memory" ontlaadt de add-on de andere geladen modellen (meestal het chatmodel) en probeert het één keer opnieuw met een kleiner beeld.
+- De snapshot wordt in de chat getoond, ook als de analyse mislukt, met een duidelijke foutmelding.
+
 ## 0.5.1
 
 - **Aanwezigheid**: alleen de status `home` telt als thuis. Iemand in een andere zone (bijv. "Werk Vincent") wordt gemeld als weg, met de naam van de zone erbij.
