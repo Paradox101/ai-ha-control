@@ -8,6 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..ha.index import normalize
+from ..house import outside_temperature, room_readings
 from .actions import perform
 from .agent_tools import AGENT_TOOLS, HOUSE_RULE_TOOLS
 from .automations import TOOLS as AUTOMATION_TOOLS
@@ -19,7 +20,13 @@ from .history import get_detections, get_history
 
 
 async def get_home_overview(ctx: ToolContext) -> dict[str, Any]:
-    return ctx.index.overview()
+    overview = ctx.index.overview()
+    # Per room the right sensor (room median or the comfort profile's choice); rooms without one are left out.
+    overview["room_readings"] = room_readings(ctx.index, ctx.db.profiles())
+    outside = outside_temperature(ctx.index, ctx.config)
+    if outside is not None:
+        overview["outside_temperature"] = round(outside, 1)
+    return overview
 
 
 async def search_entities(
@@ -255,7 +262,8 @@ ENTITY_IDS = {
 TOOLS = [
     Tool(
         "get_home_overview",
-        "Overzicht van het huis: ruimtes, wie thuis is, lampen aan, open ramen/deuren, klimaat, camera's.",
+        "Overzicht van het huis: ruimtes, wie thuis is, lampen aan, open ramen/deuren, klimaat, "
+        "temperatuur/vocht/CO₂ per ruimte (room_readings), camera's.",
         {"type": "object", "properties": {}},
         get_home_overview,
     ),
