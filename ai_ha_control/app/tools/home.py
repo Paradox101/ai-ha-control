@@ -272,11 +272,20 @@ async def analyze_camera(
             f"Wees feitelijk en beknopt. {language}"
         )
         try:
-            description = await ctx.llm.describe_image(await ctx.ha.camera_snapshot(cam.entity_id), prompt)
+            snapshot = await ctx.ha.camera_snapshot(cam.entity_id)
         except Exception as err:  # noqa: BLE001
-            results.append({"camera": cam.name, "error": str(err)[:200]})
+            results.append({"camera": cam.name, "error": f"geen beeld: {str(err)[:200]}"})
             continue
-        images.append(cam.entity_id)
+        images.append(cam.entity_id)  # the snapshot is worth showing even if the analysis fails
+        try:
+            description = await ctx.llm.describe_image(snapshot, prompt)
+        except Exception as err:  # noqa: BLE001
+            text = str(err).lower()
+            reason = ("te weinig GPU-geheugen voor het beeldmodel" if "out of memory" in text
+                      else "beeld te groot voor het beeldmodel" if "context size" in text
+                      else str(err)[:200])
+            results.append({"camera": cam.name, "error": f"beeldanalyse mislukt: {reason}"})
+            continue
         results.append({"camera": cam.name, "description": description})
         ctx.db.audit("analyze_camera", {"entity_id": cam.entity_id, "question": question}, "executed",
                      description[:500], ctx.conversation_id)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import heapq
+import io
 import itertools
 import logging
 from typing import Any
@@ -18,6 +19,38 @@ _LOGGER = logging.getLogger(__name__)
 
 class LLMError(Exception):
     """Error talking to Ollama."""
+
+
+# Camera snapshots are often 4K; vision models don't need that and the extra image tokens cost VRAM.
+IMAGE_MAX_SIZE = 1280
+IMAGE_RETRY_SIZE = 768
+VISION_CONTEXT = 4096  # one picture + a short question; the chat context size is not needed here
+
+
+def is_out_of_memory(err: Exception) -> bool:
+    return "out of memory" in str(err).lower()
+
+
+def is_too_large(err: Exception) -> bool:
+    return "exceeds the available context size" in str(err).lower()
+
+
+def shrink_image(image: bytes, max_size: int) -> bytes:
+    """Downscale to max_size (longest side) as JPEG. Returns the original if it is small or unreadable."""
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(image)) as img:
+            if max(img.size) <= max_size:
+                return image
+            img = img.convert("RGB")
+            img.thumbnail((max_size, max_size))
+            out = io.BytesIO()
+            img.save(out, "JPEG", quality=85)
+            return out.getvalue()
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Could not resize camera image: %s", err)
+        return image
 
 
 # Lower number = served first. One GPU, so requests are handled one at a time.
@@ -97,6 +130,7 @@ class OllamaClient:
         tools: list[dict[str, Any]] | None,
         model: str | None,
         timeout: float,
+        context_size: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model or self._config.model,
@@ -104,7 +138,7 @@ class OllamaClient:
             "stream": False,
             "keep_alive": self._config.keep_alive,
             "think": self._config.think,
-            "options": {"num_ctx": self._config.context_size, "temperature": 0.2},
+            "options": {"num_ctx": context_size or self._config.context_size, "temperature": 0.2},
         }
         if tools:
             payload["tools"] = tools
@@ -129,15 +163,51 @@ class OllamaClient:
         return message
 
     async def describe_image(self, image: bytes, question: str, priority: int = PRIORITY_CHAT) -> str:
-        messages = [
-            {
-                "role": "user",
-                "content": question,
-                "images": [base64.b64encode(image).decode()],
-            }
-        ]
-        message = await self.chat(messages, model=self._config.vision_model, timeout=180, priority=priority)
+        model = self._config.vision_model
+        context = min(self._config.context_size, VISION_CONTEXT)
+
+        def request(max_size: int) -> list[dict[str, Any]]:
+            data = base64.b64encode(shrink_image(image, max_size)).decode()
+            return [{"role": "user", "content": question, "images": [data]}]
+
+        await self._lock.acquire(priority)
+        try:
+            try:
+                message = await self._chat(request(IMAGE_MAX_SIZE), None, model, 180, context)
+            except LLMError as err:
+                if is_out_of_memory(err):
+                    # Usually the chat model still occupies the GPU: free it and try once more, smaller.
+                    _LOGGER.warning("Vision model ran out of GPU memory, unloading other models and retrying")
+                    await self.unload_others(model)
+                elif is_too_large(err):
+                    _LOGGER.warning("Camera image too large for the vision context, retrying smaller")
+                else:
+                    raise
+                message = await self._chat(request(IMAGE_RETRY_SIZE), None, model, 180, context)
+        finally:
+            self._lock.release()
         return (message.get("content") or "").strip()
+
+    async def unload_others(self, keep: str) -> list[str]:
+        """Ask Ollama to unload every running model except `keep` (frees VRAM)."""
+        try:
+            async with self._session.get(f"{self.base_url}/api/ps", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                running = [m.get("name") or m.get("model") for m in (await resp.json()).get("models", [])]
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Cannot list running models: %s", err)
+            return []
+        unloaded = []
+        for name in running:
+            if not name or name in (keep, f"{keep}:latest"):
+                continue
+            try:
+                async with self._session.post(f"{self.base_url}/api/generate", json={"model": name, "keep_alive": 0},
+                                              timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    await resp.read()
+                unloaded.append(name)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Cannot unload %s: %s", name, err)
+        return unloaded
 
     async def status(self, url: str | None = None) -> dict[str, Any]:
         """Check connectivity and whether the configured models are installed."""
