@@ -54,6 +54,9 @@ DETECTION_WORDS = ("person", "persoon", "people", "vehicle", "voertuig", "car", 
 DOORBELL_WORDS = ("visitor", "bezoeker")
 
 # Reolink (and others) expose each camera as several streams; the snapshot of the main stream is sharper.
+# Cameras that look at the private back side of the house: someone there while the alarm is on is critical.
+BACKYARD_WORDS = {"achtertuin", "achter", "tuin", "achterdeur", "schuur", "garden", "backyard", "back", "patio", "terras"}
+
 HIGH_STREAM_WORDS = {"clear", "duidelijk", "main", "high", "hoog"}
 LOW_STREAM_WORDS = {"fluent", "vloeiend", "sub", "low", "laag", "balanced", "gebalanceerd"}
 
@@ -123,6 +126,13 @@ class EntityInfo:
             return ALARM_STATES.get(self.state, self.state)
         if self.domain == "lock":
             return LOCK_STATES.get(self.state, self.state)
+        if self.domain in ("person", "device_tracker"):
+            # Only "home" is home: any other zone (e.g. "Werk Vincent") means away.
+            if self.state == "home":
+                return "thuis"
+            if self.state == "not_home":
+                return "weg"
+            return f"weg (in zone {self.state})"
         if self.unit:
             return f"{self.state} {self.unit}"
         return self.state
@@ -293,6 +303,25 @@ class EntityIndex:
             return None
         return any(p.state == "home" for p in people)
 
+    def alarm_armed(self) -> bool:
+        return any(e.domain == "alarm_control_panel" and e.state.startswith("armed")
+                   for e in self.entities.values())
+
+    @staticmethod
+    def is_backyard(cam: EntityInfo) -> bool:
+        words = set(normalize(f"{cam.name} {cam.area or ''}").split()) | _object_tokens(cam)
+        return bool(words & BACKYARD_WORDS)
+
+    def camera_profile(self, cam: EntityInfo, profiles: list[str]) -> str:
+        """door | private | street | off, from the settings (any stream of the camera) or guessed from its name."""
+        key = self._camera_key(cam)
+        for item in profiles:
+            entity_id, _, profile = item.partition("=")
+            other = self.get(entity_id)
+            if profile != "auto" and (entity_id == cam.entity_id or (other is not None and self._camera_key(other) == key)):
+                return profile
+        return "private" if self.is_backyard(cam) else "door"
+
     def is_detection_sensor(self, ent: EntityInfo) -> bool:
         if ent.domain != "binary_sensor":
             return False
@@ -315,6 +344,12 @@ class EntityIndex:
     def _camera_key(cam: EntityInfo) -> str:
         words = [w for w in normalize(cam.name).split() if w not in HIGH_STREAM_WORDS | LOW_STREAM_WORDS | {"camera"}]
         return " ".join(words) or cam.entity_id
+
+    @staticmethod
+    def camera_label(cam: EntityInfo) -> str:
+        """Name without the stream: 'Deurbel Voordeur Vloeiend' -> 'Deurbel Voordeur'."""
+        words = [w for w in cam.name.split() if normalize(w) not in HIGH_STREAM_WORDS | LOW_STREAM_WORDS]
+        return " ".join(words) or cam.name
 
     def cameras(self, area: str | None = None, query: str | None = None, limit: int = 20) -> list[EntityInfo]:
         """Available cameras, one per physical camera (best stream), optionally filtered by area or text."""

@@ -116,12 +116,28 @@ class FakeLLM:
         self.responses = list(responses or [])
         self.requests: list[dict[str, Any]] = []
 
-    async def chat(self, messages, tools=None, model=None, timeout=300, priority=1):
-        self.requests.append({"messages": [dict(m) for m in messages], "tools": tools, "model": model})
-        return self.responses.pop(0) if self.responses else {"role": "assistant", "content": "klaar"}
+    async def chat(self, messages, tools=None, model=None, timeout=300, priority=1, on_delta=None, schema=None):
+        self.requests.append({"messages": [dict(m) for m in messages], "tools": tools, "model": model,
+                              "streamed": on_delta is not None, "schema": schema})
+        response = self.responses.pop(0) if self.responses else {"role": "assistant", "content": "klaar"}
+        if on_delta is not None and response.get("content") and not response.get("tool_calls"):
+            for word in response["content"].split(" "):
+                await on_delta(word + " ")
+        return response
 
-    async def describe_image(self, image, question, priority=1):
+    async def describe_image(self, image, question, priority=1, schema=None):
         return "Er staat een pakketje voor de deur."
+
+
+@pytest.fixture(autouse=True)
+async def no_background_verification(monkeypatch):
+    """Autonomous actions are verified ~45 s later; in tests that check is run explicitly."""
+    from app.tools import actions
+
+    monkeypatch.setattr(actions, "VERIFY_DELAY", 3600.0)
+    yield
+    for task in list(actions._background):
+        task.cancel()
 
 
 @pytest.fixture
@@ -143,7 +159,7 @@ def ctx(config, index) -> ToolContext:
         ha=FakeHA(),
         index=index,
         llm=FakeLLM(),
-        policy=Policy(config),
+        policy=Policy(config, index),
         db=Database(config.data_dir),
         confirmations=ConfirmationStore(),
         conversation_id="test",

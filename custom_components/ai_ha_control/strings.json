@@ -44,5 +44,45 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "House status",
+        "state": {
+          "rustig": "Calm",
+          "aandacht": "Attention",
+          "alarm": "Alarm"
+        }
+      },
+      "mode": {
+        "name": "House mode"
+      },
+      "last_incident": {
+        "name": "Last incident"
+      },
+      "open_incidents": {
+        "name": "Open incidents"
+      },
+      "pending_confirmations": {
+        "name": "Waiting for confirmation"
+      },
+      "llm_avg_seconds": {
+        "name": "AI response time"
+      }
+    },
+    "binary_sensor": {
+      "concern": {
+        "name": "Concerned"
+      },
+      "addon_problem": {
+        "name": "Add-on problem"
+      }
+    },
+    "switch": {
+      "autonomous": {
+        "name": "Act autonomously"
+      }
+    }
   }
 }

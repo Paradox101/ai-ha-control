@@ -328,7 +328,7 @@ async def test_patrol_reports_only_changed_and_relevant(auto, tmp_path):
     async def snapshot(entity_id):
         return next(images)
     auto.ha.camera_snapshot = snapshot
-    async def describe(image, question, priority=1):
+    async def describe(image, question, priority=1, schema=None):
         return "VERDACHT: iemand met een capuchon bij de schuur"
     auto.llm.describe_image = describe
     auto.index.cameras = lambda: [auto.index.get("camera.voordeur_clear")]
@@ -347,6 +347,9 @@ def test_vision_categories():
     assert parse("**VOORBIJGANGER** - twee fietsers op straat")[0] == PASSERBY
     assert parse("VERDACHT. Iemand klimt over het hek")[0] == SUSPICIOUS
     assert parse("Er staat een pakketje.") == (UNKNOWN, "Er staat een pakketje.")
+    # Newline after the category, and scenery that isn't needed in a notification
+    assert parse("VOORBIJGANGER\nEen persoon rijdt een fiets voorbij. De omgeving toont huizen en auto's.") == (
+        PASSERBY, "Een persoon rijdt een fiets voorbij.")
 
 
 # --- HA entities, kill switch, migration ------------------------------------------------------

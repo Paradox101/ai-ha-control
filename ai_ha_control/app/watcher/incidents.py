@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -52,6 +53,17 @@ class IncidentManager:
     def __init__(self, db: Database, notifier: Notifier) -> None:
         self._db = db
         self._notifier = notifier
+        # Called with the incident when one opens or escalates (fired as a Home Assistant event).
+        self.on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+
+    async def _emit(self, incident_id: int, kind: str, severity: str, title: str, text: str, new: bool) -> None:
+        if self.on_event is None:
+            return
+        try:
+            await self.on_event({"incident_id": incident_id, "kind": kind, "severity": severity, "title": title,
+                                 "text": text, "new": new})
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Could not emit incident event: %s", err)
 
     def active(self) -> list[dict[str, Any]]:
         return self._db.incidents(status="active")
@@ -93,11 +105,13 @@ class IncidentManager:
             escalated = SEVERITY_ORDER[severity] > SEVERITY_ORDER.get(existing["severity"], 0)
             if escalated:
                 self._db.update_incident(incident_id, severity=severity)
+                await self._emit(incident_id, kind, severity, existing["title"], text, new=False)
             if not (escalated and push):
                 return incident_id  # same story continues: timeline only, no new push
         else:
             incident_id = self._db.open_incident(kind, severity, title, text)
             self._db.add_incident_event(incident_id, text, entity_id, snapshot)
+            await self._emit(incident_id, kind, severity, title, text, new=True)
             if not push:
                 return incident_id
         await self._notifier.send(

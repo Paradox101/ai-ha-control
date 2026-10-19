@@ -81,8 +81,26 @@ class Config:
     heartbeat_minutes: int = 10
     sleep_hours: str = "23:00-07:00"
     camera_patrol: str = "away"  # off | away | always
+    # Per camera what's worth a notification: "camera.x=auto|door|private|street|off"
+    camera_profiles: list[str] = field(default_factory=list)
     patrol_minutes: int = 15
     snapshot_retention_days: int = 7
+    # Scenes/scripts the agent may start by itself (all others: ask)
+    autonomous_scenes: list[str] = field(default_factory=list)
+    override_minutes: int = 120  # after a resident changes something, the agent keeps its hands off
+    # Comfort
+    comfort: bool = True
+    preheat_distance_km: float = 15.0
+    # Safety playbooks (never doors or the alarm)
+    leak_valve: str = ""
+    emergency_lights: bool = True
+    emergency_fans_off: list[str] = field(default_factory=list)
+    # Notifications per person ("person.vincent=notify.mobile_app_vincent") and an evening digest
+    person_notify: list[str] = field(default_factory=list)
+    digest_time: str = ""
+    llm_down_minutes: int = 30
+    calendar_context: bool = True
+    energy_context: bool = True
     api_key: str = ""
     log_level: str = "info"
 

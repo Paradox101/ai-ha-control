@@ -33,11 +33,30 @@ De agent bewaakt het huis zelfstandig:
 
 ### Wat mag de agent zelf?
 
-Per domein stel je in: **👀 Kijken** (alleen melden), **❓ Vragen** (melding met knop *Uitvoeren*) of **✅ Zelf doen**. Zelf doen is begrensd:
+Per domein stel je in: **👀 Kijken** (alleen melden), **🕶️ Schaduw** (vastleggen wat hij zou doen, zonder het te doen; beoordeel het met 👍/👎 in het tabblad *Agent*), **❓ Vragen** (melding met knop *Uitvoeren*) of **✅ Zelf doen**. Zelf doen is begrensd:
 - alleen als de **noodknop** `input_boolean.ai_autonoom` aan staat (wordt automatisch aangemaakt; ook te bedienen in het tabblad *Agent*);
 - alleen **omkeerbare** acties, met een **↩️ Ongedaan maken**-knop in de melding en in de web-UI;
 - maximaal `max_autonomous_actions_per_hour` acties per uur en maximaal `max_climate_change` graden temperatuurverschil;
-- domeinen in `confirm_domains` vragen altijd eerst, en de agent kan zijn eigen noodknop niet bedienen.
+- domeinen in `confirm_domains` vragen altijd eerst, en de agent kan zijn eigen noodknop niet bedienen;
+- **deuren, sloten, poorten en het alarm nooit zelf**, ook niet via een schakelaar, knop, scène of script op hetzelfde apparaat of met zo'n naam;
+- scènes en scripts alleen als je ze vrijgeeft (`autonomous_scenes`);
+- heeft een bewoner een apparaat net zelf aangepast, dan blijft de agent er `override_minutes` vanaf (zie *Handmatig aangepast* in het tabblad *Agent*).
+
+Elke wijziging in het situatierapport staat met **wie** het deed (bewoner, automatisering, agent, AI of het apparaat zelf), op basis van de context die Home Assistant meestuurt. Na een eigen actie controleert de agent na ~45 seconden of het apparaat reageerde.
+
+### Comfort
+
+In het tabblad **🌡️ Comfort** leg je per ruimte vast wat je wilt: temperatuur per huismodus, voorverwarmen voor de thuiskomst, lampen die aangaan bij schemer, ventilatie bij hoog CO₂ (>1000 ppm) of vocht (>75%) en zonwering bij felle zon (>24 °C). Je kunt het ook in de chat zeggen. Vaste regels voeren dit uit (niet het taalmodel), via dezelfde autonomie-instellingen. Ze handelen alleen als de wens verandert (andere huismodus, schemer), dus een handmatige aanpassing wordt niet teruggedraaid. Zet je de thermostaat vaak met de hand anders, dan stelt de add-on voor het profiel aan te passen.
+
+Voorverwarmen gebeurt als iemand onderweg naar huis is (de [proximity-integratie](https://www.home-assistant.io/integrations/proximity/): `sensor.*_direction_of_travel` = towards en de afstand kleiner dan `preheat_distance_km`) of op basis van de geleerde thuiskomsttijd per weekdag.
+
+### Directe beveiligingsregels
+
+Deze regels wachten niet op de AI:
+- deur of raam open terwijl iedereen weg is of het alarm aan staat → **kritieke** melding met snapshot (niet vlak na thuiskomst);
+- deur open terwijl iedereen slaapt → waarschuwing (👎 = normaal, dan niet meer);
+- alarm afgegaan → kritieke melding en omroep;
+- lekkage → hoofdkraan dicht (`leak_valve`); rook/gas/CO → alle lampen aan (`emergency_lights`) en ventilatie uit (`emergency_fans_off`).
 
 ### Feedback
 
@@ -47,7 +66,7 @@ Elke melding heeft **👍 Nuttig / 👎 Onnodig**. 👎 op een afwijking beteken
 
 | Entiteit | Inhoud |
 |----------|--------|
-| `sensor.ai_huis_status` | `rustig`, `aandacht` of `alarm` (+ huismodus, aantal incidenten, laatste controle) |
+| `sensor.ai_huis_status` | `rustig`, `aandacht` of `alarm` (+ huismodus, aantal incidenten, laatste controle, `last_tick`, `last_agent_run`, `ollama`) |
 | `sensor.ai_huismodus` | thuis / weg / slapen / vakantie / gast |
 | `binary_sensor.ai_bezorgd` | aan als er een incident met ernst *warning* of *critical* open staat |
 | `sensor.ai_laatste_incident` | titel van het laatste incident |
@@ -55,11 +74,46 @@ Elke melding heeft **👍 Nuttig / 👎 Onnodig**. 👎 op een afwijking beteken
 
 Gebruik ze op je dashboard of in eigen automatiseringen (bijv. een lamp rood als `binary_sensor.ai_bezorgd` aan gaat).
 
+Met de **integratie** (zie Assist hieronder) krijg je in plaats daarvan echte entiteiten onder het apparaat *AI HA Control*: huisstatus, huismodus, laatste incident, open incidenten, wacht op bevestiging, AI-reactietijd, bezorgd, add-on-probleem en de schakelaar *Zelf handelen*. Die overleven een herstart van HA, kun je hernoemen en aan een ruimte hangen; de losse `sensor.ai_*` hierboven verdwijnen dan.
+
+Bij elk nieuw of verergerd incident vuurt de add-on het event `ai_ha_control_incident` (`incident_id`, `kind`, `severity`, `title`, `text`, `new`):
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: ai_ha_control_incident
+    event_data:
+      severity: critical
+```
+
+**Dodemansknop**: ligt de add-on zelf plat, dan kan hij dat niet melden. Laat Home Assistant het doen:
+
+```yaml
+automation:
+  - alias: AI Huis werkt niet meer
+    triggers:
+      - trigger: template
+        value_template: >
+          {{ now() - as_datetime(state_attr('sensor.ai_huis_status', 'last_tick'))
+             > timedelta(minutes=15) }}
+    actions:
+      - action: notify.mobile_app_telefoon
+        data:
+          title: AI Huis reageert niet
+          message: De add-on heeft al 15 minuten niet rondgekeken.
+```
+
+Is alleen de AI-server (Ollama) weg, dan meldt de add-on dat zelf na `llm_down_minutes`.
+
 ## Veiligheid
 
 - Start standaard in **testmodus** (`dry_run: true`): de AI vertelt wat hij zou doen, maar voert niets uit. Controleer het *Actielog* en zet testmodus daarna uit.
-- Sloten, alarm, rolluiken/garagedeuren, kranen en **nieuwe automatiseringen** vragen altijd om bevestiging: in de web-UI, met een knop op je telefoon of door "ja" te zeggen.
+- Sloten, alarm, rolluiken/garagedeuren, kranen en **nieuwe automatiseringen** vragen altijd om bevestiging: in de web-UI, met een knop op je telefoon of door "ja" te zeggen. Alles wat deuren of het alarm raakt kan **niet** via spraak worden bevestigd.
+- De API-sleutel (voor de Assist-integratie) geeft alleen toegang tot het gesprek; instellingen en de noodknop alleen via het HA-paneel.
 - HA herstarten/stoppen, shell-commando's, add-ons beheren en de recorder zijn geblokkeerd.
+- De add-on draait onder een eigen **AppArmor-profiel**: alleen `/data` is schrijfbaar, de code is alleen-lezen en de HA-config, back-ups, media en gedeelde mappen zijn afgeschermd.
+- `/api/health` controleert de verbinding met HA en de interne planner; de Supervisor-watchdog herstart de add-on bij problemen.
+- HA-back-ups bevatten een consistente kopie van de database (gemaakt vlak voor de back-up), zonder camera-snapshots.
 - Elke actie wordt gelogd in het *Actielog*.
 
 ## Installatie
@@ -109,6 +163,10 @@ Flash attention + `q8_0` KV-cache halveren het contextgeheugen, zodat `qwen3:8b`
 
 De integratie geeft ook de actie `ai_ha_control.ask` (met antwoord), te gebruiken in scripts en automatiseringen.
 
+**Sneller**: zet in de spraakassistent **"Prefer handling commands locally"** (*Commando's lokaal afhandelen*) aan. Simpele commando's als "doe de keukenlamp aan" doet HA dan zelf in een fractie van een seconde; alleen vragen en lastige opdrachten gaan naar de AI. Antwoorden van de AI worden gestreamd, en de ruimte van de spraaksatelliet gaat mee ("doe het licht aan" = licht in die ruimte).
+
+Vanaf versie 0.6.2 heeft de integratie Home Assistant 2025.6 of nieuwer nodig.
+
 ## Opties
 
 Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroepeerd, met uitleg, keuzelijsten met je eigen modellen, telefoons en speakers, en direct toegepast zonder herstart. Wijzigingen worden ook in de add-on-configuratie van Home Assistant opgeslagen.
@@ -139,7 +197,7 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 | `tts_entity` | – | Bijv. `tts.piper` of `tts.google_translate_nl_nl`; nodig voor aankondigingen |
 | `announce_players` | – | Speakers (`media_player.*`) waarop deurbel en alarmen worden uitgesproken |
 | `autonomous` | `true` | Autonome agent aan/uit |
-| `autonomy` | zie boven | Per domein `observe`, `ask` of `act` |
+| `autonomy` | zie boven | Per domein `observe`, `shadow`, `ask` of `act` (sloten en alarm hooguit `ask`) |
 | `kill_switch` | `input_boolean.ai_autonoom` | Noodknop (wordt aangemaakt) |
 | `max_climate_change` | `2.0` | Max. temperatuurwijziging die de agent zelf mag doen |
 | `max_autonomous_actions_per_hour` | `10` | Max. eigen acties per uur |
@@ -149,7 +207,19 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 | `camera_patrol` | `away` | `off`, `away` (weg/slapen) of `always` |
 | `patrol_minutes` | `15` | Interval van de patrouille |
 | `snapshot_retention_days` | `7` | Hoe lang snapshots van incidenten bewaard blijven |
-| `api_key` | automatisch | Sleutel voor de Assist-integratie |
+| `autonomous_scenes` | – | Scènes/scripts die de agent zelf mag starten |
+| `override_minutes` | `120` | Na een handmatige aanpassing blijft de agent zo lang van dat apparaat af |
+| `comfort` | `true` | Comfortprofielen uitvoeren |
+| `preheat_distance_km` | `15` | Voorverwarmen als iemand onderweg is en dichterbij is dan dit |
+| `leak_valve` | – | Kraan (`valve.*` of `switch.*`) die bij lekkage dicht gaat |
+| `emergency_lights` | `true` | Alle lampen aan bij rook/gas/CO |
+| `emergency_fans_off` | – | Ventilatie die bij rook uit gaat |
+| `person_notify` | – | Telefoon per persoon: `person.vincent=notify.mobile_app_vincent`. Deurbel/comfort naar wie thuis is, alarmen naar iedereen |
+| `digest_time` | – | Avondoverzicht van niet-dringende meldingen, bijv. `20:00` |
+| `llm_down_minutes` | `30` | Melding als de AI-server zo lang onbereikbaar is |
+| `calendar_context` | `true` | Agenda in de ochtendsamenvatting; lopende afspraak met "vakantie"/"gasten" zet de huismodus |
+| `energy_context` | `true` | Stroomprijs, goedkoopste tijdvak en zonneverwachting in de samenvatting en de chat |
+| `api_key` | automatisch | Sleutel voor de Assist-integratie (alleen het gesprek) |
 
 "Niemand thuis" wordt bepaald aan de hand van je `person.*`-entiteiten. Zonder personen worden afwezigheidsregels overgeslagen.
 
@@ -163,4 +233,10 @@ Met `scripts/benchmark.py` in de repository test je modellen op een gesimuleerd 
 
 ```bash
 python scripts/benchmark.py --ollama http://<ip-homeserver>:11434 --models qwen3:8b qwen3:4b
+```
+
+Met `scripts/replay.py` speel je echte situatierapporten van je eigen huis opnieuw af (kopieer `ai_ha_control.db` uit de add-on). Je 👍/👎 op controles in het tabblad *Agent* geldt als beoordeling:
+
+```bash
+python scripts/replay.py --db ai_ha_control.db --ollama http://<ip-homeserver>:11434 --models qwen3:8b qwen3:4b
 ```

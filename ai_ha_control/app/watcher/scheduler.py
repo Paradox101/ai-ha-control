@@ -12,6 +12,8 @@ from typing import Any
 from ..agent.loop import DAYS_NL
 from ..notify import Notifier
 from ..tools.base import ToolContext
+from ..i18n import text as text_for
+from ..tools.context import agenda, energy_info
 from .baseline import house_mode
 from .routines import analyze_routines
 from .rules import Watcher
@@ -20,6 +22,7 @@ _LOGGER = logging.getLogger(__name__)
 
 TICK_SECONDS = 60
 ROUTINE_ANALYSIS_TIME = "03:30"
+LLM_CHECK_SECONDS = 300
 
 
 def low_batteries(ctx: ToolContext, threshold: float = 20) -> list[str]:
@@ -54,12 +57,13 @@ async def build_daily_summary(ctx: ToolContext, notifier: Notifier) -> str:
                                     if e["kind"] not in ("summary", "confirmation", "confirmation_result")],
         "routine_suggesties": len(ctx.db.suggestions()),
     }
+    if ctx.config.calendar_context:
+        data["agenda_vandaag"] = await agenda(ctx)
+    if ctx.config.energy_context:
+        data["energie"] = energy_info(ctx)
     messages = [
-        {"role": "system", "content": "Je bent de AI-assistent van het huis. Schrijf in het Nederlands."},
-        {"role": "user", "content":
-            "Schrijf een korte, vriendelijke ochtendsamenvatting (maximaal 6 zinnen, geen opmaak) voor de "
-            "bewoners op basis van deze gegevens. Noem het weer, bijzonderheden van de nacht (incidenten), wat je "
-            "zelf hebt gedaan, open ramen/sloten en lege batterijen alleen als ze er zijn.\n\n"
+        {"role": "system", "content": text_for(ctx.config, "summary_system")},
+        {"role": "user", "content": text_for(ctx.config, "summary_prompt") + "\n\n"
             + json.dumps(data, ensure_ascii=False, default=str)},
     ]
     reply = await ctx.llm.chat(messages)
@@ -73,6 +77,7 @@ class Scheduler:
         self._watcher = watcher
         self._last_run: dict[str, str] = {}
         self._task: asyncio.Task | None = None
+        self.loop_tick = time.monotonic()  # start of the latest loop iteration, for the health check
         # Optional collaborators of the autonomous agent, wired up by the app.
         self.agent = None
         self.baseline = None
@@ -80,6 +85,13 @@ class Scheduler:
         self.incidents = None
         self.snapshots = None
         self.publisher = None
+        self.comfort = None
+        self._agent_task: asyncio.Task | None = None
+        self._llm_checked = -1e9
+        self.llm_down_since: float | None = None
+        self._llm_reported = False
+        self.last_tick = 0.0
+        self._last_digest = time.time()
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop())
@@ -87,6 +99,25 @@ class Scheduler:
     def stop(self) -> None:
         if self._task:
             self._task.cancel()
+        if self._agent_task:
+            self._agent_task.cancel()
+
+    async def wait_agent(self) -> None:
+        """Wait for a heartbeat started in the background (used in tests)."""
+        if self._agent_task:
+            await asyncio.gather(self._agent_task, return_exceptions=True)
+
+    def _start_agent(self) -> None:
+        """The heartbeat runs on its own: a slow LLM must not stop the rule checks and the patrol."""
+        async def run() -> None:
+            try:
+                await self.agent.run()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Autonomous heartbeat failed")
+
+        self._agent_task = asyncio.create_task(run())
 
     def _due(self, job: str, at: str | None, now: datetime) -> bool:
         if not at:
@@ -106,6 +137,7 @@ class Scheduler:
 
     async def _loop(self) -> None:
         while True:
+            self.loop_tick = time.monotonic()
             try:
                 await self.run_once()
             except asyncio.CancelledError:
@@ -121,6 +153,11 @@ class Scheduler:
         await self._watcher.tick()
         now = self._notifier.now()
         await self._autonomous_round(now)
+        await self._check_llm()
+        if config.digest_time and self._due("digest", config.digest_time, now):
+            await self._notifier.send_digest(self._last_digest)
+            self._last_digest = time.time()
+        self.last_tick = time.time()
         if config.proactive and self._due("summary", config.daily_summary_time, now):
             await self.daily_summary()
         if config.routine_learning and self._due("routines", ROUTINE_ANALYSIS_TIME, now):
@@ -135,30 +172,71 @@ class Scheduler:
         if self.baseline is not None and not settling:
             for anomaly in self.baseline.sample(now) + self.baseline.offline():
                 await self._watcher.report_anomaly(anomaly)
-        if self.agent is not None and not settling and self.agent.due():
-            await self.agent.run()
+        if self.agent is not None and not settling and self.agent.due() and \
+                (self._agent_task is None or self._agent_task.done()):
+            self._start_agent()
+        if self.comfort is not None and not settling:
+            await self.comfort.tick(mode, now)
         if self.patrol is not None and not settling and self.patrol.due(mode):
             await self.patrol.run()
         if self.incidents is not None:
             self.incidents.resolve_stale()
-        if self.snapshots is not None and self._due("cleanup", "04:00", now):
-            self.snapshots.cleanup(config.snapshot_retention_days)
+        if self._due("cleanup", "04:00", now):
+            if self.snapshots is not None:
+                self.snapshots.cleanup(config.snapshot_retention_days)
+            _LOGGER.info("Database cleanup: %s", self._ctx.db.prune())
         if self.publisher is not None:
-            await self.publisher.publish(mode, self.agent.last_summary if self.agent else "")
+            await self.publisher.publish(mode, self.agent.last_summary if self.agent else "", self.health())
+
+    def health(self) -> dict[str, Any]:
+        """For the dead man's switch: when we last ran and whether the AI server answers."""
+        tz = self._notifier.now().tzinfo
+        stamp = lambda ts: datetime.fromtimestamp(ts, tz).isoformat(timespec="minutes") if ts else None  # noqa: E731
+        return {
+            "last_tick": stamp(time.time()),
+            "last_agent_run": stamp(self.agent.last_run_ts) if self.agent is not None else None,
+            "ollama": "onbereikbaar" if self.llm_down_since else "ok",
+        }
+
+    async def _check_llm(self) -> None:
+        """Tell the user once when the AI server has been unreachable for a while, and when it is back."""
+        if time.monotonic() - self._llm_checked < LLM_CHECK_SECONDS:
+            return
+        self._llm_checked = time.monotonic()
+        try:
+            reachable = (await self._ctx.llm.status()).get("reachable", False)
+        except Exception:  # noqa: BLE001
+            reachable = False
+        now = time.time()
+        if reachable:
+            if self._llm_reported:
+                await self._notifier.send("✅ AI-server weer bereikbaar", "De autonome agent werkt weer normaal.",
+                                          kind="health", respect_quiet_hours=True)
+            self.llm_down_since, self._llm_reported = None, False
+            return
+        self.llm_down_since = self.llm_down_since or now
+        down_minutes = (now - self.llm_down_since) / 60
+        if not self._llm_reported and down_minutes >= self._ctx.config.llm_down_minutes:
+            self._llm_reported = True
+            since = datetime.fromtimestamp(self.llm_down_since, self._notifier.now().tzinfo)
+            await self._notifier.send(
+                "⚠️ AI-server niet bereikbaar",
+                f"Ollama reageert niet sinds {since:%H:%M}. Rook-, lek- en inbraakmeldingen werken door, "
+                "maar de agent kan niet nadenken en camerabeelden worden niet bekeken.",
+                kind="health", respect_quiet_hours=False)
 
     async def daily_summary(self) -> str:
         text = await build_daily_summary(self._ctx, self._notifier)
         if text:
-            await self._notifier.send("☀️ Goedemorgen", text, kind="summary")
+            await self._notifier.send(text_for(self._ctx.config, "summary_title"), text, kind="summary")
         return text
 
     async def routines(self) -> int:
         new = await analyze_routines(self._ctx)
         if new:
             await self._notifier.send(
-                "💡 Nieuwe routines gevonden",
-                f"Ik heb {new} terugkerende handeling(en) gevonden die ik kan automatiseren. "
-                "Bekijk ze in AI Huis → Routines.",
+                text_for(self._ctx.config, "routines_title"),
+                text_for(self._ctx.config, "routines_message", count=new),
                 kind="routine",
             )
         return new

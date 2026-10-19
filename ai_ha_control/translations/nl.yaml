@@ -72,7 +72,7 @@ configuration:
     description: De AI houdt het huis zelf in de gaten (hartslag, incidenten, opvolging)
   autonomy:
     name: Autonomie per domein
-    description: "domein=niveau. observe = alleen kijken, ask = vragen met knop, act = zelf doen (omkeerbaar, met ongedaan maken)"
+    description: "domein=niveau. observe = alleen kijken, shadow = vastleggen zonder uitvoeren, ask = vragen met knop, act = zelf doen (omkeerbaar, met ongedaan maken)"
   kill_switch:
     name: Noodknop
     description: input_boolean die zelfstandig handelen aan/uit zet (wordt automatisch aangemaakt). Uit = alleen melden.
@@ -90,6 +90,9 @@ configuration:
   sleep_hours:
     name: Slaaptijden
     description: Periode voor huismodus 'slapen', bijv. 23:00-07:00
+  camera_profiles:
+    name: Camera's
+    description: "camera=type. door = voordeur (alleen rondhangen melden), private = achtertuin/privé (elke persoon, kritiek met alarm aan), street = straat (alleen verdacht), off = negeren, auto = op naam"
   camera_patrol:
     name: Camerapatrouille
     description: Regelmatig camerabeelden vergelijken - off, away (als niemand thuis is of iedereen slaapt) of always
@@ -97,6 +100,33 @@ configuration:
     name: Patrouille-interval (min.)
   snapshot_retention_days:
     name: Snapshots bewaren (dagen)
+  autonomous_scenes:
+    name: Scènes/scripts die de agent zelf mag starten
+  override_minutes:
+    name: Na handmatige aanpassing afblijven (minuten)
+  comfort:
+    name: Comfortprofielen uitvoeren
+  preheat_distance_km:
+    name: Voorverwarmen vanaf afstand (km)
+  leak_valve:
+    name: Hoofdkraan dicht bij lekkage
+  emergency_lights:
+    name: Alle lampen aan bij rook/gas/CO
+  emergency_fans_off:
+    name: Ventilatie uit bij rook
+  person_notify:
+    name: Telefoon per persoon
+    description: "person.naam=notify.mobile_app_telefoon"
+  digest_time:
+    name: Avondoverzicht (UU:MM)
+  llm_down_minutes:
+    name: Melden als de AI-server onbereikbaar is na (minuten)
+  calendar_context:
+    name: Agenda gebruiken
+    description: Afspraken in de ochtendsamenvatting; een lopende afspraak met 'vakantie' of 'gasten' zet de huismodus
+  energy_context:
+    name: Energieprijzen gebruiken
+    description: Goedkoopste stroommoment en zonneverwachting in de ochtendsamenvatting en op vraag
   api_key:
     name: API-sleutel
     description: Voor de Assist-integratie. Leeg = automatisch gegenereerd.

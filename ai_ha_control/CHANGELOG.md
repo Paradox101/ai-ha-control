@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.6.3
+
+- Inbraakmelding en de melding "AI-server niet bereikbaar" werkten niet vlak na het opstarten van het systeem (de klok begon te dicht bij nul en telde als "net thuisgekomen").
+
+## 0.6.2 — Hardening, snellere Assist en echte entiteiten
+
+### Beveiliging en betrouwbaarheid
+- **AppArmor-profiel**: de add-on zelf mag alleen nog `/data` schrijven; code, HA-config, back-ups en media zijn afgeschermd.
+- **Health-check** meldt een probleem als Home Assistant >5 min niet verbonden is of de scheduler vastzit; de Supervisor-watchdog herstart de add-on dan.
+- **Database**: WAL-modus, indexen en nachtelijke opschoning (gesprekken 30 dagen, meldingen 180 dagen, audit en acties 1 jaar).
+- **Back-ups**: vóór een HA-back-up wordt een consistente kopie van de database gemaakt; snapshots en het live-bestand gaan niet meer mee. Na terugzetten wordt die kopie automatisch gebruikt.
+- Beveiligingsheaders (CSP, nosniff), limiet op mislukte API-sleutelpogingen, maximale berichtlengte en een API-sleutelbestand dat alleen de add-on kan lezen.
+
+### Assist
+- **Ruimte van de spraaksatelliet** gaat mee: "doe het licht aan" in de keuken betekent de keuken.
+- **Streaming**: het antwoord komt woord voor woord binnen, zodat de satelliet eerder begint te praten.
+- Tip in de documentatie: laat HA simpele commando's zelf afhandelen ("Prefer handling commands locally").
+
+### Integratie
+- Echte entiteiten met unique_id: huisstatus, huismodus, laatste incident, open incidenten, wacht op bevestiging, AI-reactietijd, bezorgd, add-on-probleem en een schakelaar *Zelf handelen*. De oude losse statussensoren verdwijnen zodra de integratie actief is.
+- Event `ai_ha_control_incident` bij een nieuw of verergerd incident, voor eigen automatiseringen.
+
+### Slimmer
+- Camera-analyse vraagt het model om JSON (categorie + beschrijving) in plaats van vrije tekst.
+- **AI-prestaties** in het tabblad Agent: duur, tokens, wachttijd en modelwissels per model.
+- **Agenda**: afspraken in de ochtendsamenvatting en via de chat; een lopende afspraak met "vakantie" of "gasten" zet de huismodus.
+- **Energie**: stroomprijs, goedkoopste tijdvak en zonneverwachting in de samenvatting en via de chat (alleen informatie).
+- Ochtendsamenvatting en routinemelding in het Engels als de taal op `en` staat.
+
+### Onderhoud
+- aiohttp 3.13.5, basisimage Alpine 3.22, Dependabot, en een workflow die kant-en-klare images naar ghcr publiceert.
+- CI: browsertest van de web-UI, test tegen een echte Home Assistant, en de add-on draaiend onder zijn AppArmor-profiel.
+
+## 0.6.0 — Nauwkeuriger, veiliger en comfort
+
+### Beveiliging
+- **Deuren en alarm nooit zelf**, ook niet als een deur- of poortopener als schakelaar, knop, scène of script in HA staat. Gevoelig is alles op hetzelfde apparaat als een slot, alarmpaneel of garage/poort, plus namen met deur, poort, garage, slot, alarm, gate, door… Sloten en alarm kunnen in de instellingen niet meer op *Zelf doen*.
+- **Scènes en scripts** start de agent alleen zelf als je ze vrijgeeft (`autonomous_scenes`).
+- **Niet via spraak bevestigen**: "ja" tegen een spraakassistent bevestigt geen sloten, alarm of poorten meer; dat kan alleen op je telefoon of in de web-UI.
+- **Directe inbraakmelding**: gaat een deur of raam open terwijl iedereen weg is of het alarm aan staat, dan komt er meteen een kritieke melding met snapshot van de dichtstbijzijnde camera, zonder op de AI te wachten. 's Nachts (slapen) een waarschuwing bij deuren; 👎 = normaal. Net thuisgekomen telt niet. Ook *alarm afgegaan* wordt direct kritiek gemeld.
+- **Noodgevallen**: bij lekkage de hoofdkraan dicht (`leak_valve`), bij rook/gas/CO alle lampen aan en ventilatie uit. Met ongedaan maken.
+- **API-sleutel** geeft alleen nog toegang tot het gesprek (Assist); instellingen, noodknop enz. alleen via het HA-paneel.
+- Bevestigingen blijven bewaard na een herstart van de add-on.
+- Camerabeschrijvingen gaan gemarkeerd («…») en ingekort naar de agent, zodat tekst in beeld geen opdracht kan worden.
+
+### Nauwkeuriger
+- **Wie deed het?** Elke wijziging in het situatierapport staat met wie het deed: bewoner, automatisering (met naam), de agent, de AI op verzoek of het apparaat zelf. Op basis van de context van Home Assistant, niet meer geraden.
+- **Niet vechten met de bewoner**: past iemand zelf een lamp, thermostaat of rolluik aan, dan blijft de agent er `override_minutes` (standaard 2 uur) vanaf. Draait iemand een actie van de agent terug, dan telt dat als 👎.
+- **Controle na een actie**: na ~45 s kijkt de agent of het apparaat echt reageerde, probeert het één keer opnieuw en meldt anders "reageert niet".
+- **Hartslag apart**: een trage AI houdt de regels, de patrouille en de basislijn niet meer op.
+- **Rijker situatierapport**: per ruimte temperatuur (met doel en trend), vocht en CO₂; zon en weer.
+- **Basislijn per soort dag**: werkdagen en weekend apart, en oude metingen tellen langzaam minder (seizoenen).
+- **Schaduwmodus** per domein: de agent legt vast wat hij zou doen zonder het te doen. Beoordeel met 👍/👎 in het tabblad *Agent* en zet het domein daarna op *Zelf doen*.
+- **Replay**: situatierapporten worden bewaard; met `scripts/replay.py` vergelijk je modellen op je eigen huis. 👍/👎 op een controle in het tabblad *Agent* telt daarbij als beoordeling.
+- **Dodemansknop**: `sensor.ai_huis_status` heeft nu `last_tick`, `last_agent_run` en `ollama`. Is de AI-server langer dan `llm_down_minutes` weg, dan krijg je één melding (en een als hij terug is).
+
+### Comfort
+- **Comfortprofielen** (nieuw tabblad *Comfort*, of in de chat: "'s nachts wil ik 17 graden in de slaapkamer"): per ruimte de temperatuur per huismodus, lampen bij schemer, ventilatie bij hoog CO₂/vocht en zonwering bij felle zon. Uitgevoerd door vaste regels, niet door de AI, en alleen bij een veranderde wens.
+- **Voorverwarmen** voor de verwachte thuiskomst: als iemand onderweg is (proximity-integratie) of op basis van de geleerde thuiskomsttijd per weekdag; bij kou eerder.
+- **Leren van correcties**: zet je de thermostaat vaak met de hand anders dan het profiel, dan stelt de add-on voor het profiel aan te passen.
+- **Meldingen per persoon** (`person_notify`): de deurbel en comfortmeldingen gaan naar wie thuis is, alarmen naar iedereen. Optioneel een **avondoverzicht** (`digest_time`) voor niet-dringende meldingen.
+
+## 0.5.3 — Slimmere camerameldingen
+
+- Melding toont altijd het actuele camerabeeld (cachebuster op de snapshot-URL).
+- Meldingstekst is één korte zin over wie/wat er gebeurt, zonder beschrijving van straat of huizen.
+- Geen dubbele detecties meer voor de streams van één camera (Duidelijk/Vloeiend); titel zonder streamnaam.
+- Categorie wordt ook herkend als het model een regelovergang na het eerste woord zet; voorbijgangers worden daardoor weer alleen gelogd en niet gepusht.
+- Geparkeerde of stilstaande auto's tellen als "niets".
+- Iemand bij de voordeur wordt pas gemeld als die na 45 seconden nog staat zonder aan te bellen ("blijft rondhangen").
+- Persoon bij een privé-camera (achtertuin) terwijl het alarm aan staat: kritieke melding, ook in stille uren. Iets verdachts met alarm aan is ook kritiek.
+- Nieuwe instelling **Camera's → Wat wil je per camera horen?**: per camera Automatisch, Voordeur, Privé, Straat (alleen verdacht) of Negeren. Automatisch kiest Privé bij namen als achtertuin/tuin/schuur.
+
+## 0.5.2 — Camera-analyse zonder GPU-geheugenfouten
+
+- Camerabeelden worden verkleind (max. 1280 px) voordat ze naar het beeldmodel gaan, en het beeldmodel draait met een kleine context (4096). Dat scheelt veel VRAM.
+- Bij "request exceeds the available context size" wordt het opnieuw geprobeerd met een kleiner beeld.
+- Bij "CUDA error: out of memory" ontlaadt de add-on de andere geladen modellen (meestal het chatmodel) en probeert het één keer opnieuw met een kleiner beeld.
+- De snapshot wordt in de chat getoond, ook als de analyse mislukt, met een duidelijke foutmelding.
+
+## 0.5.1
+
+- **Aanwezigheid**: alleen de status `home` telt als thuis. Iemand in een andere zone (bijv. "Werk Vincent") wordt gemeld als weg, met de naam van de zone erbij.
+
 ## 0.5.0 — Autonome agent
 
 ### Autonoom het huis bewaken

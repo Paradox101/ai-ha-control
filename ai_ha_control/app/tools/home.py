@@ -12,6 +12,7 @@ from .actions import perform
 from .agent_tools import AGENT_TOOLS, HOUSE_RULE_TOOLS
 from .automations import TOOLS as AUTOMATION_TOOLS
 from .base import Tool, ToolContext, ToolRegistry, as_list
+from .context import CONTEXT_TOOLS
 
 # --- Reading -----------------------------------------------------------------
 
@@ -272,11 +273,20 @@ async def analyze_camera(
             f"Wees feitelijk en beknopt. {language}"
         )
         try:
-            description = await ctx.llm.describe_image(await ctx.ha.camera_snapshot(cam.entity_id), prompt)
+            snapshot = await ctx.ha.camera_snapshot(cam.entity_id)
         except Exception as err:  # noqa: BLE001
-            results.append({"camera": cam.name, "error": str(err)[:200]})
+            results.append({"camera": cam.name, "error": f"geen beeld: {str(err)[:200]}"})
             continue
-        images.append(cam.entity_id)
+        images.append(cam.entity_id)  # the snapshot is worth showing even if the analysis fails
+        try:
+            description = await ctx.llm.describe_image(snapshot, prompt)
+        except Exception as err:  # noqa: BLE001
+            text = str(err).lower()
+            reason = ("te weinig GPU-geheugen voor het beeldmodel" if "out of memory" in text
+                      else "beeld te groot voor het beeldmodel" if "context size" in text
+                      else str(err)[:200])
+            results.append({"camera": cam.name, "error": f"beeldanalyse mislukt: {reason}"})
+            continue
         results.append({"camera": cam.name, "description": description})
         ctx.db.audit("analyze_camera", {"entity_id": cam.entity_id, "question": question}, "executed",
                      description[:500], ctx.conversation_id)
@@ -428,7 +438,9 @@ AUTONOMOUS_AUTOMATION_TOOLS = {"list_automations", "get_automation", "related_au
 
 
 def build_registry() -> ToolRegistry:
-    return ToolRegistry(TOOLS + AUTOMATION_TOOLS + HOUSE_RULE_TOOLS)
+    from ..comfort import comfort_tools  # comfort imports the agent package, which imports tools
+
+    return ToolRegistry(TOOLS + AUTOMATION_TOOLS + HOUSE_RULE_TOOLS + comfort_tools() + CONTEXT_TOOLS)
 
 
 def build_autonomous_registry() -> ToolRegistry:

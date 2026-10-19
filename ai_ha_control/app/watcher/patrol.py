@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from ..llm.ollama import PRIORITY_PATROL
 from .baseline import MODE_AWAY, MODE_SLEEP, MODE_VACATION
+from .rules import quote
 from .vision import QUIET_CATEGORIES, SUSPICIOUS, classify
 
 if TYPE_CHECKING:
@@ -43,7 +44,7 @@ class Patrol:
         self._incidents = incidents
         self._snapshots = snapshots
         self._previous: dict[str, list[int]] = {}
-        self._last_run = 0.0
+        self._last_run = -1e9
         self.on_observation = None  # callback(text) to inform the autonomous agent
 
     def active(self, mode: str) -> bool:
@@ -63,6 +64,9 @@ class Patrol:
         self._last_run = time.monotonic()
         seen = 0
         for cam in self._ctx.index.cameras():
+            profile = self._ctx.index.camera_profile(cam, self._ctx.config.camera_profiles)
+            if profile == "off":
+                continue
             try:
                 image = await self._ctx.ha.camera_snapshot(cam.entity_id)
                 sig = signature(image)
@@ -80,16 +84,16 @@ class Patrol:
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Patrol analysis of %s failed: %s", cam.entity_id, err)
                 continue
-            if category in QUIET_CATEGORIES:
+            if category in QUIET_CATEGORIES or (profile == "street" and category != SUSPICIOUS):
                 continue
             seen += 1
             snapshot = self._snapshots.save(cam.entity_id, image)
-            text = f"{cam.name}: {description}"
+            text = f"{self._ctx.index.camera_label(cam)}: {description}"
             await self._incidents.report(
                 "presence", "Activiteit gezien tijdens patrouille", text,
                 severity="warning" if category == SUSPICIOUS else "info",
                 entity_id=cam.entity_id, snapshot=snapshot, image_entity=cam.entity_id,
             )
             if self.on_observation:
-                self.on_observation(f"Patrouille: {text}")
+                self.on_observation(f"Patrouille: {cam.name}: {quote(description)}")
         return seen

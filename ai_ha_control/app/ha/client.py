@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -35,6 +36,7 @@ class HAClient:
         self._runner: asyncio.Task | None = None
         self._callback_tasks: set[asyncio.Task] = set()
         self.ha_version: str | None = None
+        self.disconnected_since: float | None = time.monotonic()  # None while connected
 
     @property
     def connected(self) -> bool:
@@ -73,6 +75,8 @@ class HAClient:
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Home Assistant connection lost: %s", err)
             self._connected.clear()
+            if self.disconnected_since is None:
+                self.disconnected_since = time.monotonic()
             for fut in self._pending.values():
                 if not fut.done():
                     fut.set_exception(HAError("connection lost"))
@@ -101,6 +105,7 @@ class HAClient:
                 for event_type in {"state_changed", *self._event_callbacks}:
                     await self._send_command({"type": "subscribe_events", "event_type": event_type})
                 self._connected.set()
+                self.disconnected_since = None
                 for callback in self._connect_callbacks:
                     await callback()
                 await reader
@@ -120,9 +125,12 @@ class HAClient:
         if msg.get("type") == "event":
             event = msg.get("event", {})
             event_type = event.get("event_type")
+            data = event.get("data", {})
+            if event.get("context") and isinstance(data, dict) and "context" not in data:
+                data = {**data, "context": event["context"]}  # who caused it (see ha/context.py)
             for callback in self._event_callbacks.get(event_type, []):
                 try:
-                    result = callback(event.get("data", {}))
+                    result = callback(data)
                 except Exception:  # noqa: BLE001
                     _LOGGER.exception("%s callback failed", event_type)
                     continue
@@ -274,6 +282,17 @@ class HAClient:
     async def set_state(self, entity_id: str, state: str, attributes: dict[str, Any]) -> Any:
         """Create/update a state-only entity (not stored by HA across restarts; republished on connect)."""
         return await self._rest("POST", f"states/{entity_id}", json={"state": state, "attributes": attributes})
+
+    async def calendar_events(self, entity_id: str, start: str, end: str) -> list[dict[str, Any]]:
+        from urllib.parse import urlencode
+
+        return await self._rest("GET", f"calendars/{entity_id}?{urlencode({'start': start, 'end': end})}")
+
+    async def delete_state(self, entity_id: str) -> Any:
+        return await self._rest("DELETE", f"states/{entity_id}")
+
+    async def fire_event(self, event_type: str, data: dict[str, Any]) -> Any:
+        return await self.command({"type": "fire_event", "event_type": event_type, "event_data": data})
 
     async def create_input_boolean(self, name: str, icon: str = "mdi:robot") -> Any:
         return await self.command({"type": "input_boolean/create", "name": name, "icon": icon})

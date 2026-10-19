@@ -80,3 +80,15 @@ def test_readable_states(index):
     assert index.get("alarm_control_panel.huis").readable_state == "ingeschakeld (afwezig)"
     assert index.get("lock.voordeur").readable_state == "op slot"
     assert index.get("sensor.woonkamer_temperatuur").readable_state == "21.4 °C"
+
+
+def test_person_only_home_zone_is_home(index):
+    index.update_state({"entity_id": "person.nikky", "state": "Werk Nikky", "attributes": {"friendly_name": "Nikky"}})
+    index.update_state({"entity_id": "person.vincent", "state": "not_home", "attributes": {"friendly_name": "Vincent"}})
+    assert index.get("person.nikky").readable_state == "weg (in zone Werk Nikky)"
+    assert index.get("person.vincent").readable_state == "weg"
+    assert index.anyone_home() is False
+    assert "person.nikky (Nikky) = weg (in zone Werk Nikky)" in index.overview()["people"]
+    index.update_state({"entity_id": "person.vincent", "state": "home", "attributes": {"friendly_name": "Vincent"}})
+    assert index.get("person.vincent").readable_state == "thuis"
+    assert index.anyone_home() is True

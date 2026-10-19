@@ -11,7 +11,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..ha.index import OPENING_CLASSES, normalize
-from ..llm.ollama import PRIORITY_CHAT
+from ..llm.ollama import PRIORITY_CHAT, DeltaCallback
 from ..watcher.baseline import house_mode
 from ..tools.actions import resolve_confirmation
 from ..tools.base import ToolContext, ToolRegistry
@@ -115,6 +115,7 @@ async def run_tool_loop(
     model: str | None = None,
     priority: int = PRIORITY_CHAT,
     check_first: bool = False,
+    on_delta: DeltaCallback | None = None,
 ) -> AgentResult:
     """Let the LLM call tools until it answers (or the tool budget is used up).
 
@@ -127,7 +128,11 @@ async def run_tool_loop(
     nudged = False
     while True:
         budget_left = calls_made < ctx.config.max_tool_calls
-        message = await ctx.llm.chat(messages, tools=tools if budget_left else None, model=model, priority=priority)
+        # An answer that may still be sent back for checking (check_first) must not be streamed yet.
+        may_stream = on_delta is not None and not ctx.config.think and not (
+            check_first and calls_made == 0 and not nudged and budget_left)
+        message = await ctx.llm.chat(messages, tools=tools if budget_left else None, model=model, priority=priority,
+                                     on_delta=on_delta if may_stream else None)
         tool_calls = message.get("tool_calls") or (
             _text_tool_call(message.get("content") or "", registry.names) if budget_left else None
         )
@@ -180,6 +185,8 @@ class Agent:
               if e.domain == "alarm_control_panel"],
             *[f"- Klimaat: {c}" for c in o["climate"][:4]],
             *[f"- Weer: {w}" for w in o["weather"]],
+            *[f"- Agenda nu: {e.attributes.get('message')} ({e.name})" for e in index.entities.values()
+              if e.domain == "calendar" and e.state == "on" and e.attributes.get("message")][:3],
             *[f"- ALARM: {a}" for a in o["safety_alerts"]],
         ]
         incidents = self._ctx.db.incidents(status="active")
@@ -197,7 +204,7 @@ class Agent:
         return (f"- Deuren/ramen ({len(sensors)} sensoren): "
                 + (f"OPEN: {', '.join(opened)}" if opened else "alles dicht"))
 
-    def system_prompt(self, source: str = "web") -> str:
+    def system_prompt(self, source: str = "web", area: str | None = None) -> str:
         tz = ZoneInfo(self._ctx.timezone) if self._ctx.timezone else None
         now = datetime.now(tz)
         nl = self._ctx.config.language == "nl"
@@ -212,6 +219,11 @@ class Agent:
         if source == "assist":
             voice = ("\n- Je antwoord wordt mogelijk uitgesproken: gebruik geen opmaak, lijstjes of emoji."
                      if nl else "\n- Your answer may be spoken: no markdown, lists or emoji.")
+        if area:
+            voice += (f"\n- De gebruiker spreekt via een apparaat in de ruimte '{area}'. Noemt de gebruiker geen "
+                      f"ruimte ('doe het licht aan'), dan bedoelt hij '{area}'." if nl else
+                      f"\n- The user speaks through a device in the area '{area}'. If no area is mentioned "
+                      f"('turn on the light'), they mean '{area}'.")
         return template.format(
             location=location,
             voice=voice,
@@ -233,8 +245,9 @@ class Agent:
         approve = word in YES_WORDS
         nl = ctx.config.language == "nl"
         answers = []
+        via = "voice" if ctx.source == "assist" else "ui"
         for action in pending:
-            result = await resolve_confirmation(ctx, action.id, approve)
+            result = await resolve_confirmation(ctx, action.id, approve, via=via)
             status = result.get("status")
             if status == "ok":
                 answers.append(("Gedaan: " if nl else "Done: ") + action.description)
@@ -243,13 +256,26 @@ class Agent:
                                + action.description)
             elif status == "rejected":
                 answers.append(("Geannuleerd: " if nl else "Cancelled: ") + action.description)
+            elif via == "voice" and action.sensitive:
+                answers.append(f"Niet uitgevoerd: {action.description}. Deuren en het alarm bevestig ik niet via "
+                               "spraak; bevestig het op je telefoon of in de web-UI." if nl else
+                               f"Not done: {action.description}. Doors and the alarm cannot be confirmed by voice; "
+                               "confirm on your phone or in the web UI.")
             else:
                 answers.append(("Mislukt: " if nl else "Failed: ") + str(result.get("error")))
         result = AgentResult(answer="\n".join(answers))
         result.actions.append({"tool": "confirmation", "arguments": {"approve": approve}, "result": result.answer})
         return result
 
-    async def run(self, user_text: str, conversation_id: str, source: str = "web") -> AgentResult:
+    def known_area(self, area: str | None) -> str | None:
+        """The area name as Home Assistant knows it, or None for unknown/empty names."""
+        if not area:
+            return None
+        wanted = normalize(area)
+        return next((name for name in self._ctx.index.areas.values() if normalize(name) == wanted), None)
+
+    async def run(self, user_text: str, conversation_id: str, source: str = "web", area: str | None = None,
+                  on_delta: DeltaCallback | None = None) -> AgentResult:
         ctx = replace(self._ctx, conversation_id=conversation_id, source=source)
         db = ctx.db
         shortcut = await self._answer_confirmation(ctx, user_text)
@@ -258,12 +284,14 @@ class Agent:
             db.add_message(conversation_id, "assistant", shortcut.answer)
             return shortcut
 
-        messages: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt(source)}]
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self.system_prompt(source, self.known_area(area))}]
         messages += db.recent_messages(conversation_id, HISTORY_MESSAGES)
         messages.append({"role": "user", "content": user_text})
         db.add_message(conversation_id, "user", user_text)
 
-        result = await run_tool_loop(ctx, self._registry, messages, check_first=needs_check(user_text))
+        result = await run_tool_loop(ctx, self._registry, messages, check_first=needs_check(user_text),
+                                     on_delta=on_delta)
         result.answer = result.answer or (
             "Ik heb geen antwoord kunnen formuleren." if ctx.config.language == "nl" else "No answer."
         )

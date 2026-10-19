@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from ..ha.index import DETECTION_CLASSES, OPENING_CLASSES, EntityInfo
+from ..ha.index import DETECTION_CLASSES, OPENING_CLASSES, EntityInfo, normalize
 from ..notify import in_quiet_hours
 
 if TYPE_CHECKING:
@@ -50,6 +50,11 @@ OFFLINE_MINUTES = 60
 OFFLINE_DOMAINS = {"sensor", "binary_sensor", "lock", "camera", "climate", "alarm_control_panel"}
 
 
+def day_bucket(now: datetime) -> int:
+    """Baseline bucket per kind of day: 100-123 working days, 124-147 weekend (0-23 = all days)."""
+    return (124 if now.weekday() >= 5 else 100) + now.hour
+
+
 def minutes_since(iso: str | None) -> float:
     if not iso:
         return 0.0
@@ -81,6 +86,18 @@ def scene_mode(index: EntityIndex) -> tuple[str, datetime] | None:
     return latest
 
 
+def calendar_mode(index: EntityIndex) -> str | None:
+    """Vacation or guests from a calendar event that is going on right now (its title)."""
+    for ent in index.entities.values():
+        if ent.domain != "calendar" or ent.state != "on":
+            continue
+        words = set(normalize(str(ent.attributes.get("message") or "")).split())
+        for mode in (MODE_VACATION, MODE_GUEST):
+            if words & set(MODE_SCENE_WORDS[mode]):
+                return mode
+    return None
+
+
 def house_mode(index: EntityIndex, config: Config, now: datetime) -> str:
     from_scene = scene_mode(index)
     if from_scene:
@@ -88,12 +105,17 @@ def house_mode(index: EntityIndex, config: Config, now: datetime) -> str:
         if mode == MODE_AWAY and (time.time() - activated.timestamp()) / 3600 >= VACATION_HOURS:
             return MODE_VACATION
         return mode
+    from_calendar = calendar_mode(index) if config.calendar_context else None
     people = [e for e in index.entities.values() if e.domain == "person"]
     if people and all(p.state != "home" for p in people):
         away_hours = min(minutes_since(p.last_changed) for p in people) / 60
+        if from_calendar == MODE_VACATION:
+            return MODE_VACATION
         return MODE_VACATION if away_hours >= VACATION_HOURS else MODE_AWAY
     if in_quiet_hours(config.sleep_hours, now):
         return MODE_SLEEP
+    if from_calendar == MODE_GUEST:
+        return MODE_GUEST
     return MODE_HOME
 
 
@@ -135,6 +157,10 @@ class Baseline:
                 continue
             self._last_sample[ent.entity_id] = mono
             n, mean, variance = self._db.baseline_update(ent.entity_id, now.hour, value)
+            # Weekends differ from working days: judge against the same kind of day once that is learned.
+            day_n, day_mean, day_variance = self._db.baseline_update(ent.entity_id, day_bucket(now), value)
+            if day_n >= MIN_SAMPLES:
+                n, mean, variance = day_n, day_mean, day_variance
             if n < MIN_SAMPLES:
                 continue
             deviation = value - mean
@@ -146,7 +172,8 @@ class Baseline:
                     key=f"anomaly:{ent.entity_id}:{direction}",
                     entity_id=ent.entity_id,
                     text=f"{ent.name} is ongewoon {direction}: {value:g}{unit} "
-                         f"(normaal rond {mean:.1f}{unit} om {now.hour}:00)",
+                         f"(normaal rond {mean:.1f}{unit} om {now.hour}:00"
+                         f"{' in het weekend' if day_n >= MIN_SAMPLES and now.weekday() >= 5 else ''})",
                 ))
                 if anomaly:
                     anomalies.append(anomaly)

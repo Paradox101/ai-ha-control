@@ -44,5 +44,45 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Huisstatus",
+        "state": {
+          "rustig": "Rustig",
+          "aandacht": "Aandacht",
+          "alarm": "Alarm"
+        }
+      },
+      "mode": {
+        "name": "Huismodus"
+      },
+      "last_incident": {
+        "name": "Laatste incident"
+      },
+      "open_incidents": {
+        "name": "Open incidenten"
+      },
+      "pending_confirmations": {
+        "name": "Wacht op bevestiging"
+      },
+      "llm_avg_seconds": {
+        "name": "AI-reactietijd"
+      }
+    },
+    "binary_sensor": {
+      "concern": {
+        "name": "Bezorgd"
+      },
+      "addon_problem": {
+        "name": "Add-on probleem"
+      }
+    },
+    "switch": {
+      "autonomous": {
+        "name": "Zelf handelen"
+      }
+    }
   }
 }
