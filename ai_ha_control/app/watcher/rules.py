@@ -25,6 +25,9 @@ SAFETY_LABELS = {
     "heat": "hitte",
 }
 NOTHING_MARKER = "NIETS"
+# After (re)connecting, Home Assistant may still be starting: entities, areas and states settle over
+# a minute or two and sensors flip on. Ignore detections and periodic rules during that time.
+STARTUP_GRACE_SECONDS = 120
 
 
 def minutes_since(iso: str | None) -> float:
@@ -67,6 +70,7 @@ class Watcher:
         self._cooldowns: dict[str, float] = {}
         self._done: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
+        self._grace_until = 0.0
 
     @property
     def config(self):
@@ -74,6 +78,19 @@ class Watcher:
 
     def set_timezone(self, tz: str | None) -> None:
         self._ctx = replace(self._ctx, timezone=tz)
+
+    def start_grace(self, seconds: float = STARTUP_GRACE_SECONDS) -> None:
+        self._grace_until = max(self._grace_until, time.monotonic() + seconds)
+
+    async def on_connected(self) -> None:
+        self.start_grace()
+
+    def on_ha_started(self, _data: dict[str, Any]) -> None:
+        self.start_grace()
+
+    @property
+    def in_grace(self) -> bool:
+        return time.monotonic() < self._grace_until
 
     def _allowed(self, key: str, seconds: float) -> bool:
         now = time.monotonic()
@@ -115,7 +132,7 @@ class Watcher:
             return
         if ent.device_class in SAFETY_CLASSES:
             await self._safety_alert(ent)
-        elif self._ctx.index.is_detection_sensor(ent):
+        elif self._ctx.index.is_detection_sensor(ent) and not self.in_grace:
             self._spawn(self._detection(ent))
 
     async def _safety_alert(self, ent: EntityInfo) -> None:
@@ -142,8 +159,9 @@ class Watcher:
         if mode == "away" and not doorbell and home is not False:
             return
         camera = index.camera_for(ent)
-        key = camera.entity_id if camera else ent.entity_id
-        if not self._allowed(f"detect:{key}", 60 if doorbell else 300):
+        # One notification per device: person, vehicle and motion sensors of one camera fire together.
+        key = ent.device_id or (camera.entity_id if camera else ent.entity_id)
+        if not self._allowed(f"{'ring' if doorbell else 'detect'}:{key}", 60 if doorbell else 300):
             return
         where = ent.area or (camera.name if camera else ent.name)
 
@@ -156,7 +174,7 @@ class Watcher:
             )
             return
 
-        description = ""
+        description, failure = "", ""
         try:
             image = await self._ctx.ha.camera_snapshot(camera.entity_id)
             description = await self._ctx.llm.describe_image(
@@ -168,12 +186,13 @@ class Watcher:
             )
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Camera analysis for %s failed: %s", camera.entity_id, err)
+            failure = f" (geen beeldanalyse: {str(err)[:120] or type(err).__name__})"
 
         if description.upper().startswith(NOTHING_MARKER) and not doorbell:
             self._ctx.db.add_event("camera", f"Detectie bij {where}", description, camera.entity_id, False)
             return
         title = "🔔 Er wordt aangebeld" if doorbell else f"📷 Detectie bij {where}"
-        message = description.removeprefix(NOTHING_MARKER).strip(" :.") or f"{ent.name} ging af."
+        message = description.removeprefix(NOTHING_MARKER).strip(" :.") or f"{ent.name} ging af.{failure}"
         await self._notifier.send(title, message, kind="camera", entity_id=camera.entity_id,
                                   image_entity=camera.entity_id,
                                   announce=f"Er wordt aangebeld. {message}" if doorbell else None,
@@ -198,7 +217,7 @@ class Watcher:
     # --- Periodic rules --------------------------------------------------------------
 
     async def tick(self) -> None:
-        if not self.config.proactive:
+        if not self.config.proactive or self.in_grace:
             return
         await self._window_and_heating()
         await self._unsecured_while_away()

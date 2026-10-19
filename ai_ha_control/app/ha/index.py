@@ -47,9 +47,11 @@ USEFUL_ATTRIBUTES: dict[str, tuple[str, ...]] = {
 SAFETY_CLASSES = {"smoke", "gas", "carbon_monoxide", "moisture", "safety", "heat"}
 OPENING_CLASSES = {"door", "window", "opening", "garage_door"}
 DETECTION_CLASSES = {"motion", "occupancy", "presence"}
-DETECTION_WORDS = ("person", "persoon", "people", "vehicle", "voertuig", "car", "visitor", "bezoeker", "doorbell",
-                   "deurbel", "pet", "dier", "animal", "dog", "cat", "package", "pakket", "face")
-DOORBELL_WORDS = ("visitor", "bezoeker", "doorbell", "deurbel")
+DETECTION_WORDS = ("person", "persoon", "people", "vehicle", "voertuig", "car", "visitor", "bezoeker",
+                   "pet", "dier", "animal", "dog", "cat", "package", "pakket", "face")
+# Only the "someone pressed the button" sensor. "deurbel"/"doorbell" is usually the device name, which the
+# person/vehicle/motion sensors of the same doorbell also carry.
+DOORBELL_WORDS = ("visitor", "bezoeker")
 
 SKIP_DOMAINS = {"update", "persistent_notification", "conversation", "tts", "stt", "wake_word", "event"}
 

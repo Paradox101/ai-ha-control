@@ -105,6 +105,8 @@ class App:
         self.watcher = Watcher(self.ctx, self.notifier)
         self.scheduler = Scheduler(self.ctx, self.notifier, self.watcher)
         self.ha.on_connect(self.refresh_index)
+        self.ha.on_connect(self.watcher.on_connected)
+        self.ha.on_event("homeassistant_started", self.watcher.on_ha_started)
         # Order matters: the index must be updated before the watcher looks at it.
         self.ha.on_state_changed(self.index.handle_state_changed)
         self.ha.on_state_changed(self.watcher.handle_state_changed)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+- Opgelost: persoon/voertuig-detectie van een deurbel (bijv. "Deurbel Poort Persoon") werd gemeld als "Er wordt aangebeld". Alleen de bezoeker-sensor (belknop) telt nu als aanbellen.
+- Opgelost: dubbele meldingen bij het opstarten. De eerste 2 minuten na verbinden (en na een HA-herstart) worden detecties en periodieke regels genegeerd; veiligheidsalarmen komen altijd door.
+- Eén melding per apparaat: persoon-, voertuig- en bewegingssensoren van dezelfde camera geven samen één melding.
+- Als de beeldanalyse mislukt (bijv. vision-model niet geïnstalleerd), staat de reden in de melding.
+
 ## 0.3.1
 - Opgelost: "authentication failed: Invalid access" bij het verbinden met Home Assistant. s6-overlay startte de add-on zonder omgevingsvariabelen, waardoor `SUPERVISOR_TOKEN` ontbrak. `run.sh` gebruikt nu `with-contenv`, en het token wordt als vangnet ook uit de s6-omgeving gelezen.
 
