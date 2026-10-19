@@ -22,6 +22,7 @@ from .comfort import ComfortController, profile_suggestions, save_profile
 from .agent.loop import Agent
 from .autonomy import Autonomy, undo_action
 from .config import Config, container_env, supervisor_token
+from .export import entities_xlsx, export_filename
 from .ha.client import HAClient
 from .ha.context import ContextTracker
 from .ha.index import EntityIndex
@@ -240,7 +241,8 @@ class App:
     # --- HTTP handlers ---------------------------------------------------------
 
     async def index_page(self, _request: web.Request) -> web.FileResponse:
-        return web.FileResponse(STATIC_DIR / "index.html")
+        # Always revalidate: a cached page from an older version misses builders for new settings fields.
+        return web.FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
     async def status(self, _request: web.Request) -> web.Response:
         assert self.ha and self.llm
@@ -432,6 +434,7 @@ class App:
             self.db.delete_profile(int(request.match_info["profile_id"]))
         return web.json_response({"profiles": self.db.profiles(), "suggestions": profile_suggestions(self.db),
                                   "areas": sorted(self.index.areas.values()),
+                                  "heating": {str(k): v for k, v in self.comfort.heating.items()},
                                   "enabled": self.config.comfort})
 
     async def agent_run(self, _request: web.Request) -> web.Response:
@@ -596,6 +599,11 @@ class App:
             return web.json_response([{"id": e.entity_id, "name": e.name, "area": e.area or ""} for e in results])
         return web.json_response([e.compact(with_attributes=True) for e in results])
 
+    async def export_entities(self, request: web.Request) -> web.Response:
+        return web.Response(body=entities_xlsx(self.index), headers={
+            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "Content-Disposition": f'attachment; filename="{export_filename()}"'})
+
 
 def access_middleware(api_key: str, supervised: bool):
     """Ingress requests are trusted; everything else (the Assist integration) needs the API key."""
@@ -671,6 +679,7 @@ def create_app(config: Config) -> web.Application:
             web.post(r"/api/suggestions/{suggestion_id:\d+}/{decision:accept|dismiss}", state.suggestion_decision),
             web.post(r"/api/jobs/{job:summary|routines}", state.run_job),
             web.get("/api/entities", state.entities),
+            web.get("/api/export/entities.xlsx", state.export_entities),
             web.get("/api/integration", state.integration),
             web.get("/api/integration/state", state.integration_state),
             web.get("/api/llm/performance", state.llm_performance),

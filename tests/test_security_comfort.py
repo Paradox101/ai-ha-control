@@ -369,6 +369,110 @@ async def test_preheat_when_someone_is_on_the_way(ctx, notifier):
     assert ctx.db.recent_actions()[0]["reason"].startswith("comfortprofiel Woonkamer: voorverwarmen")
 
 
+def cv_profile(ctx, **backup):
+    ctx.index.update_state({"entity_id": "climate.cv", "state": "heat",
+                            "attributes": {"friendly_name": "Cv", "temperature": 15, "hvac_modes": ["off", "heat"]}})
+    return save_profile(ctx.db, {"area": "Woonkamer", "climate_entity": "climate.thermostaat",
+                                 "targets": {"thuis": 21}, "backup_entity": "climate.cv", "backup": backup})
+
+
+def cv_setpoints(ctx):
+    return [c[2]["temperature"] for c in ctx.ha.calls
+            if c[:2] == ("climate", "set_temperature") and c[3]["entity_id"] == ["climate.cv"]]
+
+
+async def test_cv_backup_when_airco_is_too_slow(ctx, notifier):
+    await act_everything(ctx)
+    cv_profile(ctx, after_minutes=60)
+    set_state(ctx.index, "sensor.woonkamer_temperatuur", "19.5")
+    comfort = ComfortController(ctx)
+    start = datetime(2026, 12, 1, 8, 0)
+    await comfort.tick("thuis", start)
+    assert cv_setpoints(ctx) == [] and comfort.heating[1]["source"] == "airco"  # cv already on stand-by
+    await comfort.tick("thuis", start + timedelta(minutes=61))
+    assert cv_setpoints(ctx) == [21.0] and comfort.heating[1]["source"] == "cv"
+    assert "haalt 21 °C niet" in ctx.db.recent_actions()[0]["reason"]
+    set_state(ctx.index, "climate.cv", "heat", temperature=21)
+    # Room warm again, but the minimum run time keeps the boiler on a little longer
+    set_state(ctx.index, "sensor.woonkamer_temperatuur", "21.0")
+    await comfort.tick("thuis", start + timedelta(minutes=70))
+    assert cv_setpoints(ctx) == [21.0]
+    await comfort.tick("thuis", start + timedelta(minutes=95))
+    assert cv_setpoints(ctx) == [21.0, 15.0] and comfort.heating[1]["source"] == "airco"
+
+
+async def test_cv_backup_when_cold_outside_or_airco_fails(ctx, notifier):
+    await act_everything(ctx)
+    cv_profile(ctx, below=-3, standby=16)
+    comfort = ComfortController(ctx)
+    now = datetime(2026, 12, 1, 8, 0)
+    await comfort.tick("thuis", now)
+    assert cv_setpoints(ctx) == [16.0]
+    set_state(ctx.index, "climate.cv", "heat", temperature=16)
+    set_state(ctx.index, "weather.thuis", "snowy", temperature=-5)
+    await comfort.tick("thuis", now + timedelta(minutes=1))
+    assert cv_setpoints(ctx)[-1] == 21.0 and "buiten -5" in comfort.heating[1]["reason"]
+    comfort2 = ComfortController(ctx)
+    set_state(ctx.index, "weather.thuis", "cloudy", temperature=8)
+    set_state(ctx.index, "climate.thermostaat", "unavailable")
+    set_state(ctx.index, "climate.cv", "heat", temperature=16)
+    await comfort2.tick("thuis", now)
+    assert cv_setpoints(ctx)[-1] == 21.0 and comfort2.heating[1]["reason"] == "airco onbereikbaar"
+
+
+async def test_cv_never_heats_against_a_cooling_airco(ctx, notifier):
+    await act_everything(ctx)
+    cv_profile(ctx, below=30 - 20)  # always "cold outside"
+    set_state(ctx.index, "climate.cv", "heat", temperature=21)
+    set_state(ctx.index, "climate.thermostaat", "heat_cool", hvac_action="cooling")
+    comfort = ComfortController(ctx)
+    await comfort.tick("thuis", datetime(2026, 12, 1, 8, 0))
+    assert cv_setpoints(ctx) == [15.0] and comfort.heating[1]["reason"] == "airco koelt"
+    # Airco switched off by the resident: the boiler is left alone too
+    set_state(ctx.index, "climate.thermostaat", "off", hvac_action="off")
+    set_state(ctx.index, "climate.cv", "heat", temperature=20)
+    await comfort.tick("thuis", datetime(2026, 12, 1, 8, 5))
+    assert cv_setpoints(ctx) == [15.0]
+
+
+async def test_long_defrost_brings_in_the_backup(ctx, notifier):
+    await act_everything(ctx)
+    cv_profile(ctx, after_minutes=0)
+    set_state(ctx.index, "climate.thermostaat", "heat", hvac_action="defrosting")
+    comfort = ComfortController(ctx)
+    now = datetime(2026, 12, 1, 8, 0)
+    await comfort.tick("thuis", now)
+    await comfort.tick("thuis", now + timedelta(minutes=10))
+    assert cv_setpoints(ctx) == []
+    await comfort.tick("thuis", now + timedelta(minutes=16))
+    assert cv_setpoints(ctx) == [21.0] and "ontdooit" in comfort.heating[1]["reason"]
+
+
+def test_backup_settings_are_validated(ctx):
+    assert save_profile(ctx.db, {"area": "Woonkamer", "climate_entity": "climate.a",
+                                 "backup_entity": "climate.a"})["status"] == "error"
+    assert save_profile(ctx.db, {"area": "Woonkamer", "backup": {"standby": 40}})["status"] == "error"
+    assert save_profile(ctx.db, {"area": "Woonkamer", "backup_entity": "climate.cv",
+                                 "backup": {"below": "-2", "after_minutes": "45", "standby": ""}})["status"] == "ok"
+    (profile,) = ctx.db.profiles()
+    assert profile["backup_entity"] == "climate.cv" and profile["backup"] == {"below": -2.0, "after_minutes": 45}
+
+
+def test_old_database_gets_the_backup_columns(tmp_path):
+    import sqlite3
+    conn = sqlite3.connect(tmp_path / "ai_ha_control.db")
+    conn.execute("CREATE TABLE comfort_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, area TEXT NOT NULL, "
+                 "climate_entity TEXT NOT NULL DEFAULT '', targets TEXT NOT NULL DEFAULT '{}', "
+                 "preheat_minutes INTEGER NOT NULL DEFAULT 0, lights TEXT NOT NULL DEFAULT '[]', "
+                 "ventilation_entity TEXT NOT NULL DEFAULT '', shade_covers TEXT NOT NULL DEFAULT '[]', "
+                 "enabled INTEGER NOT NULL DEFAULT 1)")
+    conn.execute("INSERT INTO comfort_profiles (area) VALUES ('Woonkamer')")
+    conn.commit()
+    conn.close()
+    (profile,) = Database(str(tmp_path)).profiles()
+    assert profile["backup_entity"] == "" and profile["backup"] == {}
+
+
 async def test_preheat_from_learned_arrivals(ctx):
     for _ in range(3):
         ctx.db.add_arrival(0, 18 * 60)

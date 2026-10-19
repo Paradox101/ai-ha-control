@@ -181,7 +181,9 @@ CREATE TABLE IF NOT EXISTS comfort_profiles (
     lights TEXT NOT NULL DEFAULT '[]',
     ventilation_entity TEXT NOT NULL DEFAULT '',
     shade_covers TEXT NOT NULL DEFAULT '[]',
-    enabled INTEGER NOT NULL DEFAULT 1
+    enabled INTEGER NOT NULL DEFAULT 1,
+    backup_entity TEXT NOT NULL DEFAULT '',
+    backup TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS agent_runs (
@@ -205,8 +207,9 @@ MIGRATIONS = {
     "events": {"ref": "TEXT", "feedback": "INTEGER", "incident_id": "INTEGER"},
     "actions": {"shadow": "INTEGER NOT NULL DEFAULT 0", "feedback": "INTEGER", "verified": "TEXT"},
     "agent_runs": {"report": "TEXT", "feedback": "INTEGER"},
+    "comfort_profiles": {"backup_entity": "TEXT NOT NULL DEFAULT ''", "backup": "TEXT NOT NULL DEFAULT '{}'"},
 }
-PROFILE_JSON = ("targets", "lights", "shade_covers")
+PROFILE_JSON = ("targets", "lights", "shade_covers", "backup")
 BASELINE_MEMORY = 200  # samples per bucket before older ones start to fade
 
 
@@ -374,6 +377,17 @@ class Database:
             "SELECT * FROM events WHERE ts >= ? ORDER BY id DESC LIMIT ?", (since or 0, limit)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def events_between(self, since: float, until: float, kind: str | None = None,
+                       entity_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        sql, params = "SELECT * FROM events WHERE ts >= ? AND ts < ?", [since, until]
+        if kind:
+            sql += " AND kind = ?"
+            params.append(kind)
+        if entity_ids is not None:
+            sql += f" AND entity_id IN ({','.join('?' * len(entity_ids))})"
+            params += entity_ids
+        return self._rows(sql + " ORDER BY ts", tuple(params))
 
     # --- Memories -------------------------------------------------------------
 
@@ -686,17 +700,20 @@ class Database:
         values = (profile["area"], profile.get("climate_entity") or "",
                   json.dumps(profile.get("targets") or {}), int(profile.get("preheat_minutes") or 0),
                   json.dumps(profile.get("lights") or []), profile.get("ventilation_entity") or "",
-                  json.dumps(profile.get("shade_covers") or []), int(profile.get("enabled", True)))
+                  json.dumps(profile.get("shade_covers") or []), int(profile.get("enabled", True)),
+                  profile.get("backup_entity") or "", json.dumps(profile.get("backup") or {}))
         if profile.get("id"):
             self._conn.execute(
                 "UPDATE comfort_profiles SET area = ?, climate_entity = ?, targets = ?, preheat_minutes = ?, "
-                "lights = ?, ventilation_entity = ?, shade_covers = ?, enabled = ? WHERE id = ?",
+                "lights = ?, ventilation_entity = ?, shade_covers = ?, enabled = ?, backup_entity = ?, backup = ? "
+                "WHERE id = ?",
                 (*values, int(profile["id"])))
             self._conn.commit()
             return int(profile["id"])
         return self._insert(
             "INSERT INTO comfort_profiles (area, climate_entity, targets, preheat_minutes, lights, "
-            "ventilation_entity, shade_covers, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", values)
+            "ventilation_entity, shade_covers, enabled, backup_entity, backup) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            values)
 
     def delete_profile(self, profile_id: int) -> bool:
         cur = self._conn.execute("DELETE FROM comfort_profiles WHERE id = ?", (profile_id,))

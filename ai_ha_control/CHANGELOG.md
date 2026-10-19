@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.7
+
+- Opslaan van instellingen gaf soms "builders[spec.type] is not a function": na een update draaide de browser nog een oude, gecachte pagina. De pagina wordt nu altijd opnieuw gecontroleerd en een onbekend veld toont een melding in plaats van het formulier te breken.
+
+## 0.6.6
+
+- Comfort: per ruimte een cv-thermostaat als backup naast de airco. De cv springt alleen bij onder een instelbare buitentemperatuur, als de airco de setpoint niet binnen een instelbare tijd haalt, of bij storing of lang ontdooien; nooit terwijl de airco koelt. Het Comfort-tabblad toont welke bron nu verwarmt.
+
+## 0.6.5 — "Hoe vaak / wanneer / hoe lang" klopt
+
+- Nieuwe tool **get_detections**: telt exact hoe vaak en wanneer er een persoon, voertuig, dier, pakketje, aanbelling of beweging was, per camera en over een periode (vandaag, gisteren, vannacht, een weekdag, deze week, een datum). Dubbele sensoren van de Duidelijk/Vloeiend-streams, flikkerende sensoren en een korte "onbeschikbaar" tellen als één keer.
+- **get_history** telt nu zelf: aantal keer aan/open/thuis, de tijdstippen en de totale duur. De toestand aan het begin van de periode telde voorheen als wijziging; daardoor werd "camera idle om 00:00" gelezen als "één keer een persoon gezien".
+- De camera-status (idle/recording) wordt niet meer gebruikt voor detectievragen; het model neemt aantallen en tijden letterlijk over.
+- **⬇ Excel**-knop in de web-UI: alle entiteiten die de add-on ziet, plus de camera-indeling van detectiesensoren.
+- 11 evaluatievragen (tests en `scripts/benchmark.py`) met een gesimuleerde dag geschiedenis.
+
 ## 0.6.3
 
 - Inbraakmelding en de melding "AI-server niet bereikbaar" werkten niet vlak na het opstarten van het systeem (de klok begon te dicht bij nul en telde als "net thuisgekomen").
