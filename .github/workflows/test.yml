@@ -22,7 +22,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install pytest-homeassistant-custom-component hassil home-assistant-intents
+      - run: pip install pytest-homeassistant-custom-component
+      - name: Install conversation requirements pinned by Home Assistant
+        run: |
+          python - <<'PY' > ha-reqs.txt
+          import json, pathlib, homeassistant
+          root = pathlib.Path(homeassistant.__file__).parent / "components"
+          for name in ("conversation", "intent"):
+              print("\n".join(json.loads((root / name / "manifest.json").read_text()).get("requirements", [])))
+          PY
+          pip install -r ha-reqs.txt
       - run: pytest -q -c tests_integration/pytest.ini tests_integration
 
   build:

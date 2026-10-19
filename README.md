@@ -48,7 +48,8 @@ tests_integration/        Integratietests met pytest-homeassistant-custom-compon
 python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/pytest                                   # add-on
 
-pip install pytest-homeassistant-custom-component hassil home-assistant-intents  # aparte venv, Python 3.13
+pip install pytest-homeassistant-custom-component  # aparte venv, Python 3.13
+# + de versies van hassil/home-assistant-intents uit HA's conversation-manifest (zie .github/workflows/test.yml)
 pytest -c tests_integration/pytest.ini tests_integration
 
 # Lokaal draaien tegen je eigen HA (long-lived access token):
