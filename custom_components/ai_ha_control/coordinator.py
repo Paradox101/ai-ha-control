@@ -8,10 +8,11 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator, UpdateFailed
 
-from .api import AIHAClient, AIHAError
+from .api import AIHAAuthError, AIHAClient, AIHAError
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,6 +27,8 @@ class AIHACoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         try:
             return await self.client.state()
+        except AIHAAuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err  # starts the reauth flow
         except AIHAError as err:
             raise UpdateFailed(str(err)) from err
 

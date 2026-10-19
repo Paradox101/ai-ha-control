@@ -31,7 +31,7 @@ REVERSIBLE_SERVICES = {
     "set_fan_mode", "set_cover_position", "open_cover", "close_cover", "volume_set", "media_pause", "media_play",
 }
 SNAPSHOT_ATTRIBUTES = ("brightness", "color_temp_kelvin", "temperature", "hvac_modes", "preset_mode",
-                       "percentage", "current_position", "volume_level")
+                       "fan_mode", "percentage", "current_position", "volume_level")
 
 
 def parse_levels(items: list[str]) -> dict[str, str]:
@@ -136,6 +136,10 @@ def restore_calls(entity_id: str, previous: dict[str, Any]) -> list[tuple[str, s
             calls.append(("climate", "set_hvac_mode", {"hvac_mode": state}))
         if attrs.get("temperature") is not None:
             calls.append(("climate", "set_temperature", {"temperature": attrs["temperature"]}))
+        if state != "off" and attrs.get("preset_mode") is not None:
+            calls.append(("climate", "set_preset_mode", {"preset_mode": attrs["preset_mode"]}))
+        if state != "off" and attrs.get("fan_mode") is not None:
+            calls.append(("climate", "set_fan_mode", {"fan_mode": attrs["fan_mode"]}))
         return calls
     if domain == "cover":
         if attrs.get("current_position") is not None:
@@ -151,8 +155,17 @@ def restore_calls(entity_id: str, previous: dict[str, Any]) -> list[tuple[str, s
             data["color_temp_kelvin"] = attrs["color_temp_kelvin"]
     if domain == "fan" and attrs.get("percentage") is not None:
         data["percentage"] = attrs["percentage"]
-    if domain == "media_player" and attrs.get("volume_level") is not None and state in ("playing", "paused", "on"):
-        return [("media_player", "volume_set", {"volume_level": attrs["volume_level"]})]
+    elif domain == "fan" and attrs.get("preset_mode") is not None:
+        data["preset_mode"] = attrs["preset_mode"]
+    if domain == "media_player" and state in ("playing", "paused", "on", "idle"):
+        calls = []
+        if attrs.get("volume_level") is not None:
+            calls.append(("media_player", "volume_set", {"volume_level": attrs["volume_level"]}))
+        if state == "playing":
+            calls.append(("media_player", "media_play", {}))
+        elif state == "paused":
+            calls.append(("media_player", "media_pause", {}))
+        return calls or [(domain, "turn_on", {})]
     return [(domain, "turn_on", data)]
 
 
@@ -162,6 +175,8 @@ async def undo_action(ctx: ToolContext, action_id: int) -> dict[str, Any]:
         return {"status": "error", "error": "actie niet gevonden"}
     if action["undone"]:
         return {"status": "error", "error": "al ongedaan gemaakt"}
+    if action.get("shadow"):
+        return {"status": "error", "error": "schaduwactie is nooit uitgevoerd"}
     calls = [(eid, call) for eid, prev in action["previous"].items() for call in restore_calls(eid, prev)]
     if ctx.config.dry_run:
         ctx.db.audit("undo", {"action_id": action_id}, "dry_run", None, ctx.conversation_id)

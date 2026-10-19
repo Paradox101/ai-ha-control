@@ -46,7 +46,13 @@ def _security_devices(index: EntityIndex) -> set[str]:
     return devices
 
 
-def is_security_entity(index: EntityIndex, entity_id: str, _devices: set[str] | None = None) -> bool:
+TARGET_KEYS = ("area_id", "device_id", "floor_id", "label_id")
+# Device actions in automations name the domain instead of an entity id ("domain": "lock", "type": "unlock").
+SECURITY_DEVICE_DOMAINS = SECURITY_DOMAINS | {"cover"}
+
+
+def is_security_entity(index: EntityIndex, entity_id: str, _devices: set[str] | None = None,
+                       _seen: frozenset[str] = frozenset()) -> bool:
     domain = entity_id.split(".", 1)[0]
     if domain in SECURITY_DOMAINS:
         return True
@@ -55,9 +61,16 @@ def is_security_entity(index: EntityIndex, entity_id: str, _devices: set[str] | 
         return domain in CONTROLLABLE_DOMAINS and _has_security_word(entity_id.split(".", 1)[1].replace("_", " "))
     if domain == "cover" and ent.device_class in SECURITY_COVER_CLASSES:
         return True
+    devices = _security_devices(index) if _devices is None else _devices
+    # Scenes and groups are judged by what they switch, not only by their own name.
+    members = ent.attributes.get("entity_id")
+    if isinstance(members, list):
+        seen = _seen | {entity_id}
+        if any(isinstance(m, str) and m not in seen and is_security_entity(index, m, devices, seen)
+               for m in members):
+            return True
     if domain not in CONTROLLABLE_DOMAINS:
         return False
-    devices = _security_devices(index) if _devices is None else _devices
     return bool(ent.device_id and ent.device_id in devices) or _words_match(ent)
 
 
@@ -76,8 +89,36 @@ def touches_security(index: EntityIndex, domain: str, entity_ids: list[str]) -> 
 def payload_touches_security(index: EntityIndex, kind: str, payload: dict[str, Any]) -> bool:
     """For confirmations: does this pending action (service call or new automation) touch security?"""
     if kind == "service":
-        return touches_security(index, payload.get("domain", ""), payload.get("entity_ids") or [])
-    text = json.dumps(payload, ensure_ascii=False)
+        domain, service = payload.get("domain", ""), payload.get("service", "")
+        entity_ids = list(payload.get("entity_ids") or [])
+        if domain == "script" and service not in ("turn_on", "turn_off", "toggle", "reload"):
+            entity_ids.append(f"script.{service}")
+        if not entity_ids and domain not in ("notify", "persistent_notification"):
+            return True
+        if touches_security(index, domain, entity_ids):
+            return True
+        data = payload.get("data") or {}
+        if any(k in data for k in TARGET_KEYS):
+            return True
+        return _text_touches_security(index, json.dumps(data, ensure_ascii=False))
+    # Automations run unattended later; device actions and area/device targets hide what they operate.
+    if _automation_targets_security(payload):
+        return True
+    return _text_touches_security(index, json.dumps(payload, ensure_ascii=False))
+
+
+def _automation_targets_security(value: Any) -> bool:
+    if isinstance(value, dict):
+        if any(value.get(k) for k in TARGET_KEYS) and (value.get("domain") is None
+                                                        or value.get("domain") in SECURITY_DEVICE_DOMAINS):
+            return True
+        return any(_automation_targets_security(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_automation_targets_security(v) for v in value)
+    return False
+
+
+def _text_touches_security(index: EntityIndex, text: str) -> bool:
     if any(f'"{d}.' in text or f"'{d}." in text for d in SECURITY_DOMAINS):
         return True
     devices = _security_devices(index)

@@ -22,6 +22,8 @@ _LOGGER = logging.getLogger(__name__)
 
 URGENT_DEBOUNCE = 20        # seconds: let related events arrive before thinking
 REVIEW_INCIDENTS_EVERY = 3600
+MANUAL_CHECK = "Handmatige controle gevraagd"
+FALLBACK_RETRY_SECONDS = 600  # AI unreachable: look at due follow-ups again after this long
 MAX_CHANGES = 40
 WATCHED_DOMAINS = {"person", "lock", "alarm_control_panel", "cover", "climate"}
 
@@ -246,7 +248,7 @@ class AutonomousAgent:
             lines.append(f"Weer: {weather.state}" + (f", {temp} °C" if temp is not None else ""))
         return lines
 
-    async def run(self, trigger: str = "hartslag") -> str | None:
+    async def run(self, trigger: str = "hartslag", raise_llm_error: bool = False) -> str | None:
         """One heartbeat. Returns the agent's summary, or None when there was nothing to think about."""
         self.running = True
         self._last_run = time.monotonic()
@@ -256,6 +258,9 @@ class AutonomousAgent:
             if not self._needs_thinking(followups):
                 return None
             report = self.situation_report(followups)
+            # Take what the report contains: anything that arrives while the model thinks waits for the next run.
+            taken = (self._observations, self._changes, self._activity)
+            self._observations, self._changes, self._activity = [], [], Counter()
             autonomy = self._ctx.autonomy.summary() if self._ctx.autonomy else "alleen melden"
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT.format(autonomy=autonomy)},
@@ -266,16 +271,19 @@ class AutonomousAgent:
                 result = await run_tool_loop(ctx, self._registry, messages,
                                              model=self.config.triage_model or None, priority=PRIORITY_AGENT)
             except LLMError as err:
-                await self._fallback(err)
+                observations, changes, activity = taken
+                self._changes = (changes + self._changes)[-MAX_CHANGES:]
+                self._activity = activity + self._activity
+                if raise_llm_error:
+                    self._observations = (observations + self._observations)[-MAX_CHANGES:]
+                    raise
+                await self._fallback(err, observations, followups)
                 return None
             summary = result.answer or "Alles rustig"
             self._ctx.db.add_agent_run(trigger, summary, [a["tool"] for a in result.actions], report=report)
             self._remember_temps()
             self.last_run_ts = time.time()
             self._ctx.db.complete_followups([f["id"] for f in followups])
-            self._observations.clear()
-            self._changes.clear()
-            self._activity.clear()
             self._last_review = time.time()
             self._last_report_ts = time.time()
             self.last_summary = summary
@@ -283,10 +291,13 @@ class AutonomousAgent:
         finally:
             self.running = False
 
-    async def _fallback(self, err: Exception) -> None:
+    async def _fallback(self, err: Exception, observations: list[str], followups: list[dict[str, Any]]) -> None:
         """Ollama is down: report observations directly so nothing important is lost."""
         _LOGGER.warning("Autonomous agent could not reach the LLM: %s", err)
-        for text in self._observations:
+        for text in observations:
+            if MANUAL_CHECK in text:
+                continue
             await self._incidents.report("anomaly", "Opvallend (AI niet bereikbaar)", text, severity="info")
         self._ctx.db.add_agent_run("fallback", f"LLM niet bereikbaar: {err}", [])
-        self._observations.clear()
+        # Due follow-ups would start a new heartbeat every minute while the AI is down: try again later.
+        self._ctx.db.postpone_followups([f["id"] for f in followups], FALLBACK_RETRY_SECONDS)

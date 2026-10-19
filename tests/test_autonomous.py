@@ -184,6 +184,9 @@ def test_house_mode_from_mode_scenes(ctx):
                                ("scene.slapen", "Slapen", 960), ("scene.thuis", "Thuis", 360),
                                ("scene.film_kijken", "Film kijken", 5)):
         ctx.index.update_state({"entity_id": eid, "state": ago(minutes), "attributes": {"friendly_name": name}})
+    assert house_mode(ctx.index, ctx.config, now) == "thuis"  # Vincent is home: presence beats the away scene
+    ctx.index.update_state({"entity_id": "person.vincent", "state": "not_home", "last_changed": ago(300),
+                            "attributes": {"friendly_name": "Vincent"}})
     assert house_mode(ctx.index, ctx.config, now) == "weg"  # Afwezig was activated last (5 hours ago)
     ctx.index.update_state({"entity_id": "scene.gast", "state": ago(1), "attributes": {"friendly_name": "Gast"}})
     assert house_mode(ctx.index, ctx.config, now) == "gast"
@@ -193,6 +196,15 @@ def test_house_mode_from_mode_scenes(ctx):
     ctx.index.update_state({"entity_id": "scene.thuis", "state": ago(60 * 50), "attributes": {"friendly_name": "Thuis"}})
     ctx.index.update_state({"entity_id": "scene.slapen", "state": ago(60 * 60), "attributes": {"friendly_name": "Slapen"}})
     assert house_mode(ctx.index, ctx.config, now) == "vakantie"  # away for more than a day
+
+
+def test_sleep_scene_lasts_one_night(ctx):
+    now = datetime(2026, 10, 19, 14, 0)
+    ctx.index.update_state({"entity_id": "scene.slapen", "state": ago(60), "attributes": {"friendly_name": "Slapen"}})
+    assert house_mode(ctx.index, ctx.config, now) == "slapen"
+    ctx.index.update_state({"entity_id": "scene.slapen", "state": ago(60 * 13),
+                            "attributes": {"friendly_name": "Slapen"}})
+    assert house_mode(ctx.index, ctx.config, now) == "thuis"
 
 
 def test_baseline_learns_and_flags_outliers(ctx):

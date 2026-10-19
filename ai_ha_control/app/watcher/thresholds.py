@@ -20,6 +20,8 @@ OPERATOR_TEXT = {">": "boven", "<": "onder", "=": "gelijk aan", "!=": "niet"}
 SEVERITIES = ("info", "warning", "critical")
 MODES = ("thuis", "weg", "slapen", "vakantie", "gast")
 IGNORED_STATES = ("unavailable", "unknown", "")
+# A value hovering around the limit (a freezer's compressor cycling) must not alert and recover every minute.
+RECOVER_SECONDS = 120
 
 
 def _number(value: Any) -> float | None:
@@ -61,6 +63,7 @@ class ThresholdMonitor:
         self._ctx = ctx
         self._incidents = incidents
         self.mode: str | None = None  # house mode, set by the scheduler; None = don't filter
+        self._recovering: dict[int, float] = {}  # rule id -> since when it looks normal again
 
     async def check(self, ent: EntityInfo, now: float | None = None) -> None:
         for rule in self._ctx.db.watch_rules(enabled_only=True, entity_id=ent.entity_id):
@@ -82,11 +85,17 @@ class ThresholdMonitor:
         if broken is None:
             return
         if not broken:
+            if rule["alerted"]:
+                started = self._recovering.setdefault(rule["id"], now)
+                if now - started < RECOVER_SECONDS:
+                    return
+            self._recovering.pop(rule["id"], None)
             if rule["since"] is not None or rule["alerted"]:
                 db.set_watch_state(rule["id"], None, False)
             if rule["alerted"]:
                 await self._recovered(rule, ent)
             return
+        self._recovering.pop(rule["id"], None)
         since = rule["since"] if rule["since"] is not None else now
         if rule["since"] is None:
             db.set_watch_state(rule["id"], since, False)
@@ -101,7 +110,7 @@ class ThresholdMonitor:
         await self._incidents.report(
             f"watch:{rule['id']}", rule.get("label") or f"{ent.name}: {OPERATOR_TEXT[rule['op']]} {rule['value']}",
             text, severity=rule["severity"], entity_id=ent.entity_id, correlate_seconds=86400,
-            critical=rule["severity"] == "critical", respect_quiet_hours=rule["severity"] != "info")
+            critical=rule["severity"] == "critical", respect_quiet_hours=True)
 
     async def _recovered(self, rule: dict[str, Any], ent: EntityInfo) -> None:
         unit = ent.attributes.get("unit_of_measurement") or ""

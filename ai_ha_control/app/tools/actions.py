@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..policy import Decision
-from ..security import payload_touches_security
+from ..security import TARGET_KEYS, payload_touches_security
 
 if TYPE_CHECKING:
     from ..storage.db import Database
@@ -178,6 +178,11 @@ async def perform(
     """Validate, check policy, and either execute, dry-run or queue for confirmation."""
     data = {k: v for k, v in (data or {}).items() if v is not None and k != "entity_id"}
     args = {"domain": domain, "service": service, "entity_ids": entity_ids, "data": data}
+    # Targets hidden in data would skip the policy and the door/alarm checks, which only see entity_ids.
+    hidden = [k for k in (*TARGET_KEYS, "entities", "snapshot_entities") if k in data]
+    if hidden:
+        return {"status": "error",
+                "error": f"{', '.join(hidden)} in data is niet toegestaan; noem de entiteiten in entity_ids"}
 
     if ctx.source == "autonomous" and ctx.config.kill_switch in entity_ids:
         return {"status": "denied", "reason": "de agent mag zijn eigen noodknop niet bedienen"}
@@ -274,8 +279,16 @@ async def verify_action(ctx: ToolContext, action_id: int, domain: str, service: 
             ctx.db.set_action_verified(action_id, "ok")
             return []
         if attempt == 0:
+            # The resident may have reversed it on purpose, or pulled the kill switch: don't fight them.
+            overrides = ctx.db.active_overrides()
+            retry = [e for e in failed if e not in overrides]
+            if not retry or (ctx.autonomy is not None and not ctx.autonomy.enabled):
+                ctx.db.set_action_verified(action_id, "overridden")
+                return []
             try:
-                await ctx.ha.call_service(domain, service, data, {"entity_id": failed})
+                response = await ctx.ha.call_service(domain, service, data, {"entity_id": retry})
+                if ctx.contexts is not None and isinstance(response, dict):
+                    ctx.contexts.remember((response.get("context") or {}).get("id"), "agent", ctx.reason or "")
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Retry of %s.%s failed: %s", domain, service, err)
     ctx.db.set_action_verified(action_id, "failed")

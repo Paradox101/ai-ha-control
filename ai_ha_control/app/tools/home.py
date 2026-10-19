@@ -120,24 +120,29 @@ async def set_climate(
     ent = ctx.index.get(entity_id)
     if ent is None or ent.domain != "climate":
         return {"error": f"'{entity_id}' is geen climate-entiteit; gebruik search_entities met domain=climate"}
+    # Check everything first: a half-applied request reported as an error misleads the model and the user.
+    modes = ent.attributes.get("hvac_modes") or []
+    if hvac_mode and modes and hvac_mode not in modes:
+        return {"error": f"hvac_mode '{hvac_mode}' niet ondersteund. Opties: {modes}"}
+    presets = ent.attributes.get("preset_modes") or []
+    if preset_mode and presets and preset_mode not in presets:
+        return {"error": f"preset '{preset_mode}' niet ondersteund. Opties: {presets}"}
+    if temperature is not None:
+        try:
+            temperature = float(temperature)
+        except (TypeError, ValueError):
+            return {"error": f"temperatuur '{temperature}' is geen getal"}
+        lo, hi = ent.attributes.get("min_temp", 5), ent.attributes.get("max_temp", 30)
+        if not lo <= temperature <= hi:
+            return {"error": f"temperatuur {temperature} buiten bereik {lo}-{hi}"}
     results = {}
     if hvac_mode:
-        modes = ent.attributes.get("hvac_modes") or []
-        if modes and hvac_mode not in modes:
-            return {"error": f"hvac_mode '{hvac_mode}' niet ondersteund. Opties: {modes}"}
         results["hvac_mode"] = await perform(ctx, "climate", "set_hvac_mode", [entity_id], {"hvac_mode": hvac_mode})
     if preset_mode:
-        presets = ent.attributes.get("preset_modes") or []
-        if presets and preset_mode not in presets:
-            return {"error": f"preset '{preset_mode}' niet ondersteund. Opties: {presets}"}
         results["preset_mode"] = await perform(
             ctx, "climate", "set_preset_mode", [entity_id], {"preset_mode": preset_mode}
         )
     if temperature is not None:
-        temperature = float(temperature)
-        lo, hi = ent.attributes.get("min_temp", 5), ent.attributes.get("max_temp", 30)
-        if not lo <= temperature <= hi:
-            return {"error": f"temperatuur {temperature} buiten bereik {lo}-{hi}"}
         results["temperature"] = await perform(
             ctx, "climate", "set_temperature", [entity_id], {"temperature": temperature}
         )

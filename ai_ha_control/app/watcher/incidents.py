@@ -66,7 +66,7 @@ class IncidentManager:
             _LOGGER.debug("Could not emit incident event: %s", err)
 
     def active(self) -> list[dict[str, Any]]:
-        return self._db.incidents(status="active")
+        return self._db.incidents(status="active", limit=10000)  # all of them: matching must not miss old ones
 
     def find(self, kind: str | None = None, title: str | None = None, within: float | None = None) -> dict | None:
         now = time.time()

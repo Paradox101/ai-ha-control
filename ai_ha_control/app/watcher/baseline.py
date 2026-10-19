@@ -22,6 +22,8 @@ _LOGGER = logging.getLogger(__name__)
 MODE_HOME, MODE_AWAY, MODE_SLEEP, MODE_VACATION, MODE_GUEST = "thuis", "weg", "slapen", "vakantie", "gast"
 VACATION_HOURS = 24
 # Scenes that represent a house mode (often switched by automations): the most recently activated one wins.
+# A sleep scene counts for one night at most.
+SLEEP_SCENE_HOURS = 12
 MODE_SCENE_WORDS = {
     MODE_AWAY: ("afwezig", "weg", "away", "vertrek"),
     MODE_SLEEP: ("slapen", "nacht", "sleep", "night", "welterusten"),
@@ -99,14 +101,20 @@ def calendar_mode(index: EntityIndex) -> str | None:
 
 
 def house_mode(index: EntityIndex, config: Config, now: datetime) -> str:
+    people = [e for e in index.entities.values() if e.domain == "person"]
     from_scene = scene_mode(index)
     if from_scene:
         mode, activated = from_scene
-        if mode == MODE_AWAY and (time.time() - activated.timestamp()) / 3600 >= VACATION_HOURS:
+        hours = (time.time() - activated.timestamp()) / 3600
+        if mode in (MODE_AWAY, MODE_VACATION) and any(p.state == "home" for p in people):
+            pass  # came home without switching the scene back: presence wins (no burglary alarm at home)
+        elif mode == MODE_SLEEP and hours >= SLEEP_SCENE_HOURS:
+            pass  # last night's sleep scene does not make the whole day a night
+        elif mode == MODE_AWAY and hours >= VACATION_HOURS:
             return MODE_VACATION
-        return mode
+        else:
+            return mode
     from_calendar = calendar_mode(index) if config.calendar_context else None
-    people = [e for e in index.entities.values() if e.domain == "person"]
     if people and all(p.state != "home" for p in people):
         away_hours = min(minutes_since(p.last_changed) for p in people) / 60
         if from_calendar == MODE_VACATION:

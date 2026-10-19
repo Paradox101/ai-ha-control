@@ -74,6 +74,8 @@ class HAClient:
                 raise
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Home Assistant connection lost: %s", err)
+            if self._connected.is_set():
+                delay = 1  # we were connected: a fresh drop starts with a short wait again
             self._connected.clear()
             if self.disconnected_since is None:
                 self.disconnected_since = time.monotonic()
@@ -107,7 +109,12 @@ class HAClient:
                 self._connected.set()
                 self.disconnected_since = None
                 for callback in self._connect_callbacks:
-                    await callback()
+                    try:
+                        await callback()
+                    except HAError:
+                        raise
+                    except Exception:  # noqa: BLE001
+                        _LOGGER.exception("Connect callback failed")  # don't drop a working connection over it
                 await reader
             finally:
                 reader.cancel()
@@ -163,8 +170,15 @@ class HAClient:
         msg_id = next(self._ids)
         fut = asyncio.get_running_loop().create_future()
         self._pending[msg_id] = fut
-        await self._ws.send_json({**payload, "id": msg_id})
-        return await asyncio.wait_for(fut, timeout)
+        try:
+            await self._ws.send_json({**payload, "id": msg_id})
+            return await asyncio.wait_for(fut, timeout)
+        except (aiohttp.ClientError, ConnectionError, RuntimeError) as err:
+            raise HAError(f"sending to Home Assistant failed: {err}") from err
+        except asyncio.TimeoutError as err:
+            raise HAError(f"no answer from Home Assistant within {timeout:g} s") from err
+        finally:
+            self._pending.pop(msg_id, None)
 
     async def command(self, payload: dict[str, Any], timeout: float = 30) -> Any:
         """Send a WebSocket command once connected and return its result."""

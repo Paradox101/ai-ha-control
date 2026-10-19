@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.18
+
+Alleen verbeteringen aan wat er al was, na een code-review.
+
+- **Deuren en alarm beter afgeschermd**: doelen die in `data` verstopt zaten (`area_id`, `device_id`, `floor_id`, `label_id`, `scene.apply` met `entities`) worden geweigerd, want daarmee werden de beveiligingschecks omzeild. Scènes en groepen tellen als beveiliging als er een slot, alarm of garagedeur in zit. Een actie zonder entiteit, een script op naam en automations met apparaat-acties of ruimte-doelen zijn altijd "bevestigen via telefoon of web" (niet met "ja" via spraak).
+- **Controle na een actie** probeert het niet opnieuw als de bewoner het intussen zelf heeft teruggezet of de noodknop aan staat.
+- **Ongedaan maken**: schaduwacties (nooit uitgevoerd) kunnen niet meer "teruggedraaid" worden; pauze/afspelen, preset en ventilatorstand worden nu echt hersteld.
+- **Comfort**: mislukte instellingen worden de volgende minuut opnieuw geprobeerd; de cv gaat terug naar stand-by als je de airco uitzet; ventilatie loopt niet meer vast na een afgewezen vraag; schemerlampen gaan niet meer net na middernacht aan.
+- **Meldingen**: één telefoon met een verouderde notify-service houdt de andere niet meer tegen; het avondoverzicht mist geen items meer als er veel andere gebeurtenissen waren of na een herstart.
+- **Rook- en lekmelders** die wakker worden uit "onbereikbaar" en meteen alarm geven, of al alarm gaven bij het opstarten, geven nu wel een melding.
+- **Huismodus**: een "Afwezig"-scène telt niet meer als er iemand thuis is (geen inbraakmelding bij thuiskomst zonder scène), en een slaapscène geldt hoogstens 12 uur.
+- **Bewakingsregels** schommelen niet meer tussen alarm en "weer normaal" rond de grens (eerst 2 minuten normaal), en houden zich aan de stille uren.
+- **Aanwezigheid nabootsen** zet de eigen lampen uit als de simulatie stopt terwijl niemand thuis is.
+- **Stabiliteit**: één falend onderdeel van de minuutronde stopt de rest niet meer; de HA-verbinding herstelt sneller na een korte onderbreking; een time-out of fout van Ollama wordt netjes gemeld; ongeldige invoer in de web-UI en de API geeft een foutmelding in plaats van een crash; de noodknop wordt altijd gevolgd, ook als hij niet "zichtbaar" is gemaakt; instellingen werken direct zonder herstart.
+- **Integratie**: een ongeldige API-sleutel start nu de herauthenticatie in Home Assistant.
+
 ## 0.6.17
 
 - **Zoeken en de Excel-export werkten niet met een echte Home Assistant**: HA zet tegenwoordig `None` in de aliaslijst van elke entiteit ("de eigen naam"). Daardoor liep het zoeken naar entiteiten vast en gaf de export een fout. Die lege aliassen worden nu genegeerd.

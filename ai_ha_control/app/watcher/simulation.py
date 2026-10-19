@@ -11,7 +11,7 @@ from ..ha.index import DETECTION_CLASSES, EntityInfo
 from ..security import is_security_entity
 from ..tools.actions import execute
 from ..tools.base import ToolContext
-from .baseline import MODE_VACATION
+from .baseline import MODE_AWAY, MODE_VACATION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,7 +71,13 @@ class PresenceSimulator:
         config, autonomy = self._ctx.config, self._ctx.autonomy
         active = config.presence_simulation and mode == MODE_VACATION and (autonomy is None or autonomy.enabled)
         if not active:
-            self._on.clear()  # back home or switched off: leave the lights to the residents
+            if mode in (MODE_AWAY, MODE_VACATION) and (autonomy is None or autonomy.enabled):
+                # Switched off (or vacation became plain "away") while nobody is home: don't leave our lights on.
+                for eid in list(self._on):
+                    ent = self._ctx.index.get(eid)
+                    if ent is not None and ent.state == "on":
+                        await self._switch("turn_off", ent)
+            self._on.clear()  # back home: leave the lights to the residents
             return
         for area, lights in self.areas().items():
             ours = [e for e in lights if e.entity_id in self._on]
