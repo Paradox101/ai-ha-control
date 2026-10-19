@@ -8,11 +8,12 @@ cameras and the energy context.
 
 from __future__ import annotations
 
+import re
 import statistics
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from .ha.index import CAR_WORDS, EntityIndex, EntityInfo, normalize
+from .ha.index import CAR_WORDS, DETECTION_CLASSES, EntityIndex, EntityInfo, normalize
 
 if TYPE_CHECKING:
     from .config import Config
@@ -24,7 +25,15 @@ NOT_ROOM_WORDS = {
     "omvormer", "heatsink", "laadpaal", "charger", "cpu", "gpu", "core", "chip", "boiler", "itho", "cve", "wtw",
     "outdoor", "buiten", "mold", "schimmel", "max", "min", "minimum", "maximum", "gemiddelde", "average",
     "goodwe", "nas", "server", "ups", "afvoer", "exhaust",
+    # Computer hardware (Glances, lm-sensors): chipset, board and drive sensors, not the air of a room.
+    "acpitz", "composite", "tctl", "tdie", "systin", "cputin", "peci", "package", "nvme", "pch", "spd5118",
+    "auxtin0", "auxtin1", "auxtin2", "auxtin3", "auxtin4", "auxtin5", "mt7921", "r8169", "iwlwifi", "coretemp",
 }
+# Areas with computers and network gear, not people: their sensors describe the hardware.
+NOT_ROOM_AREAS = {"server", "serverkast", "serverruimte", "serverrack", "netwerkkast", "nas", "datacenter"}
+IP_NAME = re.compile(r"^\d{1,3}(\.\d{1,3}){3}\b")
+# A phone's or Tado's geofencing ("Tado CE Hub Geofencing", binary_sensor.home): someone is home, nobody moves.
+GEOFENCE_WORDS = {"geofencing", "geofence"}
 # Cameras that are no camera: mail deliveries, rain radar, a vacuum's map.
 PSEUDO_CAMERA_WORDS = {"imap", "mail", "delivery", "buienradar", "radar", "map", "kaart"}
 # Cameras inside rooms where people sleep or wash: never look at them by themselves.
@@ -54,11 +63,21 @@ def _number(value: Any) -> float | None:
 
 # --- Rooms --------------------------------------------------------------------------------
 
+def is_hardware(ent: EntityInfo) -> bool:
+    """A server, router or container statistic: in a server area or on a device named after its IP address."""
+    return bool(set(normalize(ent.area or "").split()) & NOT_ROOM_AREAS) or bool(IP_NAME.match(ent.device or "")) \
+        or bool(IP_NAME.match(ent.name or ""))
+
+
 def is_room_sensor(ent: EntityInfo) -> bool:
     """A temperature/humidity/CO₂ sensor that measures the air of the room it is in."""
-    if ent.domain != "sensor" or ent.device_class not in AIR_CLASSES:
+    if ent.domain != "sensor" or ent.device_class not in AIR_CLASSES or is_hardware(ent):
         return False
     return not words(ent) & NOT_ROOM_WORDS
+
+
+def is_geofence(ent: EntityInfo) -> bool:
+    return bool(words(ent) & GEOFENCE_WORDS)
 
 
 def room_air(index: EntityIndex) -> dict[str, dict[str, float]]:
@@ -203,7 +222,29 @@ def mode_helper(index: EntityIndex, config: Config) -> EntityInfo | None:
 
 
 def is_car(ent: EntityInfo) -> bool:
-    return bool(words(ent) & CAR_WORDS)
+    """Part of a car. A camera's "Voertuig" detection (and the camera, its siren) only sees one."""
+    if ent.domain in ("camera", "siren") or (ent.domain == "binary_sensor" and (
+            ent.device_class in DETECTION_CLASSES or words(ent) & {"vehicle", "voertuig"})):
+        return False
+    # "auto" in an entity id is often "automatic" (a vacuum's auto_empty); in a name it is the car.
+    named = set(normalize(f"{ent.name} {ent.device or ''}").split())
+    return bool((words(ent) - {"auto"} | named) & CAR_WORDS)
+
+
+UPS_WORDS = {"ups", "eaton", "apc", "nut", "cyberpower"}
+CHARGE_HINTS = ("battery_state", "charging", "oplaad", "elvehcharg")
+
+
+def rechargeable_devices(index: EntityIndex) -> set[str]:
+    """Devices that charge themselves (phone, watch, vacuum, car, UPS): a low level is no battery to replace."""
+    devices = set()
+    for ent in index.entities.values():
+        if not ent.device_id:
+            continue
+        if ent.domain in ("vacuum", "device_tracker", "lawn_mower") or is_car(ent) or words(ent) & UPS_WORDS \
+                or any(h in ent.entity_id for h in CHARGE_HINTS):
+            devices.add(ent.device_id)
+    return devices
 
 
 def label(ent: EntityInfo) -> str:
@@ -433,11 +474,20 @@ def waste_today_tomorrow(index: EntityIndex) -> list[str]:
 # --- Duplicates (for the export and the doctor) ---------------------------------------------
 
 def duplicates(index: EntityIndex) -> list[tuple[EntityInfo, EntityInfo]]:
-    """Entities named like another one with a _2/_3 suffix: usually left over after re-adding a device."""
+    """Entities named like another one with a _2/_3 suffix: usually left over after re-adding a device.
+
+    Two devices that both work in different rooms and only share a name (a "Sirene" on each floor) are not.
+    """
     by_id = index.entities
     pairs = []
     for ent in by_id.values():
         base, _, suffix = ent.entity_id.rpartition("_")
-        if suffix.isdigit() and int(suffix) in range(2, 10) and base in by_id and by_id[base].name == ent.name:
-            pairs.append((by_id[base], ent))
+        if not (suffix.isdigit() and int(suffix) in range(2, 10) and base in by_id and by_id[base].name == ent.name):
+            continue
+        original = by_id[base]
+        dead = {"unavailable", "unknown"}
+        if original.area and ent.area and original.area != ent.area \
+                and original.state not in dead and ent.state not in dead:
+            continue
+        pairs.append((original, ent))
     return sorted(pairs, key=lambda p: p[1].entity_id)

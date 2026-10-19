@@ -28,10 +28,16 @@ LLM_CHECK_SECONDS = 300
 
 
 def low_batteries(ctx: ToolContext, threshold: float = 20) -> list[str]:
-    low = []
+    """Batteries to replace: one line per device, not phones, the car or the vacuum that charge themselves."""
+    from ..house import rechargeable_devices
+
+    charging = rechargeable_devices(ctx.index)
+    low, seen = [], set()
     for ent in ctx.index.entities.values():
-        if ent.device_class != "battery":
+        if ent.device_class != "battery" or (ent.device_id and ent.device_id in charging):
             continue
+        if ent.device_id in seen:
+            continue  # Battery Notes adds a "Batterij+" copy of the same level
         if ent.domain == "binary_sensor" and ent.state == "on":
             low.append(ent.name)
         elif ent.domain == "sensor":
@@ -39,7 +45,11 @@ def low_batteries(ctx: ToolContext, threshold: float = 20) -> list[str]:
                 if float(ent.state) <= threshold:
                     low.append(f"{ent.name} ({ent.state}%)")
             except ValueError:
-                pass
+                continue
+        else:
+            continue
+        if ent.device_id:
+            seen.add(ent.device_id)
     return low
 
 
