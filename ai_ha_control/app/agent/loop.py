@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from ..ha.index import OPENING_CLASSES, normalize
+from ..ha.index import normalize
 from ..house import car_status, fmt_number, outside_temperature, readings_text, room_readings
 from ..llm.ollama import PRIORITY_CHAT, DeltaCallback
 from ..watcher.baseline import house_mode
@@ -58,7 +58,8 @@ Ruimtes: {areas}
 Regels:
 - Beantwoord vragen over het huis ALTIJD op basis van tool-resultaten of de momentopname hieronder, nooit uit je hoofd. Kun je het niet controleren, zeg dat dan eerlijk.
 - Verzin NOOIT entity_ids. Weet je de exacte entity_id niet, gebruik dan eerst search_entities.
-- 'Hoe gaat het (thuis)?' of andere algemene vragen: gebruik get_home_overview en geef een kort overzicht (wie er thuis is, klimaat, open ramen/deuren, lampen, incidenten).
+- 'Hoe gaat het (thuis)?' of andere algemene vragen: gebruik get_home_overview en geef een kort overzicht (wie er thuis is, klimaat, open ramen/deuren, lampen, incidenten). Noem alle lampen die aan zijn en alle ramen/deuren die open staan, per ruimte (lights_on_by_area, open_by_area), niet "een aantal". Lampen staan "aan", niet "aangeslagen". De status van camera's (idle) noem je niet.
+- 'Welke lampen staan aan (en waar)?' of welke ramen/deuren open: noem ze allemaal, gegroepeerd per ruimte, met de namen zoals ze in de gegevens staan.
 - Vragen hoe vaak of wanneer er iemand/iets gezien is (persoon, auto, dier, pakketje, aanbellen, beweging) bij een plek of camera: gebruik get_detections met what en where. De status van een camera-entiteit (idle/recording) zegt daar niets over.
 - Andere vragen over het verleden ('wanneer', 'hoe vaak', 'hoe lang stond X aan/open', 'wanneer kwam Y thuis', 'heeft X gedraaid'): zoek de entiteit en gebruik get_history met period (today, yesterday, een weekdag, ...) en zo nodig state.
 - Aantallen, tijdstippen en duur neem je letterlijk over uit het tool-resultaat (count/total, times, total_duration). Tel nooit zelf en spreek het resultaat niet tegen; is het aantal 0, zeg dan dat er niets gezien is.
@@ -85,7 +86,8 @@ Areas: {areas}
 Rules:
 - ALWAYS answer questions about the house from tool results or the snapshot below, never from memory. If you cannot check it, say so honestly.
 - NEVER invent entity_ids. If you do not know the exact entity_id, use search_entities first.
-- 'How is it going at home?' or other general questions: use get_home_overview and give a short overview.
+- 'How is it going at home?' or other general questions: use get_home_overview and give a short overview. Name all lights that are on and all open doors/windows, per room (lights_on_by_area, open_by_area), not "some". Do not mention camera states (idle).
+- 'Which lights are on (and where)?' or which doors/windows are open: name all of them, grouped per room, with the names as they appear in the data.
 - How often or when someone/something was seen (person, car, animal, package, doorbell, motion) at a place or camera: use get_detections with what and where. A camera entity's state (idle/recording) says nothing about that.
 - Other questions about the past ('when', 'how often', 'how long was X on/open', 'when did Y come home'): find the entity and use get_history with period (today, yesterday, a weekday, ...) and state if needed.
 - Copy counts, times and durations literally from the tool result (count/total, times, total_duration). Never count yourself; if the count is 0, say nothing was seen.
@@ -214,12 +216,12 @@ class Agent:
         """Compact live state so general questions start from facts instead of guesses."""
         index, nl = self._ctx.index, self._ctx.config.language == "nl"
         o = index.overview()
-        lights = [e.name for e in index.entities.values() if e.domain == "light" and e.state == "on"]
+        lights = [e for e in index.entities.values() if e.domain == "light" and e.state == "on"]
         lines = [
             f"- Huismodus: {house_mode(index, self._ctx.config, now)}",
             f"- Personen: {', '.join(o['people']) or 'geen person-entiteiten'}",
-            f"- Lampen aan ({len(lights)}): {', '.join(lights[:8]) or 'geen'}"
-            + (" …" if len(lights) > 8 else ""),
+            # All of them, per room: cutting at 8 made the model leave the rest out.
+            f"- Lampen aan ({len(lights)}): {index.area_text(index.group_by_area(lights)) or 'geen'}",
             self._openings_line(index),
             *[f"- Slot: {e.name} = {e.readable_state}" for e in index.entities.values() if e.domain == "lock"][:6],
             *[f"- Auto: {c}" for c in car_status(index, nl)],
@@ -249,13 +251,12 @@ class Agent:
 
     @staticmethod
     def _openings_line(index) -> str:
-        sensors = [e for e in index.entities.values() if e.domain == "binary_sensor"
-                   and e.device_class in OPENING_CLASSES and e.state in ("on", "off")]
+        sensors = [e for e in index.entities.values() if e.state in ("on", "off") and index.is_opening(e)]
         if not sensors:
             return "- Deur-/raamsensoren: geen gevonden"
-        opened = [e.name for e in sensors if e.state == "on"]
+        opened = index.group_by_area([e for e in sensors if e.state == "on"])
         return (f"- Deuren/ramen ({len(sensors)} sensoren): "
-                + (f"OPEN: {', '.join(opened)}" if opened else "alles dicht"))
+                + (f"OPEN: {index.area_text(opened)}" if opened else "alles dicht"))
 
     def system_prompt(self, source: str = "web", area: str | None = None) -> str:
         tz = ZoneInfo(self._ctx.timezone) if self._ctx.timezone else None

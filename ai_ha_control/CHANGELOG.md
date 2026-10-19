@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.27
+
+- **Bewegingsmelders zijn geen ramen**: het "Openen"-contact van een bewegingsmelder (sabotage van de behuizing) telt niet meer als open raam of deur. Dat geldt voor het thuisoverzicht, de momentopname, de nachtronde, de inbraakregels en "raam open, verwarming aan". Een contact op hetzelfde apparaat als een bewegings- of aanwezigheidssensor, of met "bewegingsmelder"/"motion"/"pir"/"sabotage" in de naam, wordt overgeslagen.
+- **Alle lampen, per ruimte**: de momentopname gaf maar 8 lampen mee, waardoor de agent de rest wegliet. Nu staan alle lampen die aan zijn en alle open ramen/deuren erin, gegroepeerd per ruimte (`lights_on_by_area`, `open_by_area` in `get_home_overview`). De namen uit Home Assistant zijn leidend.
+- **Beter "Hoe gaat het thuis?"**: lampen staan "aan" (niet "aangeslagen"), de agent noemt welke lampen en ramen in plaats van "een aantal", en de status van camera's ("idle") wordt niet meer genoemd. Ruimtes zoals Overzicht, Server en Meterkast staan niet meer in de lijst met ruimtes.
+
 ## 0.6.26
 
 - **"Hoe vol is de auto?" klopt**: de chat leest nu de laadtoestand van de auto zelf (FordPass "Laadtoestand" in %), nooit de 12V-accu of een batterijsensor van een ander apparaat. Een nieuwe regel "Auto" in de live momentopname geeft laadtoestand, of de auto nu laadt, stekker, bereik en slot. Laadt de laadpaal (Alfen e.d.) met vermogen, dan staat er "nu aan het laden" met het laadvermogen, ook als FordPass nog achterloopt. Zonder laadtoestand-sensor zegt de chat dat het niet bekend is.
