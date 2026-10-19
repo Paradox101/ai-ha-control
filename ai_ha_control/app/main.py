@@ -310,6 +310,14 @@ class App:
             }
         )
 
+    async def chat_history(self, request: web.Request) -> web.Response:
+        """The messages of a chat conversation, so the page shows them again after a reload."""
+        conversation_id = request.query.get("conversation_id", "")
+        if not conversation_id:
+            return web.json_response({"messages": []})
+        messages = self.db.recent_messages(conversation_id, query_int(request, "limit", 50, 200))
+        return web.json_response({"messages": [m for m in messages if m["role"] in ("user", "assistant")]})
+
     async def conversation(self, request: web.Request) -> web.Response:
         """Endpoint for the Assist conversation agent integration."""
         assert self.agent
@@ -758,6 +766,7 @@ def create_app(config: Config) -> web.Application:
             web.get("/", state.index_page),
             web.get("/api/status", state.status),
             web.post("/api/chat", state.chat),
+            web.get("/api/chat/history", state.chat_history),
             web.post("/api/conversation", state.conversation),
             web.post("/api/conversation/stream", state.conversation_stream),
             web.get("/api/pending", state.pending),

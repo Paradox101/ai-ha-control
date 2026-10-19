@@ -126,6 +126,10 @@ async def test_end_to_end(tmp_path):
         body = await resp.json()
         assert resp.status == 200, body
         assert body["answer"] == "De keukenlamp is uit."
+        history = await (await client.get(f"/api/chat/history?conversation_id={body['conversation_id']}")).json()
+        assert [(m["role"], m["content"]) for m in history["messages"]] == [
+            ("user", "Doe de keukenlamp uit"), ("assistant", "De keukenlamp is uit.")]
+        assert (await (await client.get("/api/chat/history")).json())["messages"] == []
         assert service_calls[0]["domain"] == "light" and service_calls[0]["service"] == "turn_off"
         assert service_calls[0]["target"] == {"entity_id": ["light.keuken"]}
         assert state.index.get("light.keuken").state == "off"
