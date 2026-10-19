@@ -48,6 +48,9 @@ async def test_ui_tabs_chat_and_settings(addon):
         page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
         await page.goto(addon)
         await page.wait_for_selector("#ha:has-text('HA ✓')")
+        async with page.expect_download() as download:
+            await page.click("#export")
+        assert (await download.value).suggested_filename.endswith(".xlsx")
 
         for tab in TABS:
             await page.click(f"#nav button[data-tab='{tab}']")

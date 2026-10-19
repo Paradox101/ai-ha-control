@@ -8,6 +8,7 @@ Een **lokale AI (Ollama)** die je huis helpt beheren via Home Assistant. Alles b
   - "Welke ramen staan open?" · "Hoe warm was het gisteren gemiddeld in de woonkamer?"
   - "Zet de thermostaat op 20,5 graden" · "Doe de lampen in de woonkamer op 30% warm wit"
   - "Staat er een pakketje voor de deur?" (camerabeeld wordt bekeken en in de chat getoond)
+  - "Hoe vaak is er vandaag iemand bij de voordeur geweest?" · "Hoe laat werd er gisteren aangebeld?" · "Hoe lang stond het raam open?" · "Wanneer kwam Vincent thuis?" (de add-on telt zelf uit de HA-geschiedenis; Duidelijk/Vloeiend-streams tellen als één camera)
   - "Gaat het morgen regenen?" · "Hoeveel stroom hebben we vandaag verbruikt?"
   - "Maak een automatisering die de gang-lamp 's nachts op 10% zet bij beweging"
   - "Onthoud dat ik doordeweeks om 7 uur opsta"
@@ -227,9 +228,13 @@ Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroep
 
 Gebruik de officiële Reolink-integratie. De add-on koppelt detectiesensoren (persoon, voertuig, dier, bezoeker) automatisch aan de camera van hetzelfde apparaat en gebruikt de *clear*-stream voor de beste beeldkwaliteit.
 
+## Entiteiten delen
+
+De knop **⬇ Excel** bovenaan de web-UI downloadt alle entiteiten die de add-on ziet (naam, ruimte, apparaat, status, eigenschappen) en een tweede blad met hoe de detectiesensoren per camera gegroepeerd zijn. Handig om mee te sturen als een vraag verkeerd beantwoord wordt.
+
 ## Modellen vergelijken
 
-Met `scripts/benchmark.py` in de repository test je modellen op een gesimuleerd huis (er wordt niets in HA uitgevoerd):
+Met `scripts/benchmark.py` in de repository test je modellen op een gesimuleerd huis (er wordt niets in HA uitgevoerd), inclusief een dag geschiedenis voor vragen als "hoe vaak", "wanneer" en "hoe lang":
 
 ```bash
 python scripts/benchmark.py --ollama http://<ip-homeserver>:11434 --models qwen3:8b qwen3:4b

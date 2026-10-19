@@ -15,6 +15,7 @@ from ..llm.ollama import PRIORITY_CHAT, DeltaCallback
 from ..watcher.baseline import house_mode
 from ..tools.actions import resolve_confirmation
 from ..tools.base import ToolContext, ToolRegistry
+from ..tools import history
 
 DAYS_NL = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
 
@@ -26,7 +27,7 @@ SMALLTALK = {"bedankt", "dank je", "dankjewel", "dank je wel", "thanks", "top", 
 CHECK_FIRST = (
     "Je hebt nog niets gecontroleerd. Beantwoordt de momentopname de vraag volledig, herhaal dan je antwoord. "
     "Zo niet: controleer het eerst met de tools (get_home_overview, search_entities, get_state, get_history, "
-    "analyze_camera) en antwoord daarna. Antwoord nooit uit je hoofd."
+    "get_detections, analyze_camera) en antwoord daarna. Antwoord nooit uit je hoofd."
 )
 MAX_MEMORIES = 30
 YES_WORDS = {"ja", "ja graag", "ja doe maar", "doe maar", "bevestig", "bevestigen", "akkoord", "prima", "oke",
@@ -43,7 +44,9 @@ Regels:
 - Beantwoord vragen over het huis ALTIJD op basis van tool-resultaten of de momentopname hieronder, nooit uit je hoofd. Kun je het niet controleren, zeg dat dan eerlijk.
 - Verzin NOOIT entity_ids. Weet je de exacte entity_id niet, gebruik dan eerst search_entities.
 - 'Hoe gaat het (thuis)?' of andere algemene vragen: gebruik get_home_overview en geef een kort overzicht (wie er thuis is, klimaat, open ramen/deuren, lampen, incidenten).
-- Vragen over het verleden ('vandaag', 'gisteren', 'wanneer', 'hoe vaak', 'heeft X gedraaid'): zoek de entiteit en gebruik get_history (today=true voor vandaag).
+- Vragen hoe vaak of wanneer er iemand/iets gezien is (persoon, auto, dier, pakketje, aanbellen, beweging) bij een plek of camera: gebruik get_detections met what en where. De status van een camera-entiteit (idle/recording) zegt daar niets over.
+- Andere vragen over het verleden ('wanneer', 'hoe vaak', 'hoe lang stond X aan/open', 'wanneer kwam Y thuis', 'heeft X gedraaid'): zoek de entiteit en gebruik get_history met period (today, yesterday, een weekdag, ...) en zo nodig state.
+- Aantallen, tijdstippen en duur neem je letterlijk over uit het tool-resultaat (count/total, times, total_duration). Tel nooit zelf en spreek het resultaat niet tegen; is het aantal 0, zeg dan dat er niets gezien is.
 - Spreekt de gebruiker je tegen, controleer het dan opnieuw met tools. Geef alleen gelijk als de gegevens dat bevestigen, en zeg wat je gecontroleerd hebt.
 - Vragen als 'wat gebeurt er in/bij X', 'is er iemand bij X' of 'kijk eens': gebruik analyze_camera met area=X. Vraag de gebruiker niet welke camera; de tool kiest zelf.
 - Voer gevraagde acties direct uit met de juiste tool; vraag alleen door als het echt onduidelijk is.
@@ -66,7 +69,9 @@ Rules:
 - ALWAYS answer questions about the house from tool results or the snapshot below, never from memory. If you cannot check it, say so honestly.
 - NEVER invent entity_ids. If you do not know the exact entity_id, use search_entities first.
 - 'How is it going at home?' or other general questions: use get_home_overview and give a short overview.
-- Questions about the past ('today', 'yesterday', 'when', 'how often'): find the entity and use get_history (today=true for today).
+- How often or when someone/something was seen (person, car, animal, package, doorbell, motion) at a place or camera: use get_detections with what and where. A camera entity's state (idle/recording) says nothing about that.
+- Other questions about the past ('when', 'how often', 'how long was X on/open', 'when did Y come home'): find the entity and use get_history with period (today, yesterday, a weekday, ...) and state if needed.
+- Copy counts, times and durations literally from the tool result (count/total, times, total_duration). Never count yourself; if the count is 0, say nothing was seen.
 - If the user contradicts you, check again with tools. Only agree when the data confirms it, and say what you checked.
 - For questions like 'what is happening at X', 'is anyone at X' or 'have a look': use analyze_camera with area=X. Do not ask which camera; the tool chooses.
 - Carry out requested actions directly with the right tool; only ask when it is truly ambiguous.
@@ -206,7 +211,7 @@ class Agent:
 
     def system_prompt(self, source: str = "web", area: str | None = None) -> str:
         tz = ZoneInfo(self._ctx.timezone) if self._ctx.timezone else None
-        now = datetime.now(tz)
+        now = history.local_now(tz)
         nl = self._ctx.config.language == "nl"
         template = SYSTEM_PROMPT_NL if nl else SYSTEM_PROMPT_EN
         location = f" '{self._ctx.index.location_name}'" if self._ctx.index.location_name else ""
