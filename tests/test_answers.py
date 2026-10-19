@@ -97,3 +97,21 @@ def test_one_device_by_name(ctx):
     # Not a device name, or a command: the agent.
     assert ask(ctx, "staat de vaatwasser aan?") is None
     assert ask(ctx, "zet het koffiezetapparaat aan") is None
+
+
+def test_power_now_and_weather(ctx):
+    from .test_house_entities import put
+
+    assert ask(ctx, "Hoeveel stroom verbruiken we nu?") is None  # no meter: the agent says so
+    put(ctx, "sensor.p1_meter_power", "-1250", friendly_name="P1 meter Vermogen", device_class="power",
+        unit_of_measurement="W")
+    put(ctx, "sensor.pv_power", "2100", friendly_name="PV Power", device_class="power", unit_of_measurement="W")
+    assert ask(ctx, "Hoeveel stroom verbruiken we nu?") == \
+        "Het huis levert nu 1250 W terug aan het net. De zonnepanelen leveren nu 2100 W."
+    assert ask(ctx, "Wat leveren de zonnepanelen?") == "De zonnepanelen leveren nu 2100 W."
+    assert ask(ctx, "Hoeveel stroom hebben we vandaag verbruikt?") is None
+    assert ask(ctx, "Wat is de stroomprijs?") is None  # no price sensor: get_energy
+    put(ctx, "sensor.prijs", "0.231", friendly_name="Stroomprijs", unit_of_measurement="€/kWh")
+    assert ask(ctx, "Wat is de stroomprijs?") == "De stroomprijs is nu 0,231 €/kWh."
+    assert ask(ctx, "Wat voor weer is het?") == "Buiten: bewolkt, 12 °C."
+    assert ask(ctx, "Wat wordt het weer morgen?") is None

@@ -101,6 +101,9 @@ def test_status_questions_from_the_house(index):
     assert status_answer(index, config, "staat de tv aan?") == "TV Woonkamer: aan."
     assert status_answer(index, config, "staat de airco aan?") == (
         "Slaapkamer Airco (Slaapkamer achterkant): uit, nu 20 °C; Woonkamer Airco: uit, nu 19,9 °C.")
+    assert status_answer(index, config, "Hoeveel stroom verbruiken we nu?") == (
+        "Het huis neemt nu 835 W af van het net. De zonnepanelen leveren nu 138 W.")
+    assert status_answer(index, config, "Wat voor weer is het?") == "Buiten: bewolkt, 14,4 °C, wind 18 km/h."
 
 
 def test_security_rules_read_the_alarm_sensors(index):
