@@ -6,6 +6,7 @@ A minimal .xlsx (Office Open XML) written with the standard library: no extra pa
 from __future__ import annotations
 
 import io
+import logging
 import zipfile
 from datetime import datetime
 from typing import Any
@@ -14,29 +15,46 @@ from xml.sax.saxutils import escape
 from .ha.index import EntityIndex
 from .tools.history import KIND_LABELS, detection_places, sensor_kind
 
+_LOGGER = logging.getLogger(__name__)
+
 ENTITY_COLUMNS = ["entity_id", "naam", "domein", "ruimte", "apparaat", "device_class", "status",
                   "status (leesbaar)", "eenheid", "laatst gewijzigd", "aliassen", "eigenschappen"]
 PLACE_COLUMNS = ["plek", "camera (beste stream)", "sensor", "naam", "soort detectie", "status"]
 
 
+def _text(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
 def entity_rows(index: EntityIndex) -> list[list[Any]]:
     rows = []
     for ent in sorted(index.entities.values(), key=lambda e: e.entity_id):
-        attrs = ent.useful_attributes()
-        attrs.pop("device_class", None)
-        rows.append([ent.entity_id, ent.name, ent.domain, ent.area or "", ent.device or "", ent.device_class or "",
-                     ent.state, ent.readable_state, ent.unit or "", ent.last_changed or "", ", ".join(ent.aliases),
-                     ", ".join(f"{k}={v}" for k, v in attrs.items())])
+        try:
+            attrs = ent.useful_attributes()
+            attrs.pop("device_class", None)
+            rows.append([_text(v) for v in (
+                ent.entity_id, ent.name, ent.domain, ent.area, ent.device, ent.device_class, ent.state,
+                ent.readable_state, ent.unit, ent.last_changed, ", ".join(_text(a) for a in ent.aliases if a),
+                ", ".join(f"{k}={v}" for k, v in attrs.items()))])
+        except Exception as err:  # noqa: BLE001 - one odd entity must not break the whole export
+            _LOGGER.warning("Export: skipping %s: %s", ent.entity_id, err)
+            rows.append([ent.entity_id, f"(fout bij exporteren: {err})"])
     return rows
 
 
 def place_rows(index: EntityIndex) -> list[list[Any]]:
     """How the add-on groups detection sensors per physical camera (what get_detections counts)."""
     rows = []
-    for place in sorted(detection_places(index).values(), key=lambda p: p.label):
+    try:
+        places = sorted(detection_places(index).values(), key=lambda p: _text(p.label))
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Export: camera grouping failed: %s", err)
+        return [["(fout bij exporteren)", _text(err)]]
+    for place in places:
         for sensor in sorted(place.sensors, key=lambda s: s.entity_id):
-            rows.append([place.label, place.camera.entity_id if place.camera else "", sensor.entity_id, sensor.name,
-                         KIND_LABELS[sensor_kind(index, sensor)], sensor.readable_state])
+            rows.append([_text(v) for v in (
+                place.label, place.camera.entity_id if place.camera else "", sensor.entity_id, sensor.name,
+                KIND_LABELS[sensor_kind(index, sensor)], sensor.readable_state)])
     return rows
 
 

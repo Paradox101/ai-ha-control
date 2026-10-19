@@ -75,6 +75,14 @@ async def test_addon_and_integration_with_real_home_assistant(tmp_path, monkeypa
                     return r.status == 200 and (await r.json())["state"] == "on"
             await wait_for(kill_switch, what="kill switch")
 
+            # Home Assistant lists None as an alias ("the entity's own name"): search must still work.
+            await state.refresh_index()
+            kill = state.index.get("input_boolean.ai_autonoom")
+            assert kill is not None and None not in kill.aliases
+            assert state.index.search("autonoom")[0].entity_id == "input_boolean.ai_autonoom"
+            async with session.get(f"{ADDON_URL}/api/export/entities.txt") as resp:
+                assert resp.status == 200 and "input_boolean.ai_autonoom" in await resp.text()
+
             # "How often was someone at the front door?" is counted from the real recorder history.
             for value, wait in (("off", 1.5), ("on", 2), ("off", 65), ("on", 2), ("off", 1.5)):
                 async with session.post(f"{HA_URL}/api/states/binary_sensor.voordeur_persoon", headers=headers,
