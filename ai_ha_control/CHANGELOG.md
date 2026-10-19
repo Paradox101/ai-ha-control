@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.30
+
+- **Gewone vragen over het huis gaan niet meer via het taalmodel**: "Welke lampen staan aan?", "Staan er ramen open?", "Hoe warm is het (in de slaapkamer / buiten)?", "Graag alle temperaturen", "Wie is er thuis?" en "Is Nikky thuis?" worden direct uit Home Assistant beantwoord, net als de auto in 0.6.29. Het kleine model liet lampen weg, verzon getallen of herhaalde een eerder fout antwoord. Alleen vragen die volledig uit bekende woorden bestaan krijgen zo'n vast antwoord; een lamp bij naam, een opdracht of een vraag over het verleden gaat nog naar de agent.
+- **Kortere momentopname**: thermostaten en airco's staan er nu alle in, als één korte regel ("Woonkamer Airco: uit, nu 19,9 °C") in plaats van met alle standen en grenzen; het weer staat er in gewone woorden. Zo blijft er in het geheugen van het model meer ruimte voor het gesprek. De meterkast telt niet meer als ruimte bij de temperaturen.
+
 ## 0.6.29
 
 - **"Hoe vol is de auto?" komt nu rechtstreeks van de auto**: een vraag over de laadtoestand, het laden, het bereik of het slot van de auto gaat niet meer via het taalmodel, maar wordt direct uit de sensoren beantwoord ("De accu is 75 % vol en de auto is nu aan het laden (7,4 kW). Het bereik is 226 km."). Het kleine model maakte van 75 % nog steeds "volledig vol" en herhaalde een eerder fout antwoord uit het gesprek. Opdrachten ("doe de auto op slot") en vragen over het verleden gaan nog wel naar de agent.

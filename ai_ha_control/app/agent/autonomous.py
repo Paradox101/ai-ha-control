@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from ..ha.context import DEVICE, ContextTracker
 from ..ha.index import DETECTION_CLASSES, OPENING_CLASSES, SAFETY_CLASSES, EntityIndex, EntityInfo
+from ..house import climate_text
 from ..llm.ollama import PRIORITY_AGENT, LLMError
 from ..tools.base import ToolContext, ToolRegistry
 from ..watcher.baseline import MODE_GUEST, MODE_HOME
@@ -203,7 +204,9 @@ class AutonomousAgent:
             f"Open ramen/deuren: {', '.join(overview['open_doors_windows']) or 'geen'}",
             f"Sloten open: {', '.join(overview['unlocked']) or 'geen'}",
             f"Lampen aan: {len(overview['lights_on'])}",
-            *[f"Klimaat: {c}" for c in overview["climate"][:4]],
+            *[f"Klimaat: {climate_text(e)}" for e in sorted(self._ctx.index.entities.values(),
+                                                             key=lambda e: e.entity_id)
+              if e.domain == "climate" and e.state not in ("unavailable", "unknown")][:8],
             *[f"Alarm: {a}" for a in overview["safety_alerts"]],
         ])
         return "\n".join(lines)
