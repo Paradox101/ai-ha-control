@@ -74,8 +74,9 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools)
 
-    def schemas(self) -> list[dict[str, Any]]:
-        return [tool.schema() for tool in self._tools.values()]
+    def schemas(self, names: set[str] | None = None) -> list[dict[str, Any]]:
+        """All schemas, or only those in names (run() still accepts every tool)."""
+        return [tool.schema() for tool in self._tools.values() if names is None or tool.name in names]
 
     async def run(self, ctx: ToolContext, name: str, arguments: Any) -> str:
         """Run a tool and return its result as a (truncated) JSON string."""

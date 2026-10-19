@@ -51,6 +51,27 @@ YES_WORDS = {"ja", "ja graag", "ja doe maar", "doe maar", "bevestig", "bevestige
 NO_WORDS = {"nee", "nee dank je", "niet doen", "annuleer", "annuleren", "stop", "no", "cancel"}
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
+# Tools for rules, schedules and memory only go along when the question is about them: all 32 schemas took
+# about half of an 8k context on a small GPU, leaving little room for the snapshot and the conversation.
+# Word stems, matched against the start of each word of the question (and the previous question).
+TOOL_GROUPS: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("automati", "routine", "elke", "iedere", "telkens", "steeds als", "every", "whenever"):
+        ("create_automation", "list_automations", "get_automation"),
+    ("om ", "straks", "later", "morgen", "vanavond", "herinner", "remind", "gepland", "planning",
+     "schedule", "uur", "minuten", "minuut", "annuleer", "cancel", "tomorrow", "tonight"):
+        ("schedule_action", "remind_me", "list_scheduled", "cancel_scheduled"),
+    ("waarschuw", "melding", "meld", "alert", "notify", "let op", "in de gaten", "drempel", "boven", "onder",
+     "zodra", "watch", "warn", "above", "below", "regel", "rule"):
+        ("add_watch_rule", "remove_watch_rule", "list_watch_rules"),
+    ("huisregel", "regel", "nooit", "altijd", "mag", "never", "always", "rule", "allowed"):
+        ("add_house_rule", "remove_house_rule", "list_house_rules"),
+    ("comfort", "profiel", "profile", "voorverwarm", "preheat"): ("set_comfort_profile",),
+    ("vergeet", "forget", "onthoud", "remember", "weet je"): ("forget",),
+    ("batterij", "accu", "offline", "onbeschikbaar", "unavailable", "gezond", "health", "storing", "kapot",
+     "werkt niet", "probleem", "problemen", "controle", "check", "dubbel"): ("home_health_check",),
+}
+OPTIONAL_TOOLS = {name for names in TOOL_GROUPS.values() for name in names}
+
 SYSTEM_PROMPT_NL = """Je bent de AI-assistent van het huis{location}. Je beheert het huis via Home Assistant met de beschikbare tools.
 
 Huidige tijd: {now}
@@ -143,6 +164,7 @@ async def run_tool_loop(
     priority: int = PRIORITY_CHAT,
     check_first: bool = False,
     on_delta: DeltaCallback | None = None,
+    tool_names: set[str] | None = None,
 ) -> AgentResult:
     """Let the LLM call tools until it answers (or the tool budget is used up).
 
@@ -150,7 +172,7 @@ async def run_tool_loop(
     Small models otherwise happily answer from memory ("the vacuum did not run today").
     """
     result = AgentResult(answer="")
-    tools = registry.schemas()
+    tools = registry.schemas(tool_names)
     calls_made = 0
     nudged = False
     gap = False  # text was streamed before a tool call: keep the real answer apart from it
@@ -198,6 +220,16 @@ async def run_tool_loop(
             result.actions.append({"tool": name, "arguments": arguments, "result": output})
             messages.append({"role": "tool", "tool_name": name, "content": output})
             calls_made += 1
+
+
+def chat_tools(registry: ToolRegistry, texts: list[str]) -> set[str]:
+    """The tools to offer for this question: the core set plus the groups its words point at."""
+    text = " " + " ".join(normalize(t) for t in texts) + " "
+    wanted = {n for n in registry.names if n not in OPTIONAL_TOOLS}
+    for stems, names in TOOL_GROUPS.items():
+        if any(f" {stem}" in text for stem in stems):
+            wanted.update(names)
+    return wanted
 
 
 def needs_check(text: str) -> bool:
@@ -360,12 +392,14 @@ class Agent:
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt(source, self.known_area(area))}]
-        messages += db.recent_messages(conversation_id, HISTORY_MESSAGES, time.time() - HISTORY_MAX_AGE)
+        recent = db.recent_messages(conversation_id, HISTORY_MESSAGES, time.time() - HISTORY_MAX_AGE)
+        messages += recent
         messages.append({"role": "user", "content": user_text})
         db.add_message(conversation_id, "user", user_text)
-
+        # The previous question counts too: "en om 22:00?" after "zet de lamp uit".
+        previous = [m["content"] for m in recent if m.get("role") == "user"][-1:]
         result = await run_tool_loop(ctx, self._registry, messages, check_first=needs_check(user_text),
-                                     on_delta=on_delta)
+                                     on_delta=on_delta, tool_names=chat_tools(self._registry, previous + [user_text]))
         result.answer = result.answer or (
             "Ik heb geen antwoord kunnen formuleren." if ctx.config.language == "nl" else "No answer."
         )

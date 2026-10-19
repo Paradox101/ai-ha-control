@@ -108,7 +108,7 @@ async def test_streaming_answer_only_after_checking(ctx):
     async def on_delta(piece):
         pieces.append(piece)
 
-    result = await Agent(ctx, build_registry()).run("Is de keukenlamp aan?", "c1", source="assist",
+    result = await Agent(ctx, build_registry()).run("Hoe fel brandt de keukenlamp?", "c1", source="assist",
                                                      on_delta=on_delta)
     assert result.answer == "De keukenlamp is aan."
     assert "".join(pieces).strip() == "De keukenlamp is aan."
@@ -207,7 +207,7 @@ async def test_health_reports_problems(client):
 
 
 async def test_conversation_stream(client):
-    resp = await client.post("/api/conversation/stream", json={"text": "Is de keukenlamp aan?", "area": "keuken"})
+    resp = await client.post("/api/conversation/stream", json={"text": "Hoe fel brandt de keukenlamp?", "area": "keuken"})
     assert resp.headers["Content-Type"].startswith("application/x-ndjson")
     lines = [json.loads(line) for line in (await resp.text()).splitlines()]
     assert lines[-1]["done"] and lines[-1]["speech"] == "De keukenlamp is aan." and lines[-1]["streamed"]
