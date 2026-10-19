@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.31
+
+- **"Staat de airco aan?" komt rechtstreeks uit Home Assistant**: een vraag naar de stand van een apparaat bij naam ("Staat de keukenlamp aan?", "Is de voordeur op slot?", "Staat de tv aan?", "Is het alarmsysteem aan?") krijgt direct het antwoord, zonder het taalmodel. De ruimte mag je weglaten ("de airco" vindt "Woonkamer Airco" en "Slaapkamer Airco"). Heeft een apparaat meerdere entiteiten met dezelfde naam (een tv als mediaspeler en als schakelaar), dan telt die die het best zegt wat hij doet, en nooit een die niet bereikbaar is. Bij meer dan vier treffers of een onbekende naam gaat de vraag naar de agent.
+- **Minder tools per vraag**: tools voor regels, planningen, automatiseringen, comfortprofielen en de huiscontrole gaan alleen mee als de vraag (of de vorige vraag) erover gaat. Dat scheelt ongeveer de helft van de toolbeschrijvingen, zodat er in een context van 8k meer ruimte blijft voor de momentopname en het gesprek. Vraagt het model toch om een tool die niet meegestuurd is, dan werkt die gewoon.
+
 ## 0.6.30
 
 - **Gewone vragen over het huis gaan niet meer via het taalmodel**: "Welke lampen staan aan?", "Staan er ramen open?", "Hoe warm is het (in de slaapkamer / buiten)?", "Graag alle temperaturen", "Wie is er thuis?" en "Is Nikky thuis?" worden direct uit Home Assistant beantwoord, net als de auto in 0.6.29. Het kleine model liet lampen weg, verzon getallen of herhaalde een eerder fout antwoord. Alleen vragen die volledig uit bekende woorden bestaan krijgen zo'n vast antwoord; een lamp bij naam, een opdracht of een vraag over het verleden gaat nog naar de agent.

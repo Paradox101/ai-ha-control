@@ -140,7 +140,7 @@ WEATHER_NL = {"clear-night": "helder", "cloudy": "bewolkt", "fog": "mist", "hail
               "windy": "wind", "windy-variant": "wind en wolken", "exceptional": "uitzonderlijk weer"}
 
 
-def climate_text(ent: EntityInfo, nl: bool = True) -> str:
+def climate_text(ent: EntityInfo, nl: bool = True, with_id: bool = True) -> str:
     """"Woonkamer Airco (Woonkamer, climate.x): uit, nu 19,9 °C" instead of every attribute: hvac_modes,
     min_temp and max_temp took a third of the snapshot and the model never needs them to answer."""
     a = ent.attributes
@@ -159,8 +159,9 @@ def climate_text(ent: EntityInfo, nl: bool = True) -> str:
         parts.append(f"{'doel' if nl else 'target'} {fmt_number(target, nl)} °C")
     if a.get("preset_mode") and a.get("preset_mode") != "none":
         parts.append(f"preset {a['preset_mode']}")
-    where = f"{ent.area}, " if ent.area and normalize(ent.area) not in normalize(ent.name) else ""
-    return f"{ent.name} ({where}{ent.entity_id}): {', '.join(parts)}"
+    where = [ent.area] if ent.area and normalize(ent.area) not in normalize(ent.name) else []
+    where += [ent.entity_id] if with_id else []
+    return f"{ent.name}{f' ({chr(44).join(where)})' if where else ''}: {', '.join(parts)}"
 
 
 def weather_text(index: EntityIndex, nl: bool = True) -> str | None:

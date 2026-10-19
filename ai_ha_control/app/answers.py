@@ -12,7 +12,8 @@ from typing import Any
 
 from .config import Config
 from .ha.index import EntityIndex, EntityInfo, NON_ROOM_AREAS, normalize
-from .house import QUESTION_START, car_answer, fmt_number, outside_temperature, readings_text, room_readings
+from .house import (QUESTION_START, car_answer, climate_text, fmt_number, outside_temperature, readings_text,
+                    room_readings)
 
 STATUS_START = QUESTION_START | {"welke", "wie", "staan", "zijn", "waar", "brandt", "branden", "which", "who", "are",
                                  "is", "any", "graag", "geef", "noem", "toon", "give", "show", "list"}
@@ -33,6 +34,17 @@ TEMP_WORDS = {"temperatuur", "temperaturen", "warm", "koud", "graden", "temperat
 OUTSIDE_WORDS = {"buiten", "outside", "buitentemperatuur"}
 PEOPLE_WORDS = {"wie", "who", "iemand", "iedereen", "everyone", "everybody", "anyone", "somebody", "someone", "niemand", "nobody"}
 HOME_WORDS = {"thuis", "home", "weg", "away"}
+# "Staat de keukenlamp aan?": one device by name, asked about its state.
+STATE_WORDS = {"aan", "uit", "open", "dicht", "gesloten", "slot", "brandt", "draait", "speelt", "status", "stand",
+               "ingeschakeld", "uitgeschakeld", "on", "off", "closed", "locked", "running", "playing"}
+NAMED_DOMAINS = {"alarm_control_panel", "light", "switch", "fan", "cover", "climate", "media_player", "lock", "input_boolean", "humidifier",
+                 "water_heater", "vacuum"}
+DOMAIN_RANK = ["climate", "media_player", "light", "cover", "lock", "alarm_control_panel", "vacuum", "fan",
+               "humidifier", "water_heater", "binary_sensor", "switch", "input_boolean"]
+STATE_NL = {"on": "aan", "off": "uit", "open": "open", "closed": "dicht", "opening": "gaat open",
+            "closing": "gaat dicht", "playing": "speelt", "paused": "gepauzeerd", "idle": "doet niets",
+            "standby": "stand-by", "unavailable": "niet bereikbaar", "unknown": "onbekend", "cleaning": "is bezig",
+            "docked": "staat in het station", "returning": "gaat terug naar het station"}
 
 
 def _areas(index: EntityIndex) -> dict[str, set[str]]:
@@ -148,6 +160,51 @@ def _who(index: EntityIndex, tokens: set[str], nl: bool) -> str | None:
     return ("Er is niemand thuis" if nl else "Nobody is home") + (f": {others}." if others else ".")
 
 
+def _named(index: EntityIndex, areas: list[str], area_words: set[str], rest: set[str], nl: bool) -> str | None:
+    """Devices named in the question ("keukenlamp", "de airco" for "Woonkamer Airco"): their state. A name may
+    leave out its own room. More than four matches go to the agent."""
+    name_words = rest - STATE_WORDS
+    if not name_words:
+        return None
+    found = []
+    for ent in index.entities.values():
+        if ent.domain not in NAMED_DOMAINS and not index.is_opening(ent):
+            continue
+        if areas and ent.area not in areas:
+            continue
+        for name in [ent.name, *ent.aliases]:
+            tokens = set(normalize(name).split())
+            own_area = set(normalize(ent.area).split()) if ent.area else set()
+            if name_words <= tokens <= rest | area_words | own_area:
+                found.append(ent)
+                break
+    # One device often has several entities with the same name (a TV as media player and as switch): the one
+    # that best says what it is doing, and not one that is unreachable.
+    def rank(ent: EntityInfo) -> tuple[bool, int]:
+        return (ent.state in ("unavailable", "unknown"),
+                DOMAIN_RANK.index(ent.domain) if ent.domain in DOMAIN_RANK else len(DOMAIN_RANK))
+
+    best: dict[str, EntityInfo] = {}
+    for ent in sorted(found, key=rank):
+        best.setdefault(normalize(ent.name), ent)
+    found = list(best.values())
+    if not 1 <= len(found) <= 4:
+        return None
+
+    def line(ent: EntityInfo) -> str:
+        if ent.domain == "climate":
+            return climate_text(ent, nl, with_id=False)
+        if ent.domain in ("lock", "binary_sensor", "alarm_control_panel"):
+            state = ent.readable_state
+        else:
+            state = STATE_NL.get(ent.state, ent.state) if nl else ent.state
+        where = f" ({ent.area})" if len(found) > 1 and ent.area and normalize(ent.area) not in normalize(ent.name) \
+            else ""
+        return f"{ent.name.strip()}{where}: {state}"
+
+    return "; ".join(line(e) for e in sorted(found, key=lambda e: (e.area or "", e.name))) + "."
+
+
 def status_answer(index: EntityIndex, config: Config, question: str, profiles: list[dict[str, Any]] | tuple = (),
                   voice: bool = False) -> str | None:
     """The answer to a plain status question, or None when the agent should handle it."""
@@ -167,6 +224,8 @@ def status_answer(index: EntityIndex, config: Config, question: str, profiles: l
         return _openings(index, areas, nl, voice)
     if rest <= TEMP_WORDS | OUTSIDE_WORDS and rest & (TEMP_WORDS | {"buitentemperatuur"}):
         return _temperatures(index, config, list(profiles), areas, bool(rest & OUTSIDE_WORDS), nl, voice)
+    if rest & STATE_WORDS and (named := _named(index, areas, area_words, rest, nl)):
+        return named
     people = _people(index)
     names = set().union(*(_person_names(p) for p in people)) if people else set()
     if not areas and tokens & HOME_WORDS and rest <= PEOPLE_WORDS | HOME_WORDS | names \

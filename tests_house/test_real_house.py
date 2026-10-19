@@ -96,4 +96,8 @@ def test_status_questions_from_the_house(index):
     assert status_answer(index, config, "Welke lampen staan aan?") == "Er staan geen lampen aan."
     assert status_answer(index, config, "Staan er ramen open?") == "Alle ramen en deuren met een sensor zijn dicht."
     assert status_answer(index, config, "Hoe vol is de auto?").startswith("De accu is 75 % vol")
-    assert status_answer(index, config, "staat de hoeklamp aan?") is None
+    assert status_answer(index, config, "staat de hoeklamp aan?") == "Hoeklamp: uit."
+    # Four entities called "TV Woonkamer": the media player speaks for them.
+    assert status_answer(index, config, "staat de tv aan?") == "TV Woonkamer: aan."
+    assert status_answer(index, config, "staat de airco aan?") == (
+        "Slaapkamer Airco (Slaapkamer achterkant): uit, nu 20 °C; Woonkamer Airco: uit, nu 19,9 °C.")
