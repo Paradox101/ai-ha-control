@@ -350,3 +350,48 @@ async def test_home_doctor_finds_broken_things(ctx, notifier):
 async def test_healthy_home_sends_nothing(ctx, notifier):
     assert format_report({}).startswith("Alles gezond")
     assert await send_health_report(ctx) == ""
+
+
+# --- presence simulation --------------------------------------------------------------------------------
+
+from app.watcher.simulation import PresenceSimulator  # noqa: E402
+
+
+async def test_presence_simulation_follows_learned_use(ctx, notifier):
+    ctx.config.presence_simulation = True
+    set_state(ctx.index, "light.keuken", "off")
+    ctx.index.update_state({"entity_id": "sun.sun", "state": "below_horizon", "attributes": {}})
+    ctx.index.update_state({"entity_id": "binary_sensor.keuken_beweging", "state": "off",
+                            "attributes": {"friendly_name": "Beweging keuken", "device_class": "motion"}})
+    ctx.index.entities["binary_sensor.keuken_beweging"].area = "Keuken"
+    for hour, count in [(19, 40), (20, 30), (21, 5)]:
+        for _ in range(count):
+            ctx.db.activity_increment("binary_sensor.keuken_beweging", hour)
+    sim = PresenceSimulator(ctx)
+    evening = next(datetime(2026, 10, d, 19, 50) for d in range(1, 29)
+                   if sim.wanted("Keuken", datetime(2026, 10, d, 19, 50)))
+
+    await sim.tick("thuis", evening)
+    assert ctx.ha.calls == []  # only on vacation
+    await sim.tick("vakantie", evening)
+    assert ("light", "turn_on", {}, {"entity_id": ["light.keuken"]}) in ctx.ha.calls
+    set_state(ctx.index, "light.keuken", "on")
+    calls = len(ctx.ha.calls)
+    await sim.tick("vakantie", evening)
+    assert len(ctx.ha.calls) == calls  # no repeats
+    await sim.tick("vakantie", evening.replace(hour=23, minute=50) + timedelta(hours=1))
+    assert ("light", "turn_off", {}, {"entity_id": ["light.keuken"]}) in ctx.ha.calls
+
+
+def test_presence_simulation_hours(ctx):
+    sim = PresenceSimulator(ctx)
+    ctx.db.activity_increment("binary_sensor.x", 20)
+    ctx.index.update_state({"entity_id": "binary_sensor.x", "state": "off",
+                            "attributes": {"friendly_name": "X", "device_class": "motion"}})
+    ctx.index.entities["binary_sensor.x"].area = "Woonkamer"
+    days = [datetime(2026, 10, d, 20, 30) for d in range(1, 29)]
+    used = sum(sim.in_use("Woonkamer", d) for d in days)
+    assert 18 <= used < 28  # mostly, but not every evening
+    assert not any(sim.in_use("Woonkamer", d.replace(hour=15)) for d in days)
+    assert sim.in_use("Zolder", datetime(2026, 10, 1, 20, 30)) is False  # no data, no living room
+    assert not sim.wanted("Woonkamer", datetime(2026, 10, 2, 1, 30))

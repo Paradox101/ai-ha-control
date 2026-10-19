@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.13
+
+- **Aanwezigheid nabootsen op vakantie** (`presence_simulation`, standaard uit): in de huismodus vakantie gaan 's avonds na zonsondergang in de ruimtes die je normaal gebruikt lampen aan en uit, op basis van de geleerde bewegingsactiviteit per uur (zonder leerdata: woonkamer/keuken 18-23 uur), met wat willekeur in tijd en dagen. Alleen lampen, één per ruimte; na middernacht alles uit. Stopt bij thuiskomst of als *Zelf handelen* uit staat.
+
 ## 0.6.12
 
 - **Huisdokter**: maandagochtend één melding (alleen als er iets is) met automatiseringen die een fout hebben, uit staan, al 60 dagen niet liepen of naar niet-bestaande of al dagen onbereikbare apparaten verwijzen; beschikbare updates; apparaten die al 3 dagen onbereikbaar zijn; een bijna volle schijf en lege batterijen. Ook op vraag in de chat ("hoe gezond is mijn Home Assistant?"). Alleen lezen (`health_report`).

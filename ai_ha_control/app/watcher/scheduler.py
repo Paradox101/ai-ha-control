@@ -91,6 +91,7 @@ class Scheduler:
         self.thresholds = None
         self._previous_mode: str | None = None
         self.appliances = None
+        self.simulation = None
         self._agent_task: asyncio.Task | None = None
         self._llm_checked = -1e9
         self.llm_down_since: float | None = None
@@ -197,6 +198,8 @@ class Scheduler:
             await self.thresholds.tick(mode)
         if self.appliances is not None and not settling:
             await self.appliances.tick(mode)
+        if self.simulation is not None and not settling:
+            await self.simulation.tick(mode, now)
         if self.patrol is not None and not settling and self.patrol.due(mode):
             await self.patrol.run()
         if self.incidents is not None:

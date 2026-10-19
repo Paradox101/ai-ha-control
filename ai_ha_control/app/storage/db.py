@@ -647,6 +647,15 @@ class Database:
         self._conn.commit()
         return count
 
+    def activity_by_hour(self, entity_ids: list[str]) -> dict[int, int]:
+        """Learned activations per hour of the day, summed over the given sensors."""
+        if not entity_ids:
+            return {}
+        marks = ",".join("?" * len(entity_ids))
+        rows = self._rows(f"SELECT bucket, SUM(count) AS n FROM activity WHERE entity_id IN ({marks}) "
+                          "GROUP BY bucket", tuple(entity_ids))
+        return {int(r["bucket"]): int(r["n"]) for r in rows}
+
     def first_seen(self, entity_id: str) -> float:
         now = time.time()
         self._conn.execute("INSERT OR IGNORE INTO observed (entity_id, first_seen) VALUES (?, ?)", (entity_id, now))

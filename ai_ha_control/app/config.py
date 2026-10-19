@@ -108,6 +108,8 @@ class Config:
     leak_flow_hours: float = 2.0
     # Monday morning: broken automations, updates, dead devices (only when there is something)
     health_report: bool = True
+    # On vacation: lights on and off in the evening like the house is normally used (opt-in)
+    presence_simulation: bool = False
     calendar_context: bool = True
     energy_context: bool = True
     api_key: str = ""

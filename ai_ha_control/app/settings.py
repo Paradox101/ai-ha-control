@@ -137,6 +137,8 @@ SECTIONS: list[dict[str, Any]] = [
            min=0, max=24, step=0.5, unit="uur"),
         _f("health_report", "Huisdokter", "toggle",
            "Maandagochtend een overzicht van kapotte automatiseringen, updates en dode apparaten (alleen als er iets is)."),
+        _f("presence_simulation", "Aanwezigheid nabootsen op vakantie", "toggle",
+           "In de huismodus vakantie 's avonds lampen aan en uit zoals het huis normaal gebruikt wordt. Alleen lampen."),
         _f("escalate_minutes", "Alarm herhalen als niemand 'Gezien' drukt na", "number",
            "Naar iedereen en omroepen op de speakers, maximaal 3 keer. 0 = uit.", min=0, max=60, step=1, unit="min"),
     ]},

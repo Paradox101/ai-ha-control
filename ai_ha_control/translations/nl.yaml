@@ -133,6 +133,9 @@ configuration:
   health_report:
     name: Huisdokter
     description: Maandagochtend een overzicht van kapotte automatiseringen, updates en dode apparaten
+  presence_simulation:
+    name: Aanwezigheid nabootsen op vakantie
+    description: In de huismodus vakantie 's avonds lampen aan en uit zoals het huis normaal gebruikt wordt (alleen lampen)
   escalate_minutes:
     name: Alarm herhalen na (minuten)
     description: "Kritieke meldingen zonder 'Gezien' gaan opnieuw naar iedereen en worden omgeroepen, maximaal 3 keer. 0 = uit."

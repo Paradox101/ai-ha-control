@@ -133,6 +133,9 @@ configuration:
   health_report:
     name: Home doctor
     description: Monday morning: broken automations, updates and dead devices
+  presence_simulation:
+    name: Simulate presence on vacation
+    description: In vacation mode, lights go on and off in the evening the way the house is normally used (lights only)
   escalate_minutes:
     name: Repeat alarms after (minutes)
     description: "Critical notifications nobody marked as 'Seen' are sent to everybody again and announced, at most 3 times. 0 = off."

@@ -43,6 +43,7 @@ from .watcher.patrol import Patrol
 from .watcher.routines import accept_suggestion
 from .watcher.rules import Watcher, apply_feedback
 from .watcher.scheduler import Scheduler
+from .watcher.simulation import PresenceSimulator
 
 _LOGGER = logging.getLogger("ai_ha_control")
 STATIC_DIR = Path(__file__).parent / "web" / "static"
@@ -151,6 +152,7 @@ class App:
         self.comfort = ComfortController(self.ctx)
         self.thresholds = ThresholdMonitor(self.ctx, self.incidents)
         self.appliances = ApplianceMonitor(self.ctx, self.notifier, self.incidents)
+        self.simulation = PresenceSimulator(self.ctx)
         self.incidents.on_event = lambda data: self.ha.fire_event("ai_ha_control_incident", data)
         self.watcher.agent, self.watcher.incidents = self.guardian, self.incidents
         self.watcher.baseline, self.watcher.snapshots = self.baseline, self.snapshots
@@ -159,6 +161,7 @@ class App:
         s.agent, s.baseline, s.patrol = self.guardian, self.baseline, self.patrol
         s.incidents, s.snapshots, s.publisher = self.incidents, self.snapshots, self.publisher
         s.comfort, s.thresholds, s.appliances = self.comfort, self.thresholds, self.appliances
+        s.simulation = self.simulation
         self.ha.on_connect(self.refresh_index)
         self.ha.on_connect(self.watcher.on_connected)
         self.ha.on_event("homeassistant_started", self.watcher.on_ha_started)
