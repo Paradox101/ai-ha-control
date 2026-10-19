@@ -10,6 +10,9 @@ import secrets
 import uuid
 from pathlib import Path
 
+import asyncio
+import json
+
 import aiohttp
 from aiohttp import web
 
@@ -32,6 +35,25 @@ _LOGGER = logging.getLogger("ai_ha_control")
 STATIC_DIR = Path(__file__).parent / "web" / "static"
 INGRESS_PROXY = ipaddress.ip_address("172.30.32.2")
 DISCOVERY_SERVICE = "ai_ha_control"
+REGISTRY_EVENTS = ("entity_registry_updated", "device_registry_updated", "area_registry_updated")
+REFRESH_DELAY = 5  # seconds; registry changes often come in bursts
+
+
+def query_int(request: web.Request, name: str, default: int, maximum: int) -> int:
+    try:
+        return max(1, min(int(request.query.get(name, default)), maximum))
+    except ValueError:
+        raise web.HTTPBadRequest(text=f"invalid {name}") from None
+
+
+async def json_body(request: web.Request) -> dict:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise web.HTTPBadRequest(text="invalid JSON") from None
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected a JSON object")
+    return body
 
 
 def load_api_key(config: Config) -> str:
@@ -62,6 +84,7 @@ class App:
         self.notifier: Notifier | None = None
         self.watcher: Watcher | None = None
         self.scheduler: Scheduler | None = None
+        self._refresh_task: asyncio.Task | None = None
 
     async def startup(self, _app: web.Application) -> None:
         self.session = aiohttp.ClientSession()
@@ -86,6 +109,8 @@ class App:
         self.ha.on_state_changed(self.index.handle_state_changed)
         self.ha.on_state_changed(self.watcher.handle_state_changed)
         self.ha.on_event("mobile_app_notification_action", self.watcher.handle_notification_action)
+        for event_type in REGISTRY_EVENTS:
+            self.ha.on_event(event_type, self.schedule_refresh)
         await self.ha.start()
         self.scheduler.start()
         await self.announce_discovery()
@@ -93,6 +118,8 @@ class App:
     async def shutdown(self, _app: web.Application) -> None:
         if self.scheduler:
             self.scheduler.stop()
+        if self._refresh_task:
+            self._refresh_task.cancel()
         if self.ha:
             await self.ha.stop()
         if self.session:
@@ -115,6 +142,19 @@ class App:
             services=await self.ha.get_services(),
             allowed=allowed,
         )
+
+    def schedule_refresh(self, _data: dict) -> None:
+        """Reload the index shortly after entities, devices or areas change."""
+        if self._refresh_task and not self._refresh_task.done():
+            self._refresh_task.cancel()
+        self._refresh_task = asyncio.create_task(self._delayed_refresh())
+
+    async def _delayed_refresh(self) -> None:
+        await asyncio.sleep(REFRESH_DELAY)
+        try:
+            await self.refresh_index()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Index refresh failed: %s", err)
 
     async def announce_discovery(self) -> None:
         """Let the Assist integration find this add-on automatically (Supervisor discovery)."""
@@ -163,7 +203,7 @@ class App:
 
     async def chat(self, request: web.Request) -> web.Response:
         assert self.agent
-        body = await request.json()
+        body = await json_body(request)
         message = (body.get("message") or "").strip()
         if not message:
             return web.json_response({"error": "empty message"}, status=400)
@@ -184,7 +224,7 @@ class App:
     async def conversation(self, request: web.Request) -> web.Response:
         """Endpoint for the Assist conversation agent integration."""
         assert self.agent
-        body = await request.json()
+        body = await json_body(request)
         text = (body.get("text") or "").strip()
         conversation_id = body.get("conversation_id") or uuid.uuid4().hex
         if not text:
@@ -208,16 +248,14 @@ class App:
         return web.json_response(result, status=404 if result.get("status") == "error" else 200)
 
     async def audit(self, request: web.Request) -> web.Response:
-        limit = min(int(request.query.get("limit", 100)), 500)
-        return web.json_response(self.db.audit_log(limit))
+        return web.json_response(self.db.audit_log(query_int(request, "limit", 100, 500)))
 
     async def events(self, request: web.Request) -> web.Response:
-        limit = min(int(request.query.get("limit", 100)), 500)
-        return web.json_response(self.db.events(limit=limit))
+        return web.json_response(self.db.events(limit=query_int(request, "limit", 100, 500)))
 
     async def memories(self, request: web.Request) -> web.Response:
         if request.method == "POST":
-            text = ((await request.json()).get("text") or "").strip()
+            text = ((await json_body(request)).get("text") or "").strip()
             if not text:
                 return web.json_response({"error": "empty"}, status=400)
             self.db.add_memory(text[:500])
@@ -270,7 +308,7 @@ class App:
             request.query.get("q", ""),
             area=request.query.get("area"),
             domain=request.query.get("domain"),
-            limit=min(int(request.query.get("limit", 50)), 500),
+            limit=query_int(request, "limit", 50, 500),
         )
         return web.json_response([e.compact(with_attributes=True) for e in results])
 
@@ -281,7 +319,7 @@ def access_middleware(api_key: str, supervised: bool):
     @web.middleware
     async def middleware(request: web.Request, handler):
         auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:], api_key):
+        if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].encode(), api_key.encode()):
             return await handler(request)
         if not supervised:
             return await handler(request)

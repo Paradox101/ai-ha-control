@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "AI HA Control",
-        "description": "Verbind met de AI HA Control add-on. De API-sleutel staat in het logboek van de add-on.",
+        "description": "Verbind met de AI HA Control add-on. De URL en API-sleutel staan in AI Huis, tabblad 'Koppelen'.",
         "data": {
           "url": "Add-on URL",
           "api_key": "API-sleutel"

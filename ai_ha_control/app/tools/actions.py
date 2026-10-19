@@ -110,6 +110,8 @@ async def resolve_confirmation(ctx: ToolContext, action_id: str, approve: bool) 
     else:
         p = pending.payload
         result = await execute(ctx, p["domain"], p["service"], p["entity_ids"], p["data"], confirmed=True)
+    if result.get("status") == "error":
+        ctx.confirmations.add(pending)  # keep it so the user can try again
     return {**result, "description": pending.description}
 
 

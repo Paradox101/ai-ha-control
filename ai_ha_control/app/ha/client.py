@@ -33,6 +33,7 @@ class HAClient:
         self._connect_callbacks: list[Callable[[], Awaitable[None]]] = []
         self._connected = asyncio.Event()
         self._runner: asyncio.Task | None = None
+        self._callback_tasks: set[asyncio.Task] = set()
         self.ha_version: str | None = None
 
     @property
@@ -121,10 +122,15 @@ class HAClient:
             for callback in self._event_callbacks.get(event_type, []):
                 try:
                     result = callback(event.get("data", {}))
-                    if asyncio.iscoroutine(result):
-                        await result
                 except Exception:  # noqa: BLE001
                     _LOGGER.exception("%s callback failed", event_type)
+                    continue
+                if asyncio.iscoroutine(result):
+                    # Never await here: the reader must keep reading, or commands sent
+                    # from the callback would wait for their reply forever.
+                    task = asyncio.create_task(self._run_callback(result, event_type))
+                    self._callback_tasks.add(task)
+                    task.add_done_callback(self._callback_tasks.discard)
             return
         fut = self._pending.pop(msg.get("id"), None)
         if fut is None or fut.done():
@@ -134,6 +140,13 @@ class HAClient:
         else:
             error = msg.get("error") or {}
             fut.set_exception(HAError(f"{error.get('code')}: {error.get('message')}"))
+
+    @staticmethod
+    async def _run_callback(coro: Awaitable[None], event_type: str) -> None:
+        try:
+            await coro
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("%s callback failed", event_type)
 
     async def _send_command(self, payload: dict[str, Any], timeout: float = 30) -> Any:
         if self._ws is None or self._ws.closed:
@@ -167,15 +180,28 @@ class HAClient:
         return await self.command({"type": "config/device_registry/list"})
 
     async def entity_registry(self) -> list[dict[str, Any]]:
-        return await self.command({"type": "config/entity_registry/list"})
+        entries = await self.command({"type": "config/entity_registry/list"})
+        # The list only has the short form; aliases are in the extended entries.
+        try:
+            extended = await self.command(
+                {"type": "config/entity_registry/get_entries", "entity_ids": [e["entity_id"] for e in entries]},
+                timeout=60,
+            )
+        except (HAError, asyncio.TimeoutError) as err:
+            _LOGGER.warning("Could not read entity aliases: %s", err)
+            return entries
+        for entry in entries:
+            details = (extended or {}).get(entry["entity_id"]) or {}
+            entry["aliases"] = details.get("aliases") or []
+        return entries
 
-    async def exposed_entities(self) -> set[str] | None:
-        """Entities exposed to Assist, or None when unavailable."""
+    async def exposed_entities(self) -> set[str]:
+        """Entities exposed to Assist; empty (nothing allowed) when the list cannot be read."""
         try:
             result = await self.command({"type": "homeassistant/expose_entity/list"})
-        except HAError as err:
-            _LOGGER.warning("Could not read exposed entities: %s", err)
-            return None
+        except (HAError, asyncio.TimeoutError) as err:
+            _LOGGER.error("Could not read exposed entities, exposing nothing: %s", err)
+            return set()
         exposed = result.get("exposed_entities", {})
         return {eid for eid, assistants in exposed.items() if assistants.get("conversation")}
 

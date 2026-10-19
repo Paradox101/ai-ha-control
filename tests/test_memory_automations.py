@@ -37,6 +37,27 @@ def test_find_routines_weekdays():
     assert (r.entity_id, r.state, r.time, r.weekdays_only, r.days) == ("light.keuken", "on", "06:50", True, 10)
 
 
+def test_find_routines_around_midnight():
+    entries = [logbook_entry("light.keuken", "off", day, 23, 55) for day in range(0, 14, 2)]
+    entries += [logbook_entry("light.keuken", "off", day, 0, 5) for day in range(1, 14, 2)]
+    (routine,) = find_routines(entries, TZ)
+    assert routine.time in ("23:55", "00:00", "00:05") and routine.days >= 7
+
+
+async def test_failed_confirmation_can_be_retried(ctx):
+    result = await run(ctx, "call_service", domain="lock", service="unlock", entity_ids=["lock.voordeur"])
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("HA niet bereikbaar")
+    working = ctx.ha.call_service
+    ctx.ha.call_service = broken
+    out = await resolve_confirmation(ctx, result["confirmation_id"], approve=True)
+    assert out["status"] == "error"
+    ctx.ha.call_service = working
+    out = await resolve_confirmation(ctx, result["confirmation_id"], approve=True)
+    assert out["status"] == "ok"
+
+
 def test_automation_for_suggestion():
     config = automation_for({"entity_id": "cover.garagedeur", "state": "closed", "time": "22:30",
                              "weekdays_only": False, "description": "x"}, "Garagedeur")

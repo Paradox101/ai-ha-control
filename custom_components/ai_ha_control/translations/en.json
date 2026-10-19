@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "AI HA Control",
-        "description": "Connect to the AI HA Control add-on. The API key is shown in the add-on log.",
+        "description": "Connect to the AI HA Control add-on. Find the URL and API key in the AI Huis panel, tab 'Koppelen'.",
         "data": {
           "url": "Add-on URL",
           "api_key": "API key"

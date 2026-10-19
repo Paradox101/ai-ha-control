@@ -47,11 +47,15 @@ USEFUL_ATTRIBUTES: dict[str, tuple[str, ...]] = {
 SAFETY_CLASSES = {"smoke", "gas", "carbon_monoxide", "moisture", "safety", "heat"}
 OPENING_CLASSES = {"door", "window", "opening", "garage_door"}
 DETECTION_CLASSES = {"motion", "occupancy", "presence"}
-DETECTION_WORDS = ("person", "persoon", "vehicle", "voertuig", "visitor", "bezoeker", "doorbell", "deurbel",
-                   "pet", "dier", "animal", "package", "pakket", "face")
+DETECTION_WORDS = ("person", "persoon", "people", "vehicle", "voertuig", "car", "visitor", "bezoeker", "doorbell",
+                   "deurbel", "pet", "dier", "animal", "dog", "cat", "package", "pakket", "face")
 DOORBELL_WORDS = ("visitor", "bezoeker", "doorbell", "deurbel")
 
 SKIP_DOMAINS = {"update", "persistent_notification", "conversation", "tts", "stt", "wake_word", "event"}
+
+
+def _object_tokens(ent: "EntityInfo") -> set[str]:
+    return set(ent.entity_id.split(".", 1)[1].split("_"))
 
 
 def normalize(text: str) -> str:
@@ -255,12 +259,11 @@ class EntityIndex:
             return False
         if ent.device_class in DETECTION_CLASSES:
             return True
-        object_id = ent.entity_id.split(".", 1)[1]
-        return any(word in object_id for word in DETECTION_WORDS)
+        return bool(_object_tokens(ent) & set(DETECTION_WORDS))
 
     @staticmethod
     def is_doorbell(ent: EntityInfo) -> bool:
-        return any(word in ent.entity_id for word in DOORBELL_WORDS)
+        return bool(_object_tokens(ent) & set(DOORBELL_WORDS))
 
     def camera_for(self, ent: EntityInfo) -> EntityInfo | None:
         """Camera on the same device (Reolink) or, failing that, in the same area."""

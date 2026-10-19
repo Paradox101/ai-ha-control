@@ -65,7 +65,8 @@ def find_routines(entries: list[dict[str, Any]], tz: ZoneInfo | None = None,
 
     routines = []
     for (eid, state), items in events.items():
-        items.sort()
+        # Repeat the early-morning events after midnight so 23:50 and 00:05 can form one cluster.
+        items = sorted(items + [(m + 24 * 60, d, wd) for m, d, wd in items if m < window])
         best: list[tuple[int, Any, int]] = []
         for i, (start, _, _) in enumerate(items):
             cluster = [it for it in items[i:] if it[0] - start <= window]

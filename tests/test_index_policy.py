@@ -47,3 +47,12 @@ def test_policy():
     assert policy.check("shell_command", "run", []).decision == Decision.DENY
     assert policy.check("homeassistant", "restart", []).decision == Decision.DENY
     assert policy.check("light", "turn_off", []).decision == Decision.CONFIRM
+
+
+def test_detection_sensor_tokens(index):
+    index.update_state({"entity_id": "binary_sensor.carpet_cleaner", "state": "off", "attributes": {}})
+    index.update_state({"entity_id": "binary_sensor.oprit_vehicle", "state": "off", "attributes": {}})
+    assert not index.is_detection_sensor(index.get("binary_sensor.carpet_cleaner"))
+    assert index.is_detection_sensor(index.get("binary_sensor.oprit_vehicle"))
+    assert index.is_doorbell(index.get("binary_sensor.voordeur_visitor"))
+    assert not index.is_doorbell(index.get("binary_sensor.voordeur_person"))

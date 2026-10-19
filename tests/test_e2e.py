@@ -1,6 +1,7 @@
 """End-to-end: real web app + HA client against a fake HA websocket and a fake Ollama."""
 
 import asyncio
+import time
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -32,7 +33,10 @@ def fake_home_assistant(service_calls: list) -> web.Application:
         }
         async for msg in ws:
             data = msg.json()
-            if data["type"] == "call_service":
+            if data["type"] == "config/entity_registry/get_entries":
+                await ws.send_json({"id": data["id"], "type": "result", "success": True, "result": {
+                    "light.keuken": {"aliases": ["kooklamp"]}}})
+            elif data["type"] == "call_service":
                 service_calls.append(data)
                 await ws.send_json({"id": data["id"], "type": "result", "success": True, "result": {}})
                 await ws.send_json({"id": 1, "type": "event", "event": {"event_type": "state_changed", "data": {
@@ -108,6 +112,9 @@ async def test_end_to_end(tmp_path):
         assert service_calls[0]["domain"] == "light" and service_calls[0]["service"] == "turn_off"
         assert service_calls[0]["target"] == {"entity_id": ["light.keuken"]}
         assert state.index.get("light.keuken").state == "off"
+        assert state.index.search("kooklamp")[0].entity_id == "light.keuken"  # alias from extended registry
+        assert (await client.get("/api/audit?limit=abc")).status == 400
+        assert (await client.post("/api/chat", data="geen json")).status == 400
         assert llm_requests[0]["options"]["num_ctx"] == config.context_size
         assert "Thuis" in llm_requests[0]["messages"][0]["content"]
 
@@ -148,3 +155,58 @@ async def test_assist_endpoint_requires_api_key(tmp_path, monkeypatch):
         await client.close()
         await ha_server.close()
         await ollama_server.close()
+
+
+async def test_event_callback_can_call_home_assistant(tmp_path):
+    """A callback that sends a command must not block the websocket reader (deadlock regression)."""
+    from app.ha.client import HAClient
+
+    service_calls = []
+    ha_server = TestServer(fake_home_assistant(service_calls))
+    await ha_server.start_server()
+    config = Config(ha_url=str(ha_server.make_url("")).rstrip("/"), ha_token="secret", data_dir=str(tmp_path))
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        client = HAClient(config, session)
+        done = asyncio.Event()
+
+        async def on_change(data):
+            await client.get_config()  # needs the reader to receive the reply
+            done.set()
+
+        client.on_state_changed(on_change)
+        await client.start()
+        try:
+            await client.wait_connected(5)
+            start = time.monotonic()
+            await client.call_service("light", "turn_off", target={"entity_id": ["light.keuken"]})
+            await asyncio.wait_for(done.wait(), 5)
+            assert time.monotonic() - start < 2
+        finally:
+            await client.stop()
+    await ha_server.close()
+
+
+async def test_registry_update_triggers_refresh(tmp_path, monkeypatch):
+    import app.main as main_module
+    monkeypatch.setattr(main_module, "REFRESH_DELAY", 0)
+    service_calls, llm_requests = [], []
+    ha_server = TestServer(fake_home_assistant(service_calls))
+    await ha_server.start_server()
+    config = Config(ha_url=str(ha_server.make_url("")).rstrip("/"), ha_token="secret", data_dir=str(tmp_path))
+    client = TestClient(TestServer(create_app(config)))
+    await client.start_server()
+    try:
+        state = client.app["state"]
+        await state.ha.wait_connected(5)
+        for _ in range(50):
+            if state.index.entities:
+                break
+            await asyncio.sleep(0.05)
+        state.index.entities.clear()
+        state.schedule_refresh({})
+        await state._refresh_task
+        assert len(state.index.entities) == len(STATES)
+    finally:
+        await client.close()
+        await ha_server.close()
