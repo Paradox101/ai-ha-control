@@ -190,3 +190,47 @@ async def test_scheduler_runs_bedtime_round_on_entering_sleep(ctx, notifier, mon
     for _ in range(5):
         await sched._autonomous_round(notifier.now())
     assert len(calls) == 2
+
+
+# --- reminders and planned actions ----------------------------------------------------------------------
+
+from datetime import datetime, timedelta  # noqa: E402
+
+from app.scheduled import parse_when, remind_me, run_due, schedule_action  # noqa: E402
+
+
+def test_parse_when(ctx):
+    now = datetime(2026, 10, 19, 20, 0)
+    assert parse_when(ctx, at="18:00", now=now) == datetime(2026, 10, 20, 18, 0)
+    assert parse_when(ctx, at="21:15", now=now) == datetime(2026, 10, 19, 21, 15)
+    assert parse_when(ctx, in_minutes=30, now=now) == now + timedelta(minutes=30)
+    assert isinstance(parse_when(ctx, at="straks", now=now), str)
+    assert isinstance(parse_when(ctx, now=now), str)
+    assert isinstance(parse_when(ctx, in_minutes=60 * 24 * 40, now=now), str)
+
+
+async def test_reminder_is_sent_when_due(ctx, notifier):
+    result = await remind_me(ctx, "Vuilnisbak buiten zetten", in_minutes=30)
+    assert result["status"] == "scheduled"
+    assert await run_due(ctx) == 0
+    assert await run_due(ctx, time.time() + 31 * 60) == 1
+    assert ctx.db.events()[0]["title"] == "⏰ Herinnering"
+    assert ctx.db.scheduled() == []
+
+
+async def test_planned_action_runs_through_policy(ctx, notifier):
+    light = await schedule_action(ctx, "light", "turn_off", ["light.keuken"], in_minutes=60)
+    lock = await schedule_action(ctx, "lock", "unlock", ["lock.voordeur"], in_minutes=90)
+    assert light["status"] == lock["status"] == "scheduled"
+    assert (await schedule_action(ctx, "light", "turn_off", ["light.bestaat_niet"], in_minutes=5))["status"] == "error"
+    assert await run_due(ctx, time.time() + 2 * 3600) == 2
+    assert ("light", "turn_off") in [c[:2] for c in ctx.ha.calls]
+    assert not any(c[0] == "lock" for c in ctx.ha.calls)  # doors are still asked, not done
+    assert [p.payload["entity_ids"] for p in ctx.confirmations.list()] == [["lock.voordeur"]]
+
+
+async def test_missed_action_is_not_run_late(ctx, notifier):
+    await schedule_action(ctx, "light", "turn_off", ["light.keuken"], in_minutes=5)
+    await run_due(ctx, time.time() + 86400)
+    assert not any(c[:2] == ("light", "turn_off") for c in ctx.ha.calls)
+    assert ctx.db.events()[0]["title"] == "⚙️ Geplande actie overgeslagen"

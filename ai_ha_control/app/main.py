@@ -523,6 +523,11 @@ class App:
 
     # --- Settings --------------------------------------------------------------------
 
+    async def scheduled(self, request: web.Request) -> web.Response:
+        if request.method == "DELETE":
+            self.db.cancel_scheduled(int(request.match_info["item_id"]))
+        return web.json_response(self.db.scheduled())
+
     def _watch_rules(self) -> list[dict]:
         return [{**r, "text": describe(r, self.index.get(r["entity_id"]))} for r in self.db.watch_rules()]
 
@@ -735,6 +740,8 @@ def create_app(config: Config) -> web.Application:
             web.post("/api/rules", state.rules),
             web.delete(r"/api/rules/{rule_id:\d+}", state.rules),
             web.post(r"/api/rules/{rule_id:\d+}/toggle", state.rule_toggle),
+            web.get("/api/scheduled", state.scheduled),
+            web.delete(r"/api/scheduled/{item_id:\d+}", state.scheduled),
             web.get("/api/watch-rules", state.watch_rules),
             web.post("/api/watch-rules", state.watch_rules),
             web.delete(r"/api/watch-rules/{rule_id:\d+}", state.watch_rules),

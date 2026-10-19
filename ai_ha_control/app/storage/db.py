@@ -209,6 +209,17 @@ CREATE TABLE IF NOT EXISTS watch_rules (
     alerted INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS scheduled (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    due REAL NOT NULL,
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    conversation_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
@@ -313,6 +324,7 @@ class Database:
         removed["incidents"] = cur.rowcount
         self._conn.execute("DELETE FROM incident_events WHERE incident_id NOT IN (SELECT id FROM incidents)")
         self._conn.execute("DELETE FROM followups WHERE done = 1 AND due < ?", (now - 30 * 86400,))
+        self._conn.execute("DELETE FROM scheduled WHERE status != 'pending' AND due < ?", (now - 30 * 86400,))
         self._conn.commit()
         self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         if sum(removed.values()) > 1000:
@@ -793,5 +805,31 @@ class Database:
 
     def delete_watch_rule(self, rule_id: int) -> bool:
         cur = self._conn.execute("DELETE FROM watch_rules WHERE id = ?", (rule_id,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    # --- Reminders and planned actions -----------------------------------------------
+
+    def add_scheduled(self, due: float, kind: str, text: str, payload: dict[str, Any],
+                      conversation_id: str | None = None) -> int:
+        return self._insert(
+            "INSERT INTO scheduled (ts, due, kind, text, payload, conversation_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (time.time(), due, kind, text, json.dumps(payload), conversation_id))
+
+    def scheduled(self) -> list[dict[str, Any]]:
+        return [{**r, "payload": json.loads(r["payload"])}
+                for r in self._rows("SELECT * FROM scheduled WHERE status = 'pending' ORDER BY due")]
+
+    def due_scheduled(self, now: float | None = None) -> list[dict[str, Any]]:
+        return [{**r, "payload": json.loads(r["payload"])} for r in self._rows(
+            "SELECT * FROM scheduled WHERE status = 'pending' AND due <= ? ORDER BY due", (now or time.time(),))]
+
+    def finish_scheduled(self, item_id: int) -> None:
+        self._conn.execute("UPDATE scheduled SET status = 'done' WHERE id = ?", (item_id,))
+        self._conn.commit()
+
+    def cancel_scheduled(self, item_id: int) -> bool:
+        cur = self._conn.execute("UPDATE scheduled SET status = 'cancelled' WHERE id = ? AND status = 'pending'",
+                                 (item_id,))
         self._conn.commit()
         return cur.rowcount > 0

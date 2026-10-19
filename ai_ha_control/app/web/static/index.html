@@ -233,7 +233,7 @@
     <h2>AI-prestaties</h2><div id="agent-perf"></div>
   </section>
 
-  <section id="tab-events" class="hidden"><div id="events"></div></section>
+  <section id="tab-events" class="hidden"><div id="scheduled"></div><div id="events"></div></section>
 
   <section id="tab-comfort" class="hidden">
     <p class="meta">Per ruimte wat je wilt; de agent regelt het zelf volgens de autonomie-instellingen (verwarming,
@@ -747,7 +747,21 @@
   };
 
   /* ---------------- Events ---------------- */
+  async function refreshScheduled() {
+    const list = await api("api/scheduled");
+    const box = $("scheduled"); box.replaceChildren();
+    if (!list.length) return;
+    box.appendChild(el("h3", "", "Gepland"));
+    for (const i of list) {
+      const c = el("div", "card spread");
+      c.append(el("div", "grow", `${i.kind === "reminder" ? "⏰" : "⚙️"} ${fmt(i.due)} · ${i.text}`),
+               btn("Annuleren", "small danger", async () => { await del(`api/scheduled/${i.id}`); refreshScheduled(); }));
+      box.appendChild(c);
+    }
+    box.appendChild(el("h3", "", "Meldingen"));
+  }
   async function refreshEvents() {
+    refreshScheduled();
     const list = await api("api/events?limit=200");
     const box = $("events"); box.replaceChildren();
     if (!list.length) return empty(box, "Nog geen meldingen.");

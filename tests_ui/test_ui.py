@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 
 import pytest
 from aiohttp.test_utils import TestServer
@@ -158,6 +159,12 @@ async def test_ui_alarm_seen_and_watch_rules(addon):
         await page.click("#watch-add")
         await page.wait_for_selector("#watch-rules .card:has-text('boven 25')")
         assert state.db.watch_rules()[0]["entity_id"] == "sensor.woonkamer_temperatuur"
+
+        state.db.add_scheduled(time.time() + 3600, "reminder", "Vuilnisbak buiten zetten", {})
+        await page.click("#nav button[data-tab='events']")
+        await page.click("#scheduled .card:has-text('Vuilnisbak') button:has-text('Annuleren')")
+        await page.wait_for_selector("#scheduled .card", state="detached")
+        assert state.db.scheduled() == []
         assert not await page.evaluate("document.documentElement.scrollWidth > window.innerWidth")
         await browser.close()
     assert not errors, errors

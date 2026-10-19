@@ -108,6 +108,10 @@ automation:
 
 Is alleen de AI-server (Ollama) weg, dan meldt de add-on dat zelf na `llm_down_minutes`.
 
+### Herinneringen en geplande acties
+
+In de chat of via Assist: "herinner me om 18:00 aan de vuilnisbak" of "zet over een uur de verwarming op 18 graden". Geplande dingen staan bovenaan het tabblad *Meldingen* en kun je daar annuleren. Een geplande actie volgt op het moment zelf dezelfde regels als een gewone opdracht: sloten, alarm en poorten worden dan nog op je telefoon gevraagd.
+
 ### Nachtronde
 
 Gaat het huis naar de slaapmodus (slaapscène of begin van `sleep_hours`), dan krijg je één melding met ramen en deuren die open staan, sloten en garage die niet dicht zijn en lampen die nog aan staan, met een knop *Lampen uit*. Voor elk slot en de garage komt een aparte vraag op je telefoon; de agent doet dat nooit zelf. Staat alles goed, dan krijg je niets.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.10
+
+- **Herinneringen en geplande acties** via de chat: "herinner me om 18:00 aan de vuilnisbak", "zet over een uur de verwarming op 18". Bewaard over herstarts, zichtbaar en te annuleren bovenaan het tabblad Meldingen. Een geplande actie gaat op het moment zelf door dezelfde regels: deuren en alarm worden dan nog op je telefoon gevraagd. Stond de add-on op dat moment uit, dan wordt een actie niet alsnog uren later uitgevoerd maar gemeld.
+
 ## 0.6.9
 
 - **Nachtronde**: bij het slapengaan één melding met open ramen/deuren, sloten of garage die niet dicht zijn en lampen die nog aan staan, met een knop *Lampen uit*. Sloten en garage alleen als vraag op de telefoon. Niets aan de hand = geen melding (`bedtime_check`).

@@ -405,9 +405,11 @@ AUTONOMOUS_AUTOMATION_TOOLS = {"list_automations", "get_automation", "related_au
 
 def build_registry() -> ToolRegistry:
     from ..comfort import comfort_tools  # comfort imports the agent package, which imports tools
+    from ..scheduled import SCHEDULE_TOOLS
     from ..watcher.thresholds import WATCH_TOOLS
 
-    return ToolRegistry(TOOLS + AUTOMATION_TOOLS + HOUSE_RULE_TOOLS + WATCH_TOOLS + comfort_tools() + CONTEXT_TOOLS)
+    return ToolRegistry(TOOLS + AUTOMATION_TOOLS + HOUSE_RULE_TOOLS + WATCH_TOOLS + SCHEDULE_TOOLS + comfort_tools()
+                        + CONTEXT_TOOLS)
 
 
 def build_autonomous_registry() -> ToolRegistry:

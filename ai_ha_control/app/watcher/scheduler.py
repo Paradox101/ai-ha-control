@@ -14,6 +14,7 @@ from ..notify import Notifier
 from ..tools.base import ToolContext
 from ..i18n import text as text_for
 from ..tools.context import agenda, energy_info
+from ..scheduled import run_due
 from .baseline import MODE_SLEEP, house_mode
 from .routines import analyze_routines
 from .rules import Watcher
@@ -154,6 +155,7 @@ class Scheduler:
         config = self._ctx.config
         await self._watcher.tick()
         await self._notifier.escalate()
+        await run_due(self._ctx)
         now = self._notifier.now()
         await self._autonomous_round(now)
         await self._check_llm()
