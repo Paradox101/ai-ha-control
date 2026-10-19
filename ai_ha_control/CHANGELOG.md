@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.21
+
+- **Chatgeschiedenis blijft staan**: na herladen of het opnieuw openen van de app zie je het gesprek weer, met dezelfde opmaak. Met **Nieuw gesprek** begin je opnieuw.
+
 ## 0.6.20
 
 - **Chat toont opmaak** in plaats van losse sterretjes: vetgedrukt, cursief, kopjes en (geneste) opsommingen worden netjes weergegeven. Veilig opgebouwd zonder HTML uit het antwoord. Ook de samenvatting gebruikt dit.
