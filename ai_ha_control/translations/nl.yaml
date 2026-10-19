@@ -90,6 +90,9 @@ configuration:
   sleep_hours:
     name: Slaaptijden
     description: Periode voor huismodus 'slapen', bijv. 23:00-07:00
+  camera_profiles:
+    name: Camera's
+    description: "camera=type. door = voordeur (alleen rondhangen melden), private = achtertuin/privé (elke persoon, kritiek met alarm aan), street = straat (alleen verdacht), off = negeren, auto = op naam"
   camera_patrol:
     name: Camerapatrouille
     description: Regelmatig camerabeelden vergelijken - off, away (als niemand thuis is of iedereen slaapt) of always

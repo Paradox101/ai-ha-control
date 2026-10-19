@@ -71,6 +71,7 @@ options:
   heartbeat_minutes: 10
   sleep_hours: "23:00-07:00"
   camera_patrol: away
+  camera_profiles: []
   patrol_minutes: 15
   snapshot_retention_days: 7
   autonomous_scenes: []
@@ -123,6 +124,8 @@ schema:
   heartbeat_minutes: int(1,120)
   sleep_hours: str?
   camera_patrol: list(off|away|always)
+  camera_profiles:
+    - match(^camera\.[a-z0-9_]+=(auto|door|private|street|off)$)
   patrol_minutes: int(5,240)
   snapshot_retention_days: int(1,90)
   autonomous_scenes:

@@ -64,6 +64,9 @@ class Patrol:
         self._last_run = time.monotonic()
         seen = 0
         for cam in self._ctx.index.cameras():
+            profile = self._ctx.index.camera_profile(cam, self._ctx.config.camera_profiles)
+            if profile == "off":
+                continue
             try:
                 image = await self._ctx.ha.camera_snapshot(cam.entity_id)
                 sig = signature(image)
@@ -81,11 +84,11 @@ class Patrol:
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Patrol analysis of %s failed: %s", cam.entity_id, err)
                 continue
-            if category in QUIET_CATEGORIES:
+            if category in QUIET_CATEGORIES or (profile == "street" and category != SUSPICIOUS):
                 continue
             seen += 1
             snapshot = self._snapshots.save(cam.entity_id, image)
-            text = f"{cam.name}: {description}"
+            text = f"{self._ctx.index.camera_label(cam)}: {description}"
             await self._incidents.report(
                 "presence", "Activiteit gezien tijdens patrouille", text,
                 severity="warning" if category == SUSPICIOUS else "info",

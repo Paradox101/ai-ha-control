@@ -29,6 +29,17 @@
 - **Leren van correcties**: zet je de thermostaat vaak met de hand anders dan het profiel, dan stelt de add-on voor het profiel aan te passen.
 - **Meldingen per persoon** (`person_notify`): de deurbel en comfortmeldingen gaan naar wie thuis is, alarmen naar iedereen. Optioneel een **avondoverzicht** (`digest_time`) voor niet-dringende meldingen.
 
+## 0.5.3 — Slimmere camerameldingen
+
+- Melding toont altijd het actuele camerabeeld (cachebuster op de snapshot-URL).
+- Meldingstekst is één korte zin over wie/wat er gebeurt, zonder beschrijving van straat of huizen.
+- Geen dubbele detecties meer voor de streams van één camera (Duidelijk/Vloeiend); titel zonder streamnaam.
+- Categorie wordt ook herkend als het model een regelovergang na het eerste woord zet; voorbijgangers worden daardoor weer alleen gelogd en niet gepusht.
+- Geparkeerde of stilstaande auto's tellen als "niets".
+- Iemand bij de voordeur wordt pas gemeld als die na 45 seconden nog staat zonder aan te bellen ("blijft rondhangen").
+- Persoon bij een privé-camera (achtertuin) terwijl het alarm aan staat: kritieke melding, ook in stille uren. Iets verdachts met alarm aan is ook kritiek.
+- Nieuwe instelling **Camera's → Wat wil je per camera horen?**: per camera Automatisch, Voordeur, Privé, Straat (alleen verdacht) of Negeren. Automatisch kiest Privé bij namen als achtertuin/tuin/schuur.
+
 ## 0.5.2 — Camera-analyse zonder GPU-geheugenfouten
 
 - Camerabeelden worden verkleind (max. 1280 px) voordat ze naar het beeldmodel gaan, en het beeldmodel draait met een kleine context (4096). Dat scheelt veel VRAM.

@@ -475,3 +475,20 @@ async def test_device_confirming_the_agents_change_is_not_a_reversal(ctx, notifi
     await watcher.handle_state_changed(event(ctx.index, "climate.thermostaat", "heat", "heat", temperature=21))
     assert ctx.db.recent_actions()[0]["feedback"] is None
     assert ctx.db.active_overrides() == {}
+
+
+async def test_door_and_camera_alarm_are_one_incident(ctx, notifier):
+    ctx.config.notify_service = "notify.mobile_app_telefoon"
+    ctx.index.update_state({"entity_id": "alarm_control_panel.huis", "state": "armed_away",
+                            "attributes": {"friendly_name": "Alarm"}})
+    ctx.index.update_state({"entity_id": "binary_sensor.achterdeur", "state": "off",
+                            "attributes": {"friendly_name": "Achterdeur", "device_class": "door"}})
+    watcher = Watcher(ctx, notifier)
+    watcher.incidents = IncidentManager(ctx.db, notifier)
+    await watcher.handle_state_changed(event(ctx.index, "binary_sensor.achterdeur", "off", "on"))
+    camera = ctx.index.get("camera.voordeur_clear")
+    await watcher._camera_alert("Persoon bij Achtertuin terwijl het alarm aan staat", "Iemand in de tuin", camera,
+                                None, severity="critical", critical=True)
+    assert len(pushes(ctx)) == 1
+    (incident,) = ctx.db.incidents(status="active")
+    assert len(ctx.db.get_incident(incident["id"])["events"]) == 2

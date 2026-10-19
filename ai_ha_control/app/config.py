@@ -81,6 +81,8 @@ class Config:
     heartbeat_minutes: int = 10
     sleep_hours: str = "23:00-07:00"
     camera_patrol: str = "away"  # off | away | always
+    # Per camera what's worth a notification: "camera.x=auto|door|private|street|off"
+    camera_profiles: list[str] = field(default_factory=list)
     patrol_minutes: int = 15
     snapshot_retention_days: int = 7
     # Scenes/scripts the agent may start by itself (all others: ask)
