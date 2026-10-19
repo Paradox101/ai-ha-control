@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.1 — Hardening, snellere Assist en echte entiteiten
+## 0.6.2 — Hardening, snellere Assist en echte entiteiten
 
 ### Beveiliging en betrouwbaarheid
 - **AppArmor-profiel**: de add-on zelf mag alleen nog `/data` schrijven; code, HA-config, back-ups en media zijn afgeschermd.

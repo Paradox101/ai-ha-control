@@ -165,7 +165,7 @@ De integratie geeft ook de actie `ai_ha_control.ask` (met antwoord), te gebruike
 
 **Sneller**: zet in de spraakassistent **"Prefer handling commands locally"** (*Commando's lokaal afhandelen*) aan. Simpele commando's als "doe de keukenlamp aan" doet HA dan zelf in een fractie van een seconde; alleen vragen en lastige opdrachten gaan naar de AI. Antwoorden van de AI worden gestreamd, en de ruimte van de spraaksatelliet gaat mee ("doe het licht aan" = licht in die ruimte).
 
-Vanaf versie 0.6.1 heeft de integratie Home Assistant 2025.6 of nieuwer nodig.
+Vanaf versie 0.6.2 heeft de integratie Home Assistant 2025.6 of nieuwer nodig.
 
 ## Opties
 
