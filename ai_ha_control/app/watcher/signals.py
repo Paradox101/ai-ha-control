@@ -51,7 +51,7 @@ class HouseSignals:
         what = "trilling" if ent.device_class == "vibration" else "sabotage"
         where = f" ({ent.area})" if ent.area else ""
         text = f"{ent.device or ent.name}{where} meldt {what} terwijl het alarm aan staat."
-        camera = index.camera_for(ent)
+        camera = index.camera_for(ent, self._ctx.config.camera_profiles)
         if self._incidents is not None:
             await self._incidents.report("security", "Trilling of sabotage", text, severity="warning",
                                          entity_id=ent.entity_id, image_entity=camera.entity_id if camera else None,

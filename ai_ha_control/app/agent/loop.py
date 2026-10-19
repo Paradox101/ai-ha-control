@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
@@ -22,6 +23,8 @@ DAYS_NL = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag",
 _LOGGER = logging.getLogger(__name__)
 
 HISTORY_MESSAGES = 8
+# The web chat keeps one conversation for days; older turns describe a house that has changed since.
+HISTORY_MAX_AGE = 6 * 3600
 SMALLTALK = {"bedankt", "dank je", "dankjewel", "dank je wel", "thanks", "top", "super", "mooi", "prima", "ok",
              "oke", "hoi", "hallo", "goedemorgen", "goedenavond", "welterusten", "hi", "hello", "thank you"}
 CHECK_FIRST = (
@@ -36,8 +39,8 @@ CHECK_REMARK_RE = re.compile(
     r"^\s*[^.!?\n]*\b(momentopname|snapshot)\b[^.!?\n]*\b(beantwoord\w*|answers?|answered|volledig|complete)\b"
     r"[^.!?\n]*[.!?]\s*", re.I)
 MAX_MEMORIES = 30
-YES_WORDS = {"ja", "ja graag", "ja doe maar", "doe maar", "bevestig", "bevestigen", "akkoord", "prima", "oke",
-             "ok", "yes", "confirm", "go"}
+# Only clear answers: "ok" or "prima" is also how people acknowledge an answer, and must not run anything.
+YES_WORDS = {"ja", "ja graag", "ja doe maar", "doe maar", "bevestig", "bevestigen", "akkoord", "yes", "confirm"}
 NO_WORDS = {"nee", "nee dank je", "niet doen", "annuleer", "annuleren", "stop", "no", "cancel"}
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
@@ -137,13 +140,21 @@ async def run_tool_loop(
     tools = registry.schemas()
     calls_made = 0
     nudged = False
+    gap = False  # text was streamed before a tool call: keep the real answer apart from it
+
+    def stream(piece: str):
+        nonlocal gap
+        if gap:
+            gap, piece = False, "\n\n" + piece.lstrip()
+        return on_delta(piece)
+
     while True:
         budget_left = calls_made < ctx.config.max_tool_calls
         # An answer that may still be sent back for checking (check_first) must not be streamed yet.
         may_stream = on_delta is not None and not ctx.config.think and not (
             check_first and calls_made == 0 and not nudged and budget_left)
         message = await ctx.llm.chat(messages, tools=tools if budget_left else None, model=model, priority=priority,
-                                     on_delta=on_delta if may_stream else None)
+                                     on_delta=stream if may_stream else None)
         tool_calls = message.get("tool_calls") or (
             _text_tool_call(message.get("content") or "", registry.names) if budget_left else None
         )
@@ -157,8 +168,15 @@ async def run_tool_loop(
             if nudged:
                 result.answer = CHECK_REMARK_RE.sub("", result.answer, count=1) or result.answer
             return result
+        if may_stream and (message.get("content") or "").strip():
+            gap = True
         messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls})
         for call in tool_calls:
+            if calls_made >= ctx.config.max_tool_calls:
+                # One reply with many parallel calls must not run past the budget.
+                messages.append({"role": "tool", "tool_name": call.get("function", {}).get("name", ""),
+                                 "content": json.dumps({"error": "maximum aantal tool-aanroepen bereikt"})})
+                continue
             fn = call.get("function", {})
             name, arguments = fn.get("name", ""), fn.get("arguments") or {}
             _LOGGER.info("Tool call %s(%s)", name, arguments)
@@ -252,7 +270,9 @@ class Agent:
         word = normalize(user_text)
         if word not in YES_WORDS and word not in NO_WORDS:
             return None
-        pending = ctx.confirmations.list(ctx.conversation_id)
+        # Only what was asked in the previous turn; older requests need the button (or a full sentence).
+        asked = ctx.db.last_message_ts(ctx.conversation_id, "user") or 0
+        pending = [p for p in ctx.confirmations.list(ctx.conversation_id) if p.created >= asked]
         if not pending:
             return None
         approve = word in YES_WORDS
@@ -299,7 +319,7 @@ class Agent:
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt(source, self.known_area(area))}]
-        messages += db.recent_messages(conversation_id, HISTORY_MESSAGES)
+        messages += db.recent_messages(conversation_id, HISTORY_MESSAGES, time.time() - HISTORY_MAX_AGE)
         messages.append({"role": "user", "content": user_text})
         db.add_message(conversation_id, "user", user_text)
 

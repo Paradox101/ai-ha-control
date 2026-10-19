@@ -493,6 +493,9 @@ class App:
             summary = await self.guardian.run("handmatig", raise_llm_error=True)
         except LLMError as err:
             return web.json_response({"error": str(err)}, status=502)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.exception("Manual agent run failed")
+            return web.json_response({"error": f"controle mislukt: {err}"}, status=500)
         return web.json_response({"summary": summary or "Niets bijzonders"})
 
     async def kill_switch(self, request: web.Request) -> web.Response:
@@ -500,8 +503,11 @@ class App:
         if not self.config.kill_switch:
             return web.json_response({"error": "geen noodknop ingesteld"}, status=400)
         on = bool((await json_body(request)).get("on"))
-        await self.ha.call_service("input_boolean", "turn_on" if on else "turn_off",
-                                   target={"entity_id": [self.config.kill_switch]})
+        try:
+            await self.ha.call_service("input_boolean", "turn_on" if on else "turn_off",
+                                       target={"entity_id": [self.config.kill_switch]})
+        except Exception as err:  # noqa: BLE001
+            return web.json_response({"error": f"Home Assistant: {err}"}, status=502)
         self.db.audit("kill_switch", {"on": on}, "executed", "ok", "web")
         return web.json_response({"on": on})
 
@@ -673,13 +679,15 @@ class App:
         return web.json_response({"url": f"http://{host}:{self.config.port}", "api_key": self.api_key})
 
     async def entities(self, request: web.Request) -> web.Response:
+        pick = request.query.get("format") == "pick"
         results = self.index.search(
             request.query.get("q", ""),
             area=request.query.get("area"),
             domain=request.query.get("domain"),
-            limit=query_int(request, "limit", 50, 500),
+            # Pickers need every entity (a big house has thousands of sensors); their rows are tiny.
+            limit=query_int(request, "limit", 50, 5000 if pick else 500),
         )
-        if request.query.get("format") == "pick":
+        if pick:
             return web.json_response([{"id": e.entity_id, "name": e.name, "area": e.area or ""} for e in results])
         return web.json_response([e.compact(with_attributes=True) for e in results])
 

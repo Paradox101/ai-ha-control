@@ -59,6 +59,8 @@ async def notify_user(
     if not _notification_allowed(ctx, incident_id):
         return {"status": "suppressed", "reason": "recent al gemeld; voeg het toe aan het incident"}
     camera = ctx.index.get(camera_entity_id) if camera_entity_id else None
+    if camera is not None and ctx.index.camera_profile(camera, ctx.config.camera_profiles) == "off":
+        camera = None  # no picture from a bedroom or bathroom camera on a phone
     event_id = await ctx.notifier.send(
         title, message, kind="agent", incident_id=int(incident_id) if incident_id else None,
         image_entity=camera.entity_id if camera and camera.domain == "camera" else None,

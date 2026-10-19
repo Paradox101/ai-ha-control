@@ -29,7 +29,8 @@ NOT_ROOM_WORDS = {
 PSEUDO_CAMERA_WORDS = {"imap", "mail", "delivery", "buienradar", "radar", "map", "kaart"}
 # Cameras inside rooms where people sleep or wash: never look at them by themselves.
 PRIVATE_ROOM_WORDS = {"baby", "babycam", "babyfoon", "babyphone", "nursery", "kinderkamer", "slaapkamer", "bedroom",
-                      "badkamer", "bathroom", "vm65", "vm75", "nanit", "owlet"}
+                      "badkamer", "bathroom", "vm65", "vm75", "nanit", "owlet", "babykamer", "logeerkamer", "douche",
+                      "shower", "toilet", "wc"}
 CAR_WORDS = {"fordpass", "ford", "car", "auto", "vehicle", "voertuig", "tesla", "kia", "volvo", "skoda", "bmw"}
 VENTILATION_WORDS = {"ventilatie", "ventilation", "itho", "cve", "wtw", "mv", "zehnder", "orcon", "brink"}
 AWNING_WORDS = {"zonnescherm", "markies", "knikarm", "awning", "screen"}
@@ -118,8 +119,10 @@ def is_pseudo_camera(ent: EntityInfo) -> bool:
 
 
 def is_private_room_camera(ent: EntityInfo) -> bool:
+    """Dutch compounds count too: "ouderslaapkamer", "slaapkamers", "babykamercam"."""
     text = words(ent) | set(normalize(ent.area or "").split())
-    return bool(text & PRIVATE_ROOM_WORDS)
+    return any(token == w or (len(w) >= 4 and (token.startswith(w) or token.endswith(w)))
+               for token in text for w in PRIVATE_ROOM_WORDS)
 
 
 # --- Helpers that pause the agent, house mode ------------------------------------------------
@@ -145,7 +148,7 @@ def paused(index: EntityIndex, entity_id: str | None, now: datetime | None = Non
         if now.tzinfo is None:
             now = now.astimezone()
         if until.tzinfo is None:
-            until = until.replace(tzinfo=now.astimezone().tzinfo)
+            until = until.replace(tzinfo=now.tzinfo)  # the helper is in Home Assistant's time zone, like `now`
         if until > now:
             return f"{ent.name} tot {until:%H:%M}"
     return ""

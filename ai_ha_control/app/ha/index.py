@@ -393,12 +393,17 @@ class EntityIndex:
                     and ((cam.device_id and c.device_id == cam.device_id) or self._camera_key(c) == key)]
         return min(siblings or [cam], key=lambda c: (self.stream_rank(c), c.entity_id))
 
-    def camera_for(self, ent: EntityInfo) -> EntityInfo | None:
-        """Camera on the same device (Reolink) or, failing that, in the same area."""
+    def camera_for(self, ent: EntityInfo, profiles: list[str] | None = None) -> EntityInfo | None:
+        """Camera on the same device (Reolink) or, failing that, in the same area.
+
+        With the camera profiles given, cameras set (or guessed) "off" are skipped: an alert about the nursery door
+        must not carry a picture of the nursery.
+        """
         from ..house import is_pseudo_camera
 
         cameras = [e for e in self.entities.values() if e.domain == "camera" and e.state != "unavailable"
-                   and not is_pseudo_camera(e)]
+                   and not is_pseudo_camera(e)
+                   and (profiles is None or self.camera_profile(e, profiles) != "off")]
         if ent.device_id:
             same_device = [c for c in cameras if c.device_id == ent.device_id]
             if same_device:
