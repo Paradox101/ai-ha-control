@@ -87,7 +87,7 @@ class Scheduler:
         self.publisher = None
         self.comfort = None
         self._agent_task: asyncio.Task | None = None
-        self._llm_checked = 0.0
+        self._llm_checked = -1e9
         self.llm_down_since: float | None = None
         self._llm_reported = False
         self.last_tick = 0.0

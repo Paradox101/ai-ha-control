@@ -286,11 +286,11 @@ async def test_unreachable_llm_is_reported_once_and_recovery_too(ctx, notifier):
     assert pushes(ctx) == [] and scheduler.health()["ollama"] == "onbereikbaar"
     scheduler.llm_down_since -= 600
     for _ in range(2):
-        scheduler._llm_checked = 0
+        scheduler._llm_checked = -1e9
         await scheduler._check_llm()
     assert titles(ctx) == ["⚠️ AI-server niet bereikbaar"]
     reachable["value"] = True
-    scheduler._llm_checked = 0
+    scheduler._llm_checked = -1e9
     await scheduler._check_llm()
     assert titles(ctx)[-1] == "✅ AI-server weer bereikbaar"
     assert scheduler.health()["ollama"] == "ok" and scheduler.health()["last_tick"]
