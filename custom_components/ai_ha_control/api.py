@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import aiohttp
@@ -23,6 +25,13 @@ class AIHAClient:
         self._url = url.rstrip("/")
         self._headers = {"Authorization": f"Bearer {api_key}"}
 
+    @staticmethod
+    def _check(resp: aiohttp.ClientResponse) -> None:
+        if resp.status in (401, 403):
+            raise AIHAAuthError("invalid API key")
+        if resp.status >= 400:
+            raise AIHAError(f"add-on returned {resp.status}")
+
     async def _request(self, method: str, path: str, json: Any = None, timeout: float = 15) -> Any:
         try:
             async with self._session.request(
@@ -32,10 +41,7 @@ class AIHAClient:
                 headers=self._headers,
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as resp:
-                if resp.status in (401, 403):
-                    raise AIHAAuthError("invalid API key")
-                if resp.status >= 400:
-                    raise AIHAError(f"add-on returned {resp.status}")
+                self._check(resp)
                 return await resp.json()
         except (aiohttp.ClientError, TimeoutError) as err:
             raise AIHAError(str(err) or type(err).__name__) from err
@@ -43,11 +49,45 @@ class AIHAClient:
     async def status(self) -> dict[str, Any]:
         return await self._request("GET", "/api/status")
 
-    async def converse(self, text: str, conversation_id: str | None, language: str | None = None,
-                       user_id: str | None = None) -> dict[str, Any]:
+    async def state(self) -> dict[str, Any]:
+        return await self._request("GET", "/api/integration/state")
+
+    async def converse(
+        self,
+        text: str,
+        conversation_id: str | None,
+        language: str | None = None,
+        user_id: str | None = None,
+        area: str | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "POST",
             "/api/conversation",
-            {"text": text, "conversation_id": conversation_id, "language": language, "user_id": user_id},
+            {"text": text, "conversation_id": conversation_id, "language": language, "user_id": user_id,
+             "area": area},
             timeout=REQUEST_TIMEOUT,
         )
+
+    async def converse_stream(
+        self,
+        text: str,
+        conversation_id: str | None,
+        language: str | None = None,
+        user_id: str | None = None,
+        area: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Yield {"delta": text} pieces of the answer, and finally {"done": true, "speech": ...}."""
+        try:
+            async with self._session.post(
+                f"{self._url}/api/conversation/stream",
+                json={"text": text, "conversation_id": conversation_id, "language": language, "user_id": user_id,
+                      "area": area},
+                headers=self._headers,
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+            ) as resp:
+                self._check(resp)
+                async for raw in resp.content:
+                    if line := raw.strip():
+                        yield json.loads(line)
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            raise AIHAError(str(err) or type(err).__name__) from err

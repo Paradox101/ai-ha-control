@@ -224,6 +224,7 @@
     <h2>Gepland om te controleren</h2><div id="agent-followups"></div>
     <h2>Logboek van de agent</h2><div id="agent-runs"></div>
     <h2>Gedempt ("dit is normaal")</h2><div id="agent-mutes"></div>
+    <h2>AI-prestaties</h2><div id="agent-perf"></div>
   </section>
 
   <section id="tab-events" class="hidden"><div id="events"></div></section>
@@ -480,6 +481,7 @@
 
   /* ---------------- Agent ---------------- */
   async function refreshAgent() {
+    refreshPerf().catch(() => {});
     const a = await api("api/agent");
     const hero = $("agent-hero");
     hero.classList.toggle("on", a.enabled && a.acting); hero.classList.toggle("off", a.enabled && !a.acting);
@@ -570,6 +572,25 @@
         await del(`api/mutes/${encodeURIComponent(m.key)}`); refreshAgent();
       }));
       mutes.appendChild(c);
+    }
+  }
+  async function refreshPerf() {
+    const p = await api("api/llm/performance");
+    const box = $("agent-perf"); box.replaceChildren();
+    const names = Object.keys(p.models);
+    if (!names.length) { empty(box, "Nog geen AI-aanroepen sinds de start van de add-on."); return; }
+    box.appendChild(el("div", "meta",
+      `Gemiddeld ${p.avg_seconds} s per aanroep · gemiddeld ${p.avg_wait_seconds} s wachten op de GPU · ${p.queue} in de wachtrij`));
+    for (const name of names) {
+      const m = p.models[name];
+      const c = el("div", "card spread");
+      const info = el("div", "grow");
+      info.append(el("div", "", name),
+                  el("div", "meta", `${m.calls} aanroepen · gem. ${m.avg_seconds} s · max ${m.max_seconds} s · `
+                    + `${m.prompt_tokens} + ${m.output_tokens} tokens · ${m.loads}× geladen`
+                    + (m.errors ? ` · ${m.errors} fouten` : "")));
+      c.appendChild(info);
+      box.appendChild(c);
     }
   }
   $("kill-switch").onchange = async ev => {

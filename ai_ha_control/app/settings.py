@@ -146,6 +146,10 @@ SECTIONS: list[dict[str, Any]] = [
     ]},
     {"id": "house", "title": "Huis", "icon": "🏠", "fields": [
         _f("sleep_hours", "Slaaptijden", "timerange", "Bepaalt de huismodus 'slapen'.", optional=True),
+        _f("calendar_context", "Agenda gebruiken", "toggle",
+           "Afspraken in de ochtendsamenvatting; een lopende afspraak met 'vakantie' of 'gasten' zet de huismodus."),
+        _f("energy_context", "Energieprijzen gebruiken", "toggle",
+           "Goedkoopste stroommoment en zonneverwachting in de ochtendsamenvatting en op vraag."),
         _f("open_window_minutes", "Raam open + verwarming", "number", "Waarschuwen na", min=1, max=240, step=1,
            unit="min"),
         _f("unlocked_away_minutes", "Slot/garage open terwijl weg", "number", "Waarschuwen na", min=1, max=240,

@@ -1,0 +1,73 @@
+#include <tunables/global>
+
+profile ai_ha_control flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # s6-overlay (init, supervision and with-contenv) needs broad access in the outer profile.
+  file,
+  network,
+  capability,
+  signal (send) set=(kill,term,int,hup,cont),
+  signal (receive) peer=unconfined,
+
+  # The add-on itself runs in the much stricter profile below. An exact path is required next to
+  # "file,"; CI checks that it still matches the Python of the base image.
+  /usr/bin/python3.12 cx -> ai_ha_control_app,
+
+  profile ai_ha_control_app flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    # Home Assistant, Supervisor and Ollama over the network; no raw sockets.
+    network inet stream,
+    network inet6 stream,
+    network inet dgram,
+    network inet6 dgram,
+    network unix stream,
+    network unix dgram,
+    deny network raw,
+    deny network packet,
+
+    signal (receive) peer=ai_ha_control,
+
+    # Python and its libraries: read and map only.
+    /usr/bin/python3* mrix,
+    /usr/lib/** mr,
+    /usr/local/lib/** mr,
+    /lib/** mr,
+    /usr/share/zoneinfo/** r,
+    /etc/** r,
+    /bin/** rix,
+    /usr/bin/** rix,
+
+    # Application code is read-only.
+    /opt/ai_ha_control/ r,
+    /opt/ai_ha_control/** r,
+    deny /opt/ai_ha_control/** w,
+
+    # Only the add-on's own data directory is writable (database, snapshots, API key).
+    /data/ r,
+    /data/** rwk,
+    /tmp/ r,
+    /tmp/** rwk,
+
+    /run/s6/container_environment/ r,
+    /run/s6/container_environment/* r,
+    /proc/** r,
+    /sys/devices/system/cpu/** r,
+    /dev/null rw,
+    /dev/urandom r,
+    /dev/random r,
+    /dev/shm/** rwk,
+
+    # Never touch the rest of the host or other add-ons' config.
+    deny /config/** rwklx,
+    deny /ssl/** rwklx,
+    deny /share/** rwklx,
+    deny /media/** rwklx,
+    deny /backup/** rwklx,
+    deny /proc/sys/** w,
+    deny /sys/** w,
+    deny mount,
+    deny ptrace,
+  }
+}

@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any
+
+_LOGGER = logging.getLogger(__name__)
+
+DB_NAME = "ai_ha_control.db"
+# Written by backup_pre (a consistent copy for Home Assistant backups); the live file is excluded.
+BACKUP_NAME = "ai_ha_control.backup.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -184,6 +191,13 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     summary TEXT NOT NULL,
     tools TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+CREATE INDEX IF NOT EXISTS idx_actions_ts ON actions(ts);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_ts ON agent_runs(ts);
+CREATE INDEX IF NOT EXISTS idx_incidents_updated ON incidents(updated);
 """
 
 # Columns added after the first release; ALTER TABLE for existing databases.
@@ -196,12 +210,53 @@ PROFILE_JSON = ("targets", "lights", "shade_covers")
 BASELINE_MEMORY = 200  # samples per bucket before older ones start to fade
 
 
+# Days to keep rows in the growing tables (memories, rules, suggestions and baselines are kept).
+RETENTION_DAYS = {
+    "messages": 30,
+    "agent_runs": 90,
+    "events": 180,
+    "audit": 365,
+    "actions": 365,
+}
+
+
+def restore_backup(path: Path) -> None:
+    """After restoring a Home Assistant backup only the backup copy exists: make it the live database."""
+    live, backup = path / DB_NAME, path / BACKUP_NAME
+    if not live.exists() and backup.exists():
+        _LOGGER.warning("Database missing, restoring it from %s", backup.name)
+        backup.replace(live)
+
+
+def write_backup(data_dir: str) -> Path:
+    """Consistent copy of the live database (safe while the add-on keeps writing)."""
+    path = Path(data_dir)
+    target = path / BACKUP_NAME
+    tmp = target.with_suffix(".tmp")
+    tmp.unlink(missing_ok=True)
+    src = sqlite3.connect(path / DB_NAME, timeout=30)
+    try:
+        dst = sqlite3.connect(tmp)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    tmp.replace(target)
+    return target
+
+
 class Database:
     def __init__(self, data_dir: str) -> None:
         path = Path(data_dir)
         path.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(path / "ai_ha_control.db", check_same_thread=False)
+        restore_backup(path)
+        self._conn = sqlite3.connect(path / DB_NAME, check_same_thread=False, timeout=10)
         self._conn.row_factory = sqlite3.Row
+        # WAL: readers never block, commits are cheap and a crash cannot leave a half-written page.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(SCHEMA)
         self._migrate()
 
@@ -223,6 +278,27 @@ class Database:
 
     def close(self) -> None:
         self._conn.close()
+
+    # --- Maintenance --------------------------------------------------------------
+
+    def prune(self, now: float | None = None) -> dict[str, int]:
+        """Delete rows past their retention; returns the number removed per table."""
+        now = now or time.time()
+        removed = {}
+        for table, days in RETENTION_DAYS.items():
+            cur = self._conn.execute(f"DELETE FROM {table} WHERE ts < ?", (now - days * 86400,))
+            removed[table] = cur.rowcount
+        limit = now - 365 * 86400
+        cur = self._conn.execute(
+            "DELETE FROM incidents WHERE status = 'resolved' AND updated < ?", (limit,))
+        removed["incidents"] = cur.rowcount
+        self._conn.execute("DELETE FROM incident_events WHERE incident_id NOT IN (SELECT id FROM incidents)")
+        self._conn.execute("DELETE FROM followups WHERE done = 1 AND due < ?", (now - 30 * 86400,))
+        self._conn.commit()
+        self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        if sum(removed.values()) > 1000:
+            self._conn.execute("VACUUM")
+        return removed
 
     # --- Conversations ------------------------------------------------------
 
