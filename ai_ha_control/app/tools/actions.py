@@ -144,6 +144,8 @@ async def perform(
     data = {k: v for k, v in (data or {}).items() if v is not None and k != "entity_id"}
     args = {"domain": domain, "service": service, "entity_ids": entity_ids, "data": data}
 
+    if ctx.source == "autonomous" and ctx.config.kill_switch in entity_ids:
+        return {"status": "denied", "reason": "de agent mag zijn eigen noodknop niet bedienen"}
     error = _validate(ctx, domain, service, entity_ids)
     if error:
         return {"status": "error", "error": error}
@@ -152,11 +154,41 @@ async def perform(
     if result.decision == Decision.DENY:
         ctx.db.audit("service", args, "denied", result.reason, ctx.conversation_id)
         return {"status": "denied", "reason": result.reason}
+    description = describe_service(domain, service, entity_ids, data)
+    if ctx.source == "autonomous" and ctx.autonomy is not None:
+        return await _perform_autonomous(ctx, domain, service, entity_ids, data, result.decision, result.reason)
     if result.decision == Decision.CONFIRM:
-        return await queue_confirmation(
-            ctx, "service", args, describe_service(domain, service, entity_ids, data), result.reason
-        )
+        return await queue_confirmation(ctx, "service", args, description, result.reason)
     return await execute(ctx, domain, service, entity_ids, data)
+
+
+async def _perform_autonomous(
+    ctx: ToolContext,
+    domain: str,
+    service: str,
+    entity_ids: list[str],
+    data: dict[str, Any],
+    policy_decision: Decision,
+    policy_reason: str,
+) -> dict[str, Any]:
+    """The agent acts on its own only where its autonomy level allows it."""
+    args = {"domain": domain, "service": service, "entity_ids": entity_ids, "data": data}
+    description = describe_service(domain, service, entity_ids, data)
+    level, reason = ctx.autonomy.decide(domain, service, entity_ids, data)
+    if level == "observe":
+        ctx.db.audit("service", args, "observe_only", reason, ctx.conversation_id)
+        return {"status": "not_allowed", "reason": f"{reason}; meld het de gebruiker in plaats van te handelen"}
+    if level == "ask" or policy_decision == Decision.CONFIRM:
+        return await queue_confirmation(ctx, "service", args, description,
+                                        policy_reason or reason or "de agent vraagt toestemming")
+    previous = ctx.autonomy.snapshot(entity_ids)
+    outcome = await execute(ctx, domain, service, entity_ids, data)
+    if outcome.get("status") == "ok":
+        action_id = ctx.db.add_action(domain, service, entity_ids, data, previous, ctx.reason)
+        outcome["action_id"] = action_id
+        if ctx.notifier is not None:
+            await ctx.notifier.action_done(action_id, description, ctx.reason)
+    return outcome
 
 
 async def execute(

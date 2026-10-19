@@ -67,7 +67,7 @@ async def test_camera_detection_only_when_away(ctx, notifier):
 
 
 async def test_camera_nothing_seen_is_not_pushed(ctx, notifier):
-    async def nothing(image, question):
+    async def nothing(image, question, priority=1):
         return "NIETS: alleen een lege oprit."
     ctx.llm.describe_image = nothing
     ctx.config.camera_alerts = "always"
@@ -140,3 +140,62 @@ def test_scheduler_due(ctx, notifier):
     assert not scheduler._due("other", "07:30", datetime(2026, 10, 19, 7, 0))
     assert not scheduler._due("late", "07:30", datetime(2026, 10, 19, 12, 0))  # missed: skip today
     assert not scheduler._due("off", "", at)
+
+
+def add_doorbell(index):
+    """Reolink doorbell named 'Deurbel Poort': only the visitor sensor means someone rang."""
+    index._device_area["bell"] = None
+    index._registry.update({e: {"entity_id": e, "device_id": "bell"} for e in (
+        "camera.deurbel_poort_clear", "binary_sensor.deurbel_poort_persoon",
+        "binary_sensor.deurbel_poort_voertuig", "binary_sensor.deurbel_poort_bezoeker")})
+    index.update_state({"entity_id": "camera.deurbel_poort_clear", "state": "idle",
+                        "attributes": {"friendly_name": "Deurbel Poort"}})
+    for name in ("persoon", "voertuig", "bezoeker"):
+        index.update_state({"entity_id": f"binary_sensor.deurbel_poort_{name}", "state": "off",
+                            "attributes": {"friendly_name": f"Deurbel Poort {name.title()}"}})
+
+
+async def test_doorbell_device_person_is_not_a_ring(ctx, notifier):
+    add_doorbell(ctx.index)
+    assert not ctx.index.is_doorbell(ctx.index.get("binary_sensor.deurbel_poort_persoon"))
+    assert ctx.index.is_doorbell(ctx.index.get("binary_sensor.deurbel_poort_bezoeker"))
+    watcher = Watcher(ctx, notifier)
+    await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.deurbel_poort_persoon"))
+    await watcher.wait_idle()
+    assert pushes(ctx) == []  # someone is home, and it is not a ring
+
+
+async def test_one_notification_per_device(ctx, notifier):
+    add_doorbell(ctx.index)
+    set_state(ctx.index, "person.vincent", "not_home", 60)
+    watcher = Watcher(ctx, notifier)
+    for name in ("persoon", "voertuig"):
+        await watcher.handle_state_changed(turn_on_event(ctx.index, f"binary_sensor.deurbel_poort_{name}"))
+    await watcher.wait_idle()
+    assert len(pushes(ctx)) == 1
+
+
+async def test_startup_grace_ignores_detections_and_ticks(ctx, notifier):
+    ctx.config.camera_alerts = "always"
+    watcher = Watcher(ctx, notifier)
+    watcher.start_grace()
+    await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.voordeur_visitor"))
+    set_state(ctx.index, "climate.thermostaat", "heat", hvac_action="heating")
+    set_state(ctx.index, "binary_sensor.raam_slaapkamer", "on", minutes_ago=30)
+    await watcher.tick()
+    await watcher.wait_idle()
+    assert pushes(ctx) == []
+    # Safety alarms are never delayed
+    await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.rookmelder_zolder"))
+    assert len(pushes(ctx)) == 1
+
+
+async def test_failed_camera_analysis_is_explained(ctx, notifier):
+    async def broken(image, question, priority=1):
+        raise RuntimeError('model "qwen3-vl:4b" not found')
+    ctx.llm.describe_image = broken
+    watcher = Watcher(ctx, notifier)
+    await watcher.handle_state_changed(turn_on_event(ctx.index, "binary_sensor.voordeur_visitor"))
+    await watcher.wait_idle()
+    (_, _, data, _), = pushes(ctx)
+    assert "geen beeldanalyse" in data["message"] and "qwen3-vl:4b" in data["message"]

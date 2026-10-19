@@ -66,6 +66,23 @@ class Config:
     routine_learning: bool = True
     tts_entity: str = ""
     announce_players: list[str] = field(default_factory=list)
+    # Autonomous agent
+    autonomous: bool = True
+    autonomy: list[str] = field(
+        default_factory=lambda: [
+            "light=act", "climate=act", "fan=act", "switch=ask", "media_player=ask", "cover=ask",
+            "lock=ask", "alarm_control_panel=ask", "valve=ask",
+        ]
+    )
+    kill_switch: str = "input_boolean.ai_autonoom"
+    max_climate_change: float = 2.0
+    max_autonomous_actions_per_hour: int = 10
+    triage_model: str = ""
+    heartbeat_minutes: int = 10
+    sleep_hours: str = "23:00-07:00"
+    camera_patrol: str = "away"  # off | away | always
+    patrol_minutes: int = 15
+    snapshot_retention_days: int = 7
     api_key: str = ""
     log_level: str = "info"
 

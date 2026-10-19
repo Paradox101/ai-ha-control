@@ -74,6 +74,8 @@ class FakeHA:
         self.logbook_entries: list[dict] = []
         self.validation: dict = {"triggers": {"valid": True, "error": None}, "actions": {"valid": True, "error": None}}
         self.connected = True
+        self.states_set: dict = {}
+        self.created_booleans: list = []
 
     async def call_service(self, domain, service, data=None, target=None, return_response=False):
         self.calls.append((domain, service, data, target))
@@ -90,6 +92,15 @@ class FakeHA:
         self.saved_automations[automation_id] = config
         return {"result": "ok"}
 
+    async def related(self, item_type, item_id):
+        return {"automation": ["automation.vertrek"]} if item_id == "light.keuken" else {}
+
+    async def set_state(self, entity_id, state, attributes):
+        self.states_set[entity_id] = (state, attributes)
+
+    async def create_input_boolean(self, name, icon="mdi:robot"):
+        self.created_booleans.append(name)
+
     async def logbook(self, entity_ids, start_time, end_time):
         return [e for e in self.logbook_entries if e["entity_id"] in entity_ids]
 
@@ -105,11 +116,11 @@ class FakeLLM:
         self.responses = list(responses or [])
         self.requests: list[dict[str, Any]] = []
 
-    async def chat(self, messages, tools=None, model=None, timeout=300):
-        self.requests.append({"messages": [dict(m) for m in messages], "tools": tools})
+    async def chat(self, messages, tools=None, model=None, timeout=300, priority=1):
+        self.requests.append({"messages": [dict(m) for m in messages], "tools": tools, "model": model})
         return self.responses.pop(0) if self.responses else {"role": "assistant", "content": "klaar"}
 
-    async def describe_image(self, image, question):
+    async def describe_image(self, image, question, priority=1):
         return "Er staat een pakketje voor de deur."
 
 

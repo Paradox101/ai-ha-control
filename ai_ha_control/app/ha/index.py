@@ -47,11 +47,36 @@ USEFUL_ATTRIBUTES: dict[str, tuple[str, ...]] = {
 SAFETY_CLASSES = {"smoke", "gas", "carbon_monoxide", "moisture", "safety", "heat"}
 OPENING_CLASSES = {"door", "window", "opening", "garage_door"}
 DETECTION_CLASSES = {"motion", "occupancy", "presence"}
-DETECTION_WORDS = ("person", "persoon", "people", "vehicle", "voertuig", "car", "visitor", "bezoeker", "doorbell",
-                   "deurbel", "pet", "dier", "animal", "dog", "cat", "package", "pakket", "face")
-DOORBELL_WORDS = ("visitor", "bezoeker", "doorbell", "deurbel")
+DETECTION_WORDS = ("person", "persoon", "people", "vehicle", "voertuig", "car", "visitor", "bezoeker",
+                   "pet", "dier", "animal", "dog", "cat", "package", "pakket", "face")
+# Only the "someone pressed the button" sensor. "deurbel"/"doorbell" is usually the device name, which the
+# person/vehicle/motion sensors of the same doorbell also carry.
+DOORBELL_WORDS = ("visitor", "bezoeker")
 
-SKIP_DOMAINS = {"update", "persistent_notification", "conversation", "tts", "stt", "wake_word", "event"}
+# Reolink (and others) expose each camera as several streams; the snapshot of the main stream is sharper.
+HIGH_STREAM_WORDS = {"clear", "duidelijk", "main", "high", "hoog"}
+LOW_STREAM_WORDS = {"fluent", "vloeiend", "sub", "low", "laag", "balanced", "gebalanceerd"}
+
+# Readable states: small models misread "on"/"off" for doors, motion, smoke, ...
+BINARY_STATES = {
+    "door": ("open", "dicht"), "window": ("open", "dicht"), "opening": ("open", "dicht"),
+    "garage_door": ("open", "dicht"), "lock": ("niet op slot", "op slot"),
+    "motion": ("beweging", "geen beweging"), "occupancy": ("bezet", "vrij"), "presence": ("aanwezig", "afwezig"),
+    "smoke": ("ROOK GEDETECTEERD", "ok"), "gas": ("GAS GEDETECTEERD", "ok"), "carbon_monoxide": ("CO GEDETECTEERD", "ok"),
+    "moisture": ("NAT/LEKKAGE", "droog"), "safety": ("ONVEILIG", "veilig"), "battery": ("batterij bijna leeg", "batterij ok"),
+    "connectivity": ("verbonden", "niet verbonden"), "problem": ("probleem", "ok"), "plug": ("ingeplugd", "uitgeplugd"),
+    "power": ("stroom aan", "geen stroom"), "running": ("draait", "draait niet"), "vibration": ("trilling", "stil"),
+}
+ALARM_STATES = {
+    "disarmed": "uitgeschakeld", "armed_away": "ingeschakeld (afwezig)", "armed_home": "ingeschakeld (thuis)",
+    "armed_night": "ingeschakeld (nacht)", "armed_vacation": "ingeschakeld (vakantie)",
+    "armed_custom_bypass": "ingeschakeld (aangepast)", "arming": "wordt ingeschakeld", "disarming": "wordt uitgeschakeld",
+    "pending": "in afwachting", "triggered": "ALARM AFGEGAAN",
+}
+LOCK_STATES = {"locked": "op slot", "unlocked": "niet op slot", "open": "open", "jammed": "geblokkeerd",
+               "locking": "wordt op slot gedaan", "unlocking": "wordt ontgrendeld"}
+
+SKIP_DOMAINS = {"update", "persistent_notification", "conversation", "stt", "wake_word", "event"}
 
 
 def _object_tokens(ent: "EntityInfo") -> set[str]:
@@ -86,10 +111,24 @@ class EntityInfo:
             parts.append(self.device_class)
         return normalize(" ".join(parts))
 
+    @property
+    def readable_state(self) -> str:
+        """State in words where the raw value is ambiguous (binary sensors, alarms, locks)."""
+        if self.state in ("unknown", "unavailable"):
+            return self.state
+        if self.domain == "binary_sensor" and self.device_class in BINARY_STATES:
+            on, off = BINARY_STATES[self.device_class]
+            return on if self.state == "on" else off if self.state == "off" else self.state
+        if self.domain == "alarm_control_panel":
+            return ALARM_STATES.get(self.state, self.state)
+        if self.domain == "lock":
+            return LOCK_STATES.get(self.state, self.state)
+        if self.unit:
+            return f"{self.state} {self.unit}"
+        return self.state
+
     def compact(self, with_attributes: bool = False) -> str:
-        value = self.state
-        if self.unit and value not in ("unknown", "unavailable"):
-            value = f"{value} {self.unit}"
+        value = self.readable_state
         line = f"{self.entity_id} ({self.name}"
         if self.area:
             line += f", {self.area}"
@@ -265,19 +304,51 @@ class EntityIndex:
     def is_doorbell(ent: EntityInfo) -> bool:
         return bool(_object_tokens(ent) & set(DOORBELL_WORDS))
 
+    @staticmethod
+    def stream_rank(cam: EntityInfo) -> int:
+        tokens = _object_tokens(cam)
+        if tokens & HIGH_STREAM_WORDS:
+            return 0
+        return 2 if tokens & LOW_STREAM_WORDS else 1
+
+    @staticmethod
+    def _camera_key(cam: EntityInfo) -> str:
+        words = [w for w in normalize(cam.name).split() if w not in HIGH_STREAM_WORDS | LOW_STREAM_WORDS | {"camera"}]
+        return " ".join(words) or cam.entity_id
+
+    def cameras(self, area: str | None = None, query: str | None = None, limit: int = 20) -> list[EntityInfo]:
+        """Available cameras, one per physical camera (best stream), optionally filtered by area or text."""
+        if query:
+            found = self.search(query, area=area, domain="camera", limit=100)
+        else:
+            found = self.search(area=area, domain="camera", limit=500)
+        best: dict[str, EntityInfo] = {}
+        for cam in found:
+            if cam.state == "unavailable":
+                continue
+            key = self._camera_key(cam)
+            if key not in best or self.stream_rank(cam) < self.stream_rank(best[key]):
+                best[key] = cam
+        return list(best.values())[:limit]
+
+    def best_stream(self, cam: EntityInfo) -> EntityInfo:
+        """The sharpest available stream of the same physical camera."""
+        key = self._camera_key(cam)
+        siblings = [c for c in self.entities.values() if c.domain == "camera" and c.state != "unavailable"
+                    and ((cam.device_id and c.device_id == cam.device_id) or self._camera_key(c) == key)]
+        return min(siblings or [cam], key=lambda c: (self.stream_rank(c), c.entity_id))
+
     def camera_for(self, ent: EntityInfo) -> EntityInfo | None:
         """Camera on the same device (Reolink) or, failing that, in the same area."""
-        cameras = [e for e in self.entities.values() if e.domain == "camera"]
+        cameras = [e for e in self.entities.values() if e.domain == "camera" and e.state != "unavailable"]
         if ent.device_id:
             same_device = [c for c in cameras if c.device_id == ent.device_id]
             if same_device:
-                # Prefer the high-quality "clear" stream over the "fluent" sub stream.
-                same_device.sort(key=lambda c: ("fluent" in c.entity_id, c.entity_id))
-                return same_device[0]
+                return min(same_device, key=lambda c: (self.stream_rank(c), c.entity_id))
         if ent.area:
             same_area = [c for c in cameras if c.area == ent.area]
             if same_area:
-                return same_area[0]
+                return min(same_area, key=lambda c: (self.stream_rank(c), c.entity_id))
         return None
 
     def overview(self) -> dict[str, Any]:
@@ -307,6 +378,6 @@ class EntityIndex:
             "climate": [e.compact(with_attributes=True) for e in self.entities.values() if e.domain == "climate"],
             "unlocked": ids(lambda e: e.domain == "lock" and e.state == "unlocked"),
             "alarms": ids(lambda e: e.domain == "alarm_control_panel"),
-            "cameras": ids(lambda e: e.domain == "camera"),
+            "cameras": [c.compact() for c in self.cameras()],
             "unavailable_count": sum(1 for e in self.entities.values() if e.state == "unavailable"),
         }

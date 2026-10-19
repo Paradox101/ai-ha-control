@@ -60,6 +60,27 @@ async def get_automation(ctx: ToolContext, entity_id: str) -> dict[str, Any]:
     return {"id": automation_id, "config": await ctx.ha.get_automation_config(str(automation_id))}
 
 
+async def related_automations(ctx: ToolContext, entity_id: str) -> dict[str, Any]:
+    """Automations and scripts that use (trigger on, check or control) an entity."""
+    if ctx.index.get(entity_id) is None:
+        return {"error": f"entiteit '{entity_id}' bestaat niet; gebruik search_entities"}
+    try:
+        related = await ctx.ha.related("entity", entity_id)
+    except Exception as err:  # noqa: BLE001
+        return {"error": f"zoeken in Home Assistant mislukt: {err}"}
+
+    def describe(ids: list[str]) -> list[str]:
+        out = []
+        for eid in ids or []:
+            ent = ctx.index.get(eid)
+            last = ent.attributes.get("last_triggered") if ent else None
+            out.append(f"{eid} ({ent.name if ent else eid})" + (f", laatst: {last[:16]}" if last else ""))
+        return out
+
+    return {"automations": describe(related.get("automation", [])), "scripts": describe(related.get("script", [])),
+            "scenes": describe(related.get("scene", []))}
+
+
 async def create_automation(
     ctx: ToolContext,
     alias: str,
@@ -153,6 +174,13 @@ TOOLS = [
         "De volledige configuratie van één automatisering.",
         {"type": "object", "properties": {"entity_id": {"type": "string"}}, "required": ["entity_id"]},
         get_automation,
+    ),
+    Tool(
+        "related_automations",
+        "Welke automatiseringen, scripts en scènes een entiteit gebruiken of aansturen, bijv. wat 'scene.afwezig' "
+        "activeert of waarom een lamp aanging.",
+        {"type": "object", "properties": {"entity_id": {"type": "string"}}, "required": ["entity_id"]},
+        related_automations,
     ),
     Tool(
         "create_automation",

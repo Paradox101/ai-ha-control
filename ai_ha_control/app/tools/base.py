@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from ..notify import Notifier
     from ..policy import Policy
     from ..storage.db import Database
+    from ..autonomy import Autonomy
+    from ..watcher.incidents import IncidentManager
     from .actions import ConfirmationStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,7 +37,10 @@ class ToolContext:
     notifier: Notifier | None = None
     conversation_id: str | None = None
     timezone: str | None = None
-    source: str = "web"  # web | assist | watcher
+    source: str = "web"  # web | assist | watcher | autonomous
+    autonomy: Autonomy | None = None
+    incidents: IncidentManager | None = None
+    reason: str = ""  # why the autonomous agent is acting (shown with its actions)
 
 
 Handler = Callable[..., Awaitable[Any]]

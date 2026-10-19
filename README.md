@@ -25,6 +25,7 @@ Home Assistant add-on + integratie die een **lokale AI (Ollama)** je huis laat b
 | 5 | Proactief: veiligheid, camera-detectie, deurbel, raam+verwarming, onbeveiligd bij afwezigheid, ochtendsamenvatting | ✅ |
 | 6 | Geheugen, automatiseringen maken, routine-herkenning | ✅ |
 | 7 | Benchmark-script, documentatie, CI | ✅ |
+| 8 | Autonome agent: hartslag, incidenten, opvolging, huismodus (scènes), basislijnen en afwijkingen, camerapatrouille, huisregels, feedback, autonomie per domein met noodknop en ongedaan maken, instellingen in de UI, statusentiteiten | ✅ |
 
 ## Repository
 
@@ -34,7 +35,10 @@ ai_ha_control/            Add-on (Docker, Python/aiohttp)
   app/llm/                Ollama-client
   app/agent/              Agent-loop + systeemprompt
   app/tools/              Tools (lezen, bedienen, camera, automatiseringen, geheugen) + beleid/bevestigingen
-  app/watcher/            Proactieve regels, planner, routine-herkenning
+  app/agent/autonomous.py Autonome agent (hartslag, situatierapport)
+  app/autonomy.py         Wat de agent zelf mag + ongedaan maken
+  app/settings.py         Instellingen bewerken vanuit de web-UI
+  app/watcher/            Waakregels, incidenten, basislijnen, patrouille, planner, routines
   app/web/static/         Ingress web-UI
 custom_components/ai_ha_control/   Assist-integratie (gespreksagent)
 scripts/benchmark.py      Modellen vergelijken op een gesimuleerd huis

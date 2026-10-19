@@ -1,5 +1,5 @@
 name: AI HA Control
-version: "0.3.1"
+version: "0.5.0"
 slug: ai_ha_control
 description: Lokale AI (Ollama) die je huis helpt beheren via Home Assistant
 url: https://github.com/paradox101/ai-ha-control
@@ -53,6 +53,26 @@ options:
   routine_learning: true
   tts_entity: ""
   announce_players: []
+  autonomous: true
+  autonomy:
+    - light=act
+    - climate=act
+    - fan=act
+    - switch=ask
+    - media_player=ask
+    - cover=ask
+    - lock=ask
+    - alarm_control_panel=ask
+    - valve=ask
+  kill_switch: input_boolean.ai_autonoom
+  max_climate_change: 2.0
+  max_autonomous_actions_per_hour: 10
+  triage_model: ""
+  heartbeat_minutes: 10
+  sleep_hours: "23:00-07:00"
+  camera_patrol: away
+  patrol_minutes: 15
+  snapshot_retention_days: 7
   api_key: ""
   log_level: info
 schema:
@@ -83,5 +103,17 @@ schema:
   tts_entity: str?
   announce_players:
     - str
+  autonomous: bool
+  autonomy:
+    - match(^[a-z_]+=(observe|ask|act)$)
+  kill_switch: str?
+  max_climate_change: float(0,10)
+  max_autonomous_actions_per_hour: int(0,100)
+  triage_model: str?
+  heartbeat_minutes: int(1,120)
+  sleep_hours: str?
+  camera_patrol: list(off|away|always)
+  patrol_minutes: int(5,240)
+  snapshot_retention_days: int(1,90)
   api_key: password?
   log_level: list(debug|info|warning|error)

@@ -7,7 +7,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from ..ha.index import normalize
 from .actions import perform
+from .agent_tools import AGENT_TOOLS, HOUSE_RULE_TOOLS
 from .automations import TOOLS as AUTOMATION_TOOLS
 from .base import Tool, ToolContext, ToolRegistry, as_list
 
@@ -53,10 +55,14 @@ def _parse_ts(item: dict[str, Any]) -> datetime | None:
     return datetime.fromisoformat(ts) if ts else None
 
 
-async def get_history(ctx: ToolContext, entity_id: str, hours: float = 24) -> dict[str, Any]:
+async def get_history(ctx: ToolContext, entity_id: str, hours: float = 24, today: bool = False) -> dict[str, Any]:
     ent = ctx.index.get(entity_id)
     if ent is None:
-        return {"error": f"entiteit '{entity_id}' bestaat niet"}
+        return {"error": f"entiteit '{entity_id}' bestaat niet; gebruik search_entities"}
+    if today:
+        local_now = datetime.now(ZoneInfo(ctx.timezone) if ctx.timezone else timezone.utc)
+        midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        hours = max(0.25, (local_now - midnight).total_seconds() / 3600)
     hours = max(0.25, min(float(hours), 24 * 31))
     start = datetime.now(timezone.utc) - timedelta(hours=hours)
     raw = await ctx.ha.history([entity_id], start.isoformat())
@@ -229,22 +235,52 @@ async def call_service(
     return await perform(ctx, domain, service, as_list(entity_ids), data if isinstance(data, dict) else None)
 
 
-async def analyze_camera(ctx: ToolContext, entity_id: str, question: str = "") -> dict[str, Any]:
-    ent = ctx.index.get(entity_id)
-    if ent is None or ent.domain != "camera":
-        cams = [e.entity_id for e in ctx.index.search(domain="camera", limit=20)]
-        return {"error": f"'{entity_id}' is geen camera", "cameras": cams}
-    image = await ctx.ha.camera_snapshot(entity_id)
+MAX_CAMERAS_PER_QUESTION = 3
+
+
+async def analyze_camera(
+    ctx: ToolContext, entity_id: str | None = None, area: str | None = None, question: str = ""
+) -> dict[str, Any]:
+    index = ctx.index
+    if not entity_id and not area:
+        return {"error": "geef een ruimte (area) of camera (entity_id) op",
+                "cameras": [c.compact() for c in index.cameras()]}
+    ent = index.get(entity_id) if entity_id else None
+    if ent is not None and ent.domain == "camera":
+        targets = [index.best_stream(ent)]
+    else:
+        # A guessed entity_id ("camera.achtertuin") or an area name: find the matching camera(s).
+        text = (entity_id or "").removeprefix("camera.").replace("_", " ")
+        targets = index.cameras(area=area, query=text or None) if area and index.resolve_area(area) else []
+        if not targets:
+            query = " ".join(filter(None, [area, text]))
+            targets = index.cameras(query=query)
+            # Prefer cameras matching every word ("achtertuin poort" → not the "achtertuin huis" camera).
+            words = normalize(query).split()
+            exact = [c for c in targets if all(w in c.search_text for w in words)]
+            targets = exact or targets
+    if not targets:
+        return {"error": f"geen camera gevonden voor '{area or entity_id}'",
+                "cameras": [c.compact() for c in index.cameras()]}
+
     language = "Antwoord in het Nederlands." if ctx.config.language == "nl" else "Answer in English."
-    prompt = (
-        f"Dit is een actueel beeld van camera '{ent.name}'. "
-        f"{question or 'Beschrijf kort wat je ziet, vooral personen, voertuigen, dieren en pakketjes.'} "
-        f"Wees feitelijk en beknopt. {language}"
-    )
-    description = await ctx.llm.describe_image(image, prompt)
-    ctx.db.audit("analyze_camera", {"entity_id": entity_id, "question": question}, "executed", description[:500],
-                 ctx.conversation_id)
-    return {"camera": ent.name, "description": description}
+    results, images = [], []
+    for cam in targets[:MAX_CAMERAS_PER_QUESTION]:
+        prompt = (
+            f"Dit is een actueel beeld van camera '{cam.name}'. "
+            f"{question or 'Beschrijf kort wat je ziet, vooral personen, voertuigen, dieren en pakketjes.'} "
+            f"Wees feitelijk en beknopt. {language}"
+        )
+        try:
+            description = await ctx.llm.describe_image(await ctx.ha.camera_snapshot(cam.entity_id), prompt)
+        except Exception as err:  # noqa: BLE001
+            results.append({"camera": cam.name, "error": str(err)[:200]})
+            continue
+        images.append(cam.entity_id)
+        results.append({"camera": cam.name, "description": description})
+        ctx.db.audit("analyze_camera", {"entity_id": cam.entity_id, "question": question}, "executed",
+                     description[:500], ctx.conversation_id)
+    return {"results": results, "images": images}
 
 
 # --- Registry ------------------------------------------------------------------
@@ -292,6 +328,7 @@ TOOLS = [
             "properties": {
                 "entity_id": {"type": "string"},
                 "hours": {"type": "number", "description": "Aantal uur terug (standaard 24)"},
+                "today": {"type": "boolean", "description": "true = vanaf middernacht vandaag"},
             },
             "required": ["entity_id"],
         },
@@ -368,19 +405,33 @@ TOOLS = [
     ),
     Tool(
         "analyze_camera",
-        "Bekijk het actuele beeld van een camera en beantwoord een vraag erover.",
+        "Bekijk het actuele camerabeeld en beantwoord een vraag erover. Geef een ruimte (area, bijv. "
+        "'achtertuin') om alle camera's daar te bekijken, of een entity_id voor één camera.",
         {
             "type": "object",
             "properties": {
-                "entity_id": {"type": "string", "description": "camera.* entiteit"},
+                "area": {"type": "string", "description": "Ruimte of plek, bijv. 'achtertuin', 'voordeur'"},
+                "entity_id": {"type": "string", "description": "camera.* entiteit (optioneel)"},
                 "question": {"type": "string", "description": "Wat wil je weten, bijv. 'Staat er een pakketje?'"},
             },
-            "required": ["entity_id"],
         },
         analyze_camera,
     ),
 ]
 
 
+AUTONOMOUS_TOOL_NAMES = {
+    "search_entities", "get_state", "get_history", "get_forecast", "analyze_camera",
+    "control_light", "set_climate", "turn_on_off", "call_service",
+}
+AUTONOMOUS_AUTOMATION_TOOLS = {"list_automations", "get_automation", "related_automations"}
+
+
 def build_registry() -> ToolRegistry:
-    return ToolRegistry(TOOLS + AUTOMATION_TOOLS)
+    return ToolRegistry(TOOLS + AUTOMATION_TOOLS + HOUSE_RULE_TOOLS)
+
+
+def build_autonomous_registry() -> ToolRegistry:
+    """A smaller tool set for the heartbeat: fewer tokens and fewer ways for a small model to go wrong."""
+    return ToolRegistry([t for t in TOOLS if t.name in AUTONOMOUS_TOOL_NAMES]
+                        + [t for t in AUTOMATION_TOOLS if t.name in AUTONOMOUS_AUTOMATION_TOOLS] + AGENT_TOOLS)

@@ -4,95 +4,249 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI Huis</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
 <style>
   :root {
-    --bg: #f5f6f8; --panel: #ffffff; --text: #1c1f24; --muted: #6b7280;
-    --accent: #03a9f4; --user: #e1f3fd; --border: #e2e5ea; --warn: #fff4d6; --warn-b: #f0c14b;
-    --ok: #16a34a; --bad: #dc2626;
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1c1f24; --muted: #6b7280; --soft: #eef1f5;
+    --accent: #03a9f4; --accent-text: #fff; --user: #e1f3fd; --border: #e2e5ea;
+    --warn: #fff4d6; --warn-b: #e0a800; --ok: #16a34a; --bad: #dc2626; --info: #2563eb;
+    --radius: 12px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #111315; --panel: #1c1f23; --text: #e6e8eb; --muted: #9aa1ab;
-      --user: #0b3a52; --border: #2c3036; --warn: #3a2f12; --warn-b: #a07c1c;
+      --bg: #111315; --panel: #1c1f23; --text: #e6e8eb; --muted: #9aa1ab; --soft: #24282e;
+      --user: #0b3a52; --border: #2c3036; --warn: #3a2f12; --warn-b: #c9a227;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { display: flex; gap: 8px 12px; align-items: center; padding: 10px 16px;
-           background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-  header h1 { font-size: 17px; margin: 0 8px 0 0; }
-  .pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .bar { display: flex; gap: 8px 10px; align-items: center; padding: 10px 16px 6px; flex-wrap: wrap; }
+  .bar h1 { font-size: 17px; margin: 0 6px 0 0; }
+  .pills { display: flex; gap: 6px 8px; flex-wrap: wrap; align-items: center; min-width: 0; }
+  @media (max-width: 640px) { .bar { flex-wrap: nowrap; } .pills { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } }
+  .pill { font-size: 12px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted);
+          background: none; cursor: default; white-space: nowrap; }
+  button.pill { cursor: pointer; }
   .pill.ok { color: var(--ok); border-color: var(--ok); }
   .pill.bad { color: var(--bad); border-color: var(--bad); }
   .pill.warn { color: var(--warn-b); border-color: var(--warn-b); }
-  nav { display: flex; gap: 4px; width: 100%; overflow-x: auto; }
-  nav button { background: none; border: 1px solid transparent; color: var(--muted); padding: 4px 10px;
-               border-radius: 6px; cursor: pointer; font: inherit; white-space: nowrap; }
-  nav button.active { border-color: var(--border); color: var(--text); background: var(--bg); }
-  nav .badge { background: var(--accent); color: #fff; border-radius: 99px; font-size: 11px; padding: 0 6px; margin-left: 4px; }
-  main { max-width: 860px; margin: 0 auto; padding: 16px; }
-  #chat { display: flex; flex-direction: column; gap: 10px; padding-bottom: 90px; }
+  .pill.info { color: var(--info); border-color: var(--info); }
+  nav { display: flex; gap: 2px; padding: 0 12px 8px; overflow-x: auto; scrollbar-width: none; }
+  nav button { background: none; border: 0; color: var(--muted); padding: 6px 10px; border-radius: 8px;
+               cursor: pointer; white-space: nowrap; }
+  nav button:hover { background: var(--soft); }
+  nav button.active { background: var(--soft); color: var(--text); font-weight: 600; }
+  .badge { background: var(--accent); color: #fff; border-radius: 99px; font-size: 11px; padding: 0 6px; margin-left: 4px; }
+  .badge.bad { background: var(--bad); }
+  main { max-width: 900px; margin: 0 auto; padding: 16px 16px 110px; }
+  h2 { font-size: 16px; margin: 22px 0 8px; }
+  h2:first-child { margin-top: 0; }
+  .meta, .help { font-size: 13px; color: var(--muted); }
+  .empty { color: var(--muted); padding: 16px 0; text-align: center; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
+          margin-bottom: 10px; }
+  .card.sev-warning { border-left: 4px solid var(--warn-b); }
+  .card.sev-critical { border-left: 4px solid var(--bad); }
+  .card.sev-info { border-left: 4px solid var(--info); }
+  .card.resolved { opacity: .7; }
+  .card h3 { margin: 0 0 4px; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .spread { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+  .grow { flex: 1; min-width: 0; }
+  .btn { border-radius: 8px; padding: 7px 14px; cursor: pointer; border: 1px solid var(--border);
+         background: var(--panel); white-space: nowrap; }
+  .btn:hover { background: var(--soft); }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .btn.primary:hover { filter: brightness(1.05); }
+  .btn.danger { color: var(--bad); }
+  .btn.small { padding: 3px 10px; font-size: 13px; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .tag { font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--soft); color: var(--muted); }
+  .tag.ok { color: var(--ok); } .tag.bad { color: var(--bad); } .tag.warn { color: var(--warn-b); }
+  input[type=text], input[type=url], input[type=number], input[type=time], select, textarea {
+    padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); min-width: 0; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  textarea { width: 100%; resize: vertical; }
+
+  /* chat */
+  #chat { display: flex; flex-direction: column; gap: 10px; }
   .msg { padding: 10px 14px; border-radius: 12px; max-width: 85%; white-space: pre-wrap; word-wrap: break-word;
          background: var(--panel); border: 1px solid var(--border); }
   .msg.user { align-self: flex-end; background: var(--user); border-color: transparent; }
   .msg.error { border-color: var(--bad); color: var(--bad); }
+  .msg img { display: block; max-width: 100%; border-radius: 8px; margin-top: 8px; cursor: zoom-in; }
   details { font-size: 12px; color: var(--muted); margin-top: 6px; }
   details pre { white-space: pre-wrap; margin: 4px 0; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; }
-  .card.warn, .confirm { background: var(--warn); border: 1px solid var(--warn-b); border-radius: 10px; padding: 10px 14px; }
-  .card .meta { font-size: 12px; color: var(--muted); }
-  .card h3 { margin: 0 0 4px; font-size: 15px; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .confirm { background: var(--warn); border: 1px solid var(--warn-b); border-radius: var(--radius); padding: 10px 14px;
+             margin-bottom: 10px; }
   form.chat { position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel); border-top: 1px solid var(--border);
-              padding: 12px 16px; }
-  form.chat .inner { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; }
-  input[type=text] { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
-                     background: var(--bg); color: var(--text); font: inherit; min-width: 0; }
-  button.primary, button.secondary { border-radius: 8px; padding: 8px 16px; cursor: pointer; font: inherit; }
-  button.primary { background: var(--accent); color: #fff; border: 0; }
-  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
-  button:disabled { opacity: .5; cursor: default; }
+              padding: 12px 16px; z-index: 4; }
+  form.chat .inner { max-width: 900px; margin: 0 auto; display: flex; gap: 8px; }
+  form.chat input { flex: 1; }
+  .typing { color: var(--muted); font-style: italic; }
+  .suggest { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+
+  /* incidents */
+  .timeline { margin: 10px 0 0; padding: 0 0 0 14px; border-left: 2px solid var(--border); }
+  .timeline .ev { margin: 0 0 10px; position: relative; }
+  .timeline .ev::before { content: ""; position: absolute; left: -20px; top: 6px; width: 10px; height: 10px;
+                          border-radius: 50%; background: var(--border); }
+  .timeline img { display: block; max-width: min(100%, 420px); border-radius: 8px; margin-top: 6px; cursor: zoom-in; }
+
+  /* switch */
+  .switch { position: relative; display: inline-block; width: 46px; height: 26px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span { position: absolute; inset: 0; background: var(--border); border-radius: 99px; transition: .2s; cursor: pointer; }
+  .switch span::before { content: ""; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px;
+                         background: #fff; border-radius: 50%; transition: .2s; box-shadow: 0 1px 2px #0003; }
+  .switch input:checked + span { background: var(--ok); }
+  .switch input:checked + span::before { transform: translateX(20px); }
+  .switch input:disabled + span { opacity: .5; cursor: default; }
+  .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* agent hero */
+  .hero { display: flex; gap: 14px; align-items: center; }
+  .hero .big { font-size: 34px; }
+  .hero.on { border-color: var(--ok); }
+  .hero.off { border-color: var(--warn-b); }
+
+  /* settings */
+  .section-nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .section-nav a { text-decoration: none; color: var(--text); background: var(--panel); border: 1px solid var(--border);
+                   padding: 4px 10px; border-radius: 99px; font-size: 13px; }
+  .settings-card { scroll-margin-top: 110px; }
+  .settings-card > h3 { font-size: 16px; margin: 0 0 6px; }
+  .field { display: grid; grid-template-columns: minmax(180px, 34%) 1fr; gap: 6px 18px; padding: 12px 0;
+           border-top: 1px solid var(--border); }
+  .settings-card > .field:nth-child(2) { border-top: 0; }
+  .field label.title { font-weight: 600; font-size: 14px; }
+  .field .control { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .field .control > input, .field .control > select { width: 100%; }
+  .field.changed label.title::after { content: " •"; color: var(--accent); }
+  .field.invalid input, .field.invalid select { border-color: var(--bad); }
+  .field .error { color: var(--bad); font-size: 13px; }
+  .field .error:empty { display: none; }
+  .hint { font-size: 13px; }
+  .hint.warn { color: var(--warn-b); } .hint.ok { color: var(--ok); } .hint.bad { color: var(--bad); }
+  .field.emphasis { background: var(--soft); margin: 4px -8px; padding: 12px 8px; border-radius: 8px; border-top: 0; }
+  @media (max-width: 640px) { .field { grid-template-columns: 1fr; } }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-wrap: wrap; max-width: 100%; }
+  .seg button { border: 0; background: var(--panel); padding: 6px 12px; cursor: pointer; border-right: 1px solid var(--border); }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .unit { display: flex; align-items: center; gap: 8px; }
+  .unit input { width: 140px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px; border: 1px solid var(--border);
+           border-radius: 8px; background: var(--bg); }
+  .chips .chip { background: var(--soft); border-radius: 99px; padding: 2px 4px 2px 10px; font-size: 13px; display: flex; gap: 4px; align-items: center; }
+  .chips .chip button { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0 4px; }
+  .chips input { border: 0; background: none; flex: 1; min-width: 120px; padding: 4px; }
+  .chips input:focus { outline: none; }
+  .autonomy-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; }
+  .checklist { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow: auto; padding: 6px 8px;
+               border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+  .checklist label { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+  .savebar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--border);
+             box-shadow: 0 -4px 16px #0002; padding: 12px 16px; z-index: 6; transform: translateY(110%); transition: .2s; }
+  .savebar:not(.show) { visibility: hidden; transition: transform .2s, visibility 0s .2s; }
+  .savebar.show { transform: none; }
+  .savebar .inner { max-width: 900px; margin: 0 auto; display: flex; gap: 10px; align-items: center; }
+  .toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); background: var(--text); color: var(--bg);
+           padding: 10px 16px; border-radius: 10px; z-index: 10; opacity: 0; transition: opacity .2s; pointer-events: none;
+           max-width: calc(100% - 32px); }
+  .toast.show { opacity: 1; }
+  .lightbox { position: fixed; inset: 0; background: #000c; display: flex; align-items: center; justify-content: center;
+              z-index: 20; cursor: zoom-out; }
+  .lightbox img { max-width: 96vw; max-height: 92vh; border-radius: 8px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--panel); }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
   .table-wrap { overflow-x: auto; }
-  code { background: var(--bg); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+  code { background: var(--soft); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
   .hidden { display: none !important; }
-  .typing { color: var(--muted); font-style: italic; }
-  .empty { color: var(--muted); padding: 12px 0; }
 </style>
 </head>
 <body>
 <header>
-  <h1>🤖 AI Huis</h1>
-  <span id="ha" class="pill">HA …</span>
-  <span id="llm" class="pill">Ollama …</span>
-  <span id="dry" class="pill warn hidden">testmodus</span>
-  <nav>
-    <button data-tab="chat" class="active">Chat</button>
-    <button data-tab="events">Meldingen</button>
-    <button data-tab="routines">Routines<span id="routine-badge" class="badge hidden"></span></button>
-    <button data-tab="memory">Geheugen</button>
-    <button data-tab="log">Actielog</button>
-    <button data-tab="settings">Koppelen</button>
+  <div class="bar">
+    <h1>🤖 AI Huis</h1>
+    <div class="pills">
+    <span id="ha" class="pill">HA …</span>
+    <span id="llm" class="pill">Ollama …</span>
+    <button id="mode-pill" class="pill hidden" data-goto="agent" title="Huismodus"></button>
+    <button id="agent-pill" class="pill hidden" data-goto="agent" title="Autonome agent"></button>
+    <button id="dry" class="pill warn hidden" data-goto="settings" title="Testmodus: er wordt niets echt uitgevoerd. Klik om te wijzigen.">🧪 testmodus</button>
+    </div>
+  </div>
+  <nav id="nav">
+    <button data-tab="chat" class="active">💬 Chat</button>
+    <button data-tab="incidents">🚨 Incidenten<span id="incident-badge" class="badge bad hidden"></span></button>
+    <button data-tab="agent">🤖 Agent</button>
+    <button data-tab="events">🔔 Meldingen</button>
+    <button data-tab="rules">📜 Huisregels</button>
+    <button data-tab="routines">💡 Routines<span id="routine-badge" class="badge hidden"></span></button>
+    <button data-tab="memory">🧠 Geheugen</button>
+    <button data-tab="log">📋 Actielog</button>
+    <button data-tab="settings">⚙️ Instellingen</button>
+    <button data-tab="pair">🔗 Koppelen</button>
   </nav>
 </header>
+
 <main>
-  <section id="tab-chat"><div id="pending"></div><div id="chat"></div></section>
+  <section id="tab-chat">
+    <div class="suggest" id="suggest"></div>
+    <div id="pending"></div><div id="chat"></div>
+  </section>
+
+  <section id="tab-incidents" class="hidden">
+    <div class="seg" id="incident-filter"><button data-f="active" class="on">Actief</button><button data-f="all">Alles</button></div>
+    <div id="incidents" style="margin-top:12px"></div>
+  </section>
+
+  <section id="tab-agent" class="hidden">
+    <div class="card hero" id="agent-hero">
+      <div class="big" id="agent-icon">🤖</div>
+      <div class="grow">
+        <div style="font-weight:600" id="agent-title">Autonome agent</div>
+        <div class="meta" id="agent-sub"></div>
+      </div>
+      <label class="switch" title="Noodknop: zelf handelen aan/uit">
+        <input type="checkbox" id="kill-switch" aria-label="Zelf handelen"><span></span></label>
+    </div>
+    <div class="row"><button class="btn" id="agent-run">🔍 Nu controleren</button>
+      <span class="meta grow" id="agent-run-out"></span></div>
+    <h2>Zelf gedaan</h2><div id="agent-actions"></div>
+    <h2>Gepland om te controleren</h2><div id="agent-followups"></div>
+    <h2>Logboek van de agent</h2><div id="agent-runs"></div>
+    <h2>Gedempt ("dit is normaal")</h2><div id="agent-mutes"></div>
+  </section>
 
   <section id="tab-events" class="hidden"><div id="events"></div></section>
 
+  <section id="tab-rules" class="hidden">
+    <p class="meta">Regels in gewone taal waar de autonome agent zich bij elke controle aan houdt.</p>
+    <div class="card">
+      <textarea id="rule-input" rows="2" placeholder="Bijv. 'Waarschuw als de vriezer boven -15 graden komt'"></textarea>
+      <div class="row"><button class="btn primary" id="rule-add">Regel toevoegen</button></div>
+      <div class="row"><span class="meta">Voorbeelden:</span></div>
+      <div class="row" id="rule-examples" style="margin-top:4px"></div>
+    </div>
+    <div id="rules"></div>
+  </section>
+
   <section id="tab-routines" class="hidden">
-    <p class="meta">Handelingen die je vaak rond hetzelfde tijdstip handmatig doet (laatste 14 dagen).</p>
-    <div class="row" style="margin-bottom:12px"><button class="secondary" id="analyze">Nu analyseren</button></div>
-    <div id="routines"></div>
+    <div class="spread"><p class="meta" style="margin:0">Handelingen die je vaak rond hetzelfde tijdstip handmatig doet (laatste 14 dagen).</p>
+      <button class="btn" id="analyze">Nu analyseren</button></div>
+    <div id="routines" style="margin-top:12px"></div>
   </section>
 
   <section id="tab-memory" class="hidden">
     <p class="meta">Feiten en voorkeuren die de AI onthoudt. Je kunt ook in de chat zeggen: "Onthoud dat …".</p>
     <form id="memory-form" class="row" style="margin-bottom:12px">
-      <input id="memory-input" type="text" placeholder="Bijv. 'In de slaapkamer wil ik 's nachts 17 graden'">
-      <button class="primary">Toevoegen</button>
+      <input id="memory-input" type="text" class="grow" placeholder="Bijv. 'In de slaapkamer wil ik 's nachts 17 graden'">
+      <button class="btn primary">Toevoegen</button>
     </form>
     <div id="memories"></div>
   </section>
@@ -103,6 +257,11 @@
   </section>
 
   <section id="tab-settings" class="hidden">
+    <div class="section-nav" id="section-nav"></div>
+    <div id="settings-form"><div class="empty">Laden…</div></div>
+  </section>
+
+  <section id="tab-pair" class="hidden">
     <div class="card">
       <h3>Assist / spraak</h3>
       <p>Installeer de integratie <b>AI HA Control</b> (via HACS of <code>custom_components</code>). Meestal wordt de
@@ -111,48 +270,63 @@
       <p>Kies daarna bij <b>Instellingen → Spraakassistenten</b> "AI HA Control" als gespreksagent.</p>
     </div>
     <div class="card">
-      <h3>Dagelijkse samenvatting</h3>
-      <p class="meta">Stuur nu een samenvatting om te testen.</p>
-      <div class="row"><button class="secondary" id="summary">Samenvatting nu sturen</button></div>
+      <h3>Ochtendsamenvatting</h3>
+      <div class="row"><button class="btn" id="summary">Samenvatting nu sturen</button></div>
       <p id="summary-out" class="meta"></p>
     </div>
   </section>
 </main>
+
 <form id="form" class="chat">
   <div class="inner">
-    <input id="input" type="text" placeholder="Vraag of opdracht, bijv. 'Welke ramen staan open?'" autocomplete="off">
-    <button class="primary" id="send">Stuur</button>
+    <input id="input" type="text" placeholder="Vraag of opdracht, bijv. 'Hoe gaat het thuis?'" autocomplete="off">
+    <button class="btn primary" id="send">Stuur</button>
   </div>
 </form>
+
+<div class="savebar" id="savebar"><div class="inner">
+  <span class="grow" id="savebar-text">Niet-opgeslagen wijzigingen</span>
+  <button class="btn" id="settings-reset" type="button">Ongedaan maken</button>
+  <button class="btn primary" id="settings-save" type="button">Opslaan</button>
+</div></div>
+<div class="toast" id="toast" role="status"></div>
+
 <script>
   // Relative URLs so the page works behind Home Assistant Ingress.
   const api = (path, opts) => fetch(path, opts).then(async r => {
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || r.statusText);
+    if (!r.ok) { const e = new Error(data.error || r.statusText); e.data = data; throw e; }
     return data;
   });
   const post = (path, body) => api(path, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
   });
+  const del = path => api(path, { method: "DELETE" });
   const $ = id => document.getElementById(id);
   const fmt = ts => new Date(ts * 1000).toLocaleString("nl-NL", { dateStyle: "short", timeStyle: "short" });
+  const fmtTime = ts => new Date(ts * 1000).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+  const MODE = { thuis: "🏠 thuis", weg: "🚪 weg", slapen: "🌙 slapen", vakantie: "🧳 vakantie", gast: "👥 gast" };
+  const SEV = { info: "ℹ️", warning: "⚠️", critical: "🚨" };
   let conversationId = null;
   try { conversationId = sessionStorage.getItem("conv"); } catch (e) {}
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
-    if (text !== undefined) e.textContent = text;
+    if (text !== undefined && text !== null) e.textContent = text;
     return e;
   }
-
-  function addMessage(text, cls) {
-    const m = el("div", "msg " + (cls || ""), text);
-    $("chat").appendChild(m);
-    window.scrollTo(0, document.body.scrollHeight);
-    return m;
+  function btn(text, cls, onclick) { const b = el("button", "btn " + (cls || ""), text); b.type = "button"; b.onclick = onclick; return b; }
+  function empty(box, text) { box.replaceChildren(el("div", "empty", text)); }
+  let toastTimer;
+  function toast(text) {
+    const t = $("toast"); t.textContent = text; t.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 3500);
   }
-
+  function lightbox(src) {
+    const box = el("div", "lightbox"); const img = el("img"); img.src = src; box.appendChild(img);
+    box.onclick = () => box.remove(); document.body.appendChild(box);
+  }
   function resultText(r) {
     if (r.status === "ok") return "✅ Uitgevoerd";
     if (r.status === "dry_run") return "🧪 " + r.message;
@@ -160,33 +334,37 @@
     return "❌ " + (r.error || r.status);
   }
 
+  /* ---------------- Chat ---------------- */
+  ["Hoe gaat het thuis?", "Welke ramen staan open?", "Wat gebeurt er in de achtertuin?", "Is er vandaag iets gebeurd?"]
+    .forEach(q => $("suggest").appendChild(btn(q, "small", () => { $("input").value = q; $("form").requestSubmit(); })));
+  function addMessage(text, cls) {
+    const m = el("div", "msg " + (cls || ""), text);
+    $("chat").appendChild(m);
+    $("suggest").classList.add("hidden");
+    window.scrollTo(0, document.body.scrollHeight);
+    return m;
+  }
   function addPending(p) {
     if (document.getElementById("p-" + p.id)) return;
-    const box = el("div", "confirm");
-    box.id = "p-" + p.id;
+    const box = el("div", "confirm"); box.id = "p-" + p.id;
     box.appendChild(el("div", "", "⚠️ Bevestiging nodig: " + p.description));
     box.appendChild(el("div", "meta", p.reason));
     const row = el("div", "row");
-    const yes = el("button", "primary", "Uitvoeren");
-    const no = el("button", "secondary", "Annuleren");
-    const decide = async (decision) => {
-      yes.disabled = no.disabled = true;
+    const decide = async decision => {
+      row.querySelectorAll("button").forEach(b => b.disabled = true);
       try { box.appendChild(el("div", "", resultText(await post(`api/pending/${p.id}/${decision}`)))); }
       catch (e) { box.appendChild(el("div", "", "❌ " + e.message)); }
+      setTimeout(() => box.remove(), 4000);
     };
-    yes.onclick = () => decide("confirm");
-    no.onclick = () => decide("reject");
-    row.append(yes, no);
+    row.append(btn("Uitvoeren", "primary", () => decide("confirm")), btn("Annuleren", "", () => decide("reject")));
     box.appendChild(row);
     $("pending").appendChild(box);
   }
-
-  $("form").onsubmit = async (ev) => {
+  $("form").onsubmit = async ev => {
     ev.preventDefault();
     const text = $("input").value.trim();
     if (!text) return;
-    $("input").value = "";
-    $("send").disabled = true;
+    $("input").value = ""; $("send").disabled = true;
     addMessage(text, "user");
     const typing = addMessage("Bezig…", "typing");
     try {
@@ -196,30 +374,25 @@
       typing.remove();
       const m = addMessage(r.answer);
       for (const a of r.actions || []) {
-        if (a.tool === "analyze_camera" && a.arguments && a.arguments.entity_id) {
-          const img = el("img");
-          img.src = `api/camera/${encodeURIComponent(a.arguments.entity_id)}?t=${Date.now()}`;
-          img.alt = a.arguments.entity_id;
-          img.style.cssText = "display:block;max-width:100%;border-radius:8px;margin-top:8px";
-          m.appendChild(img);
+        if (a.tool !== "analyze_camera") continue;
+        let images = [];
+        try { images = JSON.parse(a.result).images || []; } catch (e) {}
+        for (const id of images) {  // only cameras that were actually analysed
+          const img = el("img"); img.src = `api/camera/${encodeURIComponent(id)}?t=${Date.now()}`; img.alt = id;
+          img.onclick = () => lightbox(img.src); m.appendChild(img);
         }
       }
       if (r.actions && r.actions.length) {
-        const d = el("details");
-        d.appendChild(el("summary", "", `${r.actions.length} tool-aanroep(en)`));
+        const d = el("details"); d.appendChild(el("summary", "", `${r.actions.length} tool-aanroep(en)`));
         for (const a of r.actions) d.appendChild(el("pre", "", `${a.tool}(${JSON.stringify(a.arguments)})\n→ ${a.result}`));
         m.appendChild(d);
       }
       (r.pending || []).forEach(addPending);
-    } catch (e) {
-      typing.remove();
-      addMessage("Fout: " + e.message, "error");
-    } finally {
-      $("send").disabled = false;
-      $("input").focus();
-    }
+    } catch (e) { typing.remove(); addMessage("Fout: " + e.message, "error"); }
+    finally { $("send").disabled = false; $("input").focus(); }
   };
 
+  /* ---------------- Status ---------------- */
   async function refreshStatus() {
     try {
       const s = await api("api/status");
@@ -233,130 +406,502 @@
         txt = missing.length ? `ontbreekt: ${missing.join(", ")}` : o.model;
         cls = missing.length ? "warn" : "ok";
       }
-      $("llm").textContent = txt;
-      $("llm").className = "pill " + cls;
+      $("llm").textContent = txt; $("llm").className = "pill " + cls;
       $("dry").classList.toggle("hidden", !s.dry_run);
+      $("mode-pill").textContent = MODE[s.mode] || s.mode || "";
+      $("mode-pill").classList.toggle("hidden", !s.mode);
+      $("agent-pill").textContent = s.acting ? "🤖 zelf handelen aan" : "🤖 alleen melden";
+      $("agent-pill").className = "pill " + (s.acting ? "ok" : "warn") + (s.autonomous ? "" : " hidden");
+      $("incident-badge").textContent = s.active_incidents;
+      $("incident-badge").classList.toggle("hidden", !s.active_incidents);
     } catch (e) {}
     try { (await api("api/pending")).forEach(addPending); } catch (e) {}
     try {
       const n = (await api("api/suggestions")).length;
-      $("routine-badge").textContent = n;
-      $("routine-badge").classList.toggle("hidden", !n);
+      $("routine-badge").textContent = n; $("routine-badge").classList.toggle("hidden", !n);
     } catch (e) {}
   }
 
+  /* ---------------- Incidents ---------------- */
+  let incidentFilter = "active";
+  $("incident-filter").querySelectorAll("button").forEach(b => b.onclick = () => {
+    incidentFilter = b.dataset.f;
+    $("incident-filter").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    refreshIncidents();
+  });
+  const STATUS = { open: "open", monitoring: "wordt gevolgd", resolved: "opgelost" };
+  async function refreshIncidents() {
+    const list = await api(incidentFilter === "active" ? "api/incidents?status=active" : "api/incidents?limit=100");
+    const box = $("incidents"); box.replaceChildren();
+    if (!list.length) return empty(box, incidentFilter === "active" ? "✨ Geen actieve incidenten. Alles rustig." : "Nog geen incidenten.");
+    for (const i of list) {
+      const c = el("div", `card sev-${i.severity}` + (i.status === "resolved" ? " resolved" : ""));
+      const h = el("h3");
+      h.append(el("span", "", `${SEV[i.severity] || ""} ${i.title}`),
+               el("span", "tag" + (i.status === "resolved" ? " ok" : ""), STATUS[i.status] || i.status));
+      c.append(h, el("div", "", i.summary), el("div", "meta", `${fmt(i.opened)} · laatst bijgewerkt ${fmtTime(i.updated)}`));
+      const row = el("div", "row");
+      const timeline = el("div", "timeline hidden");
+      const toggle = btn("Tijdlijn tonen", "small", async () => {
+        if (timeline.classList.toggle("hidden")) { toggle.textContent = "Tijdlijn tonen"; return; }
+        toggle.textContent = "Tijdlijn verbergen";
+        const detail = await api(`api/incidents/${i.id}`);
+        timeline.replaceChildren();
+        for (const ev of detail.events) {
+          const e = el("div", "ev");
+          e.append(el("div", "meta", fmt(ev.ts)), el("div", "", ev.text));
+          if (ev.snapshot) { const img = el("img"); img.loading = "lazy"; img.src = `api/snapshots/${ev.snapshot}`;
+                             img.alt = "Snapshot"; img.onclick = () => lightbox(img.src); e.appendChild(img); }
+          timeline.appendChild(e);
+        }
+      });
+      row.appendChild(toggle);
+      if (i.status !== "resolved") row.appendChild(btn("Afsluiten", "small", async () => {
+        await post(`api/incidents/${i.id}/resolve`); toast("Incident afgesloten"); refreshIncidents(); refreshStatus();
+      }));
+      c.append(row, timeline);
+      box.appendChild(c);
+    }
+  }
+
+  /* ---------------- Agent ---------------- */
+  async function refreshAgent() {
+    const a = await api("api/agent");
+    const hero = $("agent-hero");
+    hero.classList.toggle("on", a.enabled && a.acting); hero.classList.toggle("off", a.enabled && !a.acting);
+    $("agent-icon").textContent = !a.enabled ? "💤" : a.acting ? "🤖" : "👀";
+    $("agent-title").textContent = !a.enabled ? "Autonome agent staat uit"
+      : a.acting ? "Bewaakt het huis en handelt zelf" : "Bewaakt het huis, handelt niet zelf";
+    $("agent-sub").textContent = !a.enabled ? "Zet hem aan bij Instellingen → Autonome agent."
+      : `Huismodus: ${MODE[a.mode] || a.mode}${a.running ? " · bezig met een controle…" : ""}`
+        + (a.last_summary ? ` · laatste controle: ${a.last_summary}` : "");
+    if (a.enabled && a.kill_switch.entity_id && a.kill_switch.state === null)
+      $("agent-sub").textContent += ` · Noodknop ${a.kill_switch.entity_id} bestaat nog niet; die wordt bij de volgende verbinding met Home Assistant aangemaakt.`;
+    const ks = $("kill-switch");
+    ks.checked = a.kill_switch.state === "on";
+    ks.disabled = !a.enabled || !a.kill_switch.entity_id || a.kill_switch.state === null;
+    ks.parentElement.title = a.kill_switch.entity_id ? `Zelf handelen (${a.kill_switch.entity_id})` : "Geen noodknop ingesteld";
+
+    const acts = $("agent-actions"); acts.replaceChildren();
+    if (!a.actions.length) empty(acts, "De agent heeft nog niets zelf gedaan.");
+    for (const x of a.actions) {
+      const c = el("div", "card spread");
+      const info = el("div", "grow");
+      info.append(el("div", "", `${x.domain}.${x.service} → ${x.entity_ids.join(", ")}`),
+                  el("div", "meta", `${fmt(x.ts)}${x.reason ? " · " + x.reason : ""}`));
+      c.appendChild(info);
+      if (x.undone) c.appendChild(el("span", "tag", "teruggedraaid"));
+      else c.appendChild(btn("↩️ Ongedaan maken", "small", async ev => {
+        ev.target.disabled = true;
+        try { const r = await post(`api/actions/${x.id}/undo`); toast(r.status === "ok" ? "Teruggedraaid" : r.message || r.status); }
+        catch (e) { toast("❌ " + e.message); }
+        refreshAgent();
+      }));
+      acts.appendChild(c);
+    }
+    const fu = $("agent-followups"); fu.replaceChildren();
+    if (!a.followups.length) empty(fu, "Niets gepland.");
+    for (const f of a.followups) fu.appendChild(el("div", "card", `⏰ ${fmtTime(f.due)} — ${f.note}`));
+
+    const runs = $("agent-runs"); runs.replaceChildren();
+    if (!a.runs.length) empty(runs, "Nog geen controles uitgevoerd. De agent denkt pas na als er iets verandert.");
+    for (const r of a.runs) {
+      const c = el("div", "card");
+      c.append(el("div", "meta", `${fmt(r.ts)} · ${r.trigger}`), el("div", "", r.summary));
+      if (r.tools.length) { const row = el("div", "row"); r.tools.forEach(t => row.appendChild(el("span", "tag", t))); c.appendChild(row); }
+      runs.appendChild(c);
+    }
+    const mutes = $("agent-mutes"); mutes.replaceChildren();
+    if (!a.mutes.length) empty(mutes, "Niets gedempt. Tik 👎 bij een afwijking om die als normaal te markeren.");
+    for (const m of a.mutes) {
+      const c = el("div", "card spread");
+      c.append(el("div", "grow", m.key.replace(/^anomaly:/, "")), btn("Weer melden", "small", async () => {
+        await del(`api/mutes/${encodeURIComponent(m.key)}`); refreshAgent();
+      }));
+      mutes.appendChild(c);
+    }
+  }
+  $("kill-switch").onchange = async ev => {
+    const on = ev.target.checked;
+    if (!on && !confirm("Zelf handelen uitzetten? De agent blijft wel kijken en melden.")) { ev.target.checked = true; return; }
+    try { await post("api/agent/kill-switch", { on }); toast(on ? "Zelf handelen staat aan" : "Zelf handelen staat uit"); }
+    catch (e) { toast("❌ " + e.message); ev.target.checked = !on; }
+    setTimeout(() => { refreshAgent(); refreshStatus(); }, 800);
+  };
+  $("agent-run").onclick = async () => {
+    $("agent-run").disabled = true; $("agent-run-out").textContent = "Bezig met rondkijken…";
+    try { $("agent-run-out").textContent = (await post("api/agent/run")).summary; }
+    catch (e) { $("agent-run-out").textContent = "❌ " + e.message; }
+    finally { $("agent-run").disabled = false; refreshAgent(); }
+  };
+
+  /* ---------------- Events ---------------- */
   async function refreshEvents() {
     const list = await api("api/events?limit=200");
-    const box = $("events");
-    box.replaceChildren();
-    if (!list.length) box.appendChild(el("div", "empty", "Nog geen meldingen."));
+    const box = $("events"); box.replaceChildren();
+    if (!list.length) return empty(box, "Nog geen meldingen.");
     for (const e of list) {
-      const c = el("div", "card" + (e.kind === "safety" ? " warn" : ""));
+      const c = el("div", "card" + (e.kind === "safety" ? " sev-critical" : ""));
       c.appendChild(el("h3", "", e.title));
-      c.appendChild(el("div", "", e.message));
-      c.appendChild(el("div", "meta", `${fmt(e.ts)} · ${e.kind}${e.pushed ? " · gepusht" : ""}`));
+      if (e.message) c.appendChild(el("div", "", e.message));
+      const row = el("div", "row");
+      row.appendChild(el("span", "meta grow", `${fmt(e.ts)} · ${e.pushed ? "gepusht" : "alleen vastgelegd"}`));
+      if (!["confirmation", "confirmation_result", "safety"].includes(e.kind)) {
+        if (e.feedback) row.appendChild(el("span", "tag", e.feedback > 0 ? "👍 nuttig" : "👎 onnodig"));
+        else {
+          const fb = value => async () => {
+            await post(`api/events/${e.id}/feedback`, { value });
+            toast(value > 0 ? "Dank je!" : (e.ref || "").startsWith("anomaly:") ? "Gemarkeerd als normaal" : "Genoteerd: dit meldt de AI minder");
+            refreshEvents();
+          };
+          const up = btn("👍", "small", fb(1)); up.title = "Nuttige melding";
+          const down = btn("👎", "small", fb(-1)); down.title = "Onnodige melding";
+          row.append(up, down);
+        }
+      }
+      c.appendChild(row);
       box.appendChild(c);
     }
   }
 
+  /* ---------------- House rules ---------------- */
+  ["Waarschuw als de vriezer boven -15 graden komt",
+   "Houd de woonkamer op 20 graden als er iemand thuis is",
+   "Doe 's nachts de buitenlampen aan bij beweging in de tuin",
+   "Meld het als de achterdeur langer dan 10 minuten open staat"].forEach(t =>
+    $("rule-examples").appendChild(btn(t, "small", () => { $("rule-input").value = t; $("rule-input").focus(); })));
+  async function renderRules(list) {
+    list = list || await api("api/rules");
+    const box = $("rules"); box.replaceChildren();
+    if (!list.length) return empty(box, "Nog geen huisregels.");
+    for (const r of list) {
+      const c = el("div", "card spread");
+      const sw = el("label", "switch"); sw.title = r.enabled ? "Aan" : "Uit";
+      const input = el("input"); input.type = "checkbox"; input.checked = !!r.enabled;
+      input.onchange = async () => renderRules(await post(`api/rules/${r.id}/toggle`, { enabled: input.checked }));
+      sw.append(input, el("span"));
+      const text = el("div", "grow", r.text); if (!r.enabled) text.style.opacity = .5;
+      c.append(sw, text, btn("Verwijderen", "small danger", async () => {
+        if (confirm("Deze huisregel verwijderen?")) renderRules(await del(`api/rules/${r.id}`));
+      }));
+      box.appendChild(c);
+    }
+  }
+  $("rule-add").onclick = async () => {
+    const text = $("rule-input").value.trim(); if (!text) return $("rule-input").focus();
+    renderRules(await post("api/rules", { text })); $("rule-input").value = ""; toast("Huisregel toegevoegd");
+  };
+
+  /* ---------------- Routines / memory / log / pairing ---------------- */
   async function refreshRoutines() {
     const list = await api("api/suggestions");
-    const box = $("routines");
-    box.replaceChildren();
-    if (!list.length) box.appendChild(el("div", "empty", "Geen nieuwe routines gevonden."));
+    const box = $("routines"); box.replaceChildren();
+    if (!list.length) return empty(box, "Geen nieuwe routines gevonden.");
     for (const s of list) {
       const c = el("div", "card");
-      c.appendChild(el("div", "", s.description));
-      c.appendChild(el("div", "meta", `${s.entity_id} → ${s.state} om ${s.time}${s.weekdays_only ? " (ma–vr)" : ""}`));
+      c.append(el("div", "", s.description),
+               el("div", "meta", `${s.entity_id} → ${s.state} om ${s.time}${s.weekdays_only ? " (ma–vr)" : ""}`));
       const row = el("div", "row");
-      const yes = el("button", "primary", "Automatisering maken");
-      const no = el("button", "secondary", "Negeren");
-      yes.onclick = async () => {
-        yes.disabled = no.disabled = true;
-        try { c.appendChild(el("div", "", resultText(await post(`api/suggestions/${s.id}/accept`)))); }
-        catch (e) { c.appendChild(el("div", "", "❌ " + e.message)); }
-      };
-      no.onclick = async () => { await post(`api/suggestions/${s.id}/dismiss`); refreshRoutines(); };
-      row.append(yes, no);
-      c.appendChild(row);
-      box.appendChild(c);
+      row.append(btn("Automatisering maken", "primary small", async ev => {
+        ev.target.disabled = true;
+        try { toast(resultText(await post(`api/suggestions/${s.id}/accept`))); } catch (e) { toast("❌ " + e.message); }
+        refreshRoutines();
+      }), btn("Negeren", "small", async () => { await post(`api/suggestions/${s.id}/dismiss`); refreshRoutines(); }));
+      c.appendChild(row); box.appendChild(c);
     }
   }
-
   async function refreshMemories(list) {
     list = list || await api("api/memories");
-    const box = $("memories");
-    box.replaceChildren();
-    if (!list.length) box.appendChild(el("div", "empty", "Nog niets onthouden."));
+    const box = $("memories"); box.replaceChildren();
+    if (!list.length) return empty(box, "Nog niets onthouden.");
     for (const m of list) {
-      const c = el("div", "card");
-      const row = el("div", "row");
-      row.style.justifyContent = "space-between";
-      row.style.marginTop = "0";
-      row.appendChild(el("div", "", m.text));
-      const del = el("button", "secondary", "Vergeten");
-      del.onclick = async () => refreshMemories(await api(`api/memories/${m.id}`, { method: "DELETE" }));
-      row.appendChild(del);
-      c.appendChild(row);
-      c.appendChild(el("div", "meta", fmt(m.ts)));
+      const c = el("div", "card spread");
+      const info = el("div", "grow"); info.append(el("div", "", m.text), el("div", "meta", fmt(m.ts)));
+      c.append(info, btn("Vergeten", "small", async () => refreshMemories(await del(`api/memories/${m.id}`))));
       box.appendChild(c);
     }
   }
-
+  $("memory-form").onsubmit = async ev => {
+    ev.preventDefault();
+    const text = $("memory-input").value.trim(); if (!text) return;
+    $("memory-input").value = ""; refreshMemories(await post("api/memories", { text }));
+  };
   async function refreshLog() {
     const rows = await api("api/audit?limit=200");
-    const body = $("log");
-    body.replaceChildren();
+    const body = $("log"); body.replaceChildren();
     for (const r of rows) {
-      const tr = el("tr");
-      const a = r.arguments;
+      const a = r.arguments, tr = el("tr");
       const what = a.domain ? `${a.domain}.${a.service} ${(a.entity_ids || []).join(", ")} ${a.data && Object.keys(a.data).length ? JSON.stringify(a.data) : ""}`
                  : a.config ? `automatisering: ${a.config.alias}` : `${r.action} ${JSON.stringify(a)}`;
       tr.append(el("td", "", fmt(r.ts)), el("td", "", what), el("td", "", r.decision), el("td", "", r.result || ""));
       body.appendChild(tr);
     }
   }
-
-  async function refreshSettings() {
+  async function refreshPair() {
     const i = await api("api/integration");
-    $("int-url").textContent = i.url;
-    $("int-key").textContent = i.api_key;
+    $("int-url").textContent = i.url; $("int-key").textContent = i.api_key;
   }
-
-  const loaders = { events: refreshEvents, routines: refreshRoutines, memory: refreshMemories,
-                    log: refreshLog, settings: refreshSettings };
-  document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
-    const tab = b.dataset.tab;
-    document.querySelectorAll("nav button").forEach(x => x.classList.toggle("active", x === b));
-    document.querySelectorAll("main > section").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + tab));
-    $("form").classList.toggle("hidden", tab !== "chat");
-    if (loaders[tab]) loaders[tab]().catch(e => alert(e.message));
-  });
-
-  $("memory-form").onsubmit = async (ev) => {
-    ev.preventDefault();
-    const text = $("memory-input").value.trim();
-    if (!text) return;
-    $("memory-input").value = "";
-    refreshMemories(await post("api/memories", { text }));
-  };
   $("analyze").onclick = async () => {
     $("analyze").disabled = true;
-    try { await post("api/jobs/routines"); await refreshRoutines(); }
-    catch (e) { alert(e.message); }
-    finally { $("analyze").disabled = false; }
+    try { const r = await post("api/jobs/routines"); toast(`${r.new} nieuwe routine(s)`); await refreshRoutines(); }
+    catch (e) { toast("❌ " + e.message); } finally { $("analyze").disabled = false; }
   };
   $("summary").onclick = async () => {
-    $("summary").disabled = true;
-    $("summary-out").textContent = "Bezig…";
+    $("summary").disabled = true; $("summary-out").textContent = "Bezig…";
     try { $("summary-out").textContent = (await post("api/jobs/summary")).text || "(leeg)"; }
-    catch (e) { $("summary-out").textContent = "❌ " + e.message; }
-    finally { $("summary").disabled = false; }
+    catch (e) { $("summary-out").textContent = "❌ " + e.message; } finally { $("summary").disabled = false; }
   };
+
+  /* ---------------- Settings ---------------- */
+  const LEVELS = [["observe", "👀 Kijken"], ["ask", "❓ Vragen"], ["act", "✅ Zelf doen"]];
+  let settings = null, original = {}, draft = {}, fieldEls = {};
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const changedKeys = () => Object.keys(draft).filter(k => !same(draft[k], original[k]));
+
+  function updateSavebar() {
+    const n = changedKeys().length;
+    $("savebar").classList.toggle("show", n > 0);
+    $("savebar-text").textContent = n === 1 ? "1 niet-opgeslagen wijziging" : `${n} niet-opgeslagen wijzigingen`;
+  }
+  function setValue(key, value) {
+    draft[key] = value;
+    const f = fieldEls[key];
+    if (f) {
+      f.box.classList.toggle("changed", !same(value, original[key]));
+      f.box.classList.remove("invalid"); f.error.textContent = "";
+      if (f.update) f.update();
+    }
+    updateSavebar();
+  }
+  function segmented(options, value, onpick) {
+    const seg = el("div", "seg"); seg.setAttribute("role", "radiogroup");
+    const render = v => seg.querySelectorAll("button").forEach(b => { b.classList.toggle("on", b.dataset.v === v); b.setAttribute("aria-checked", b.dataset.v === v); });
+    for (const [v, label] of options) {
+      const b = el("button", "", label); b.type = "button"; b.dataset.v = v; b.setAttribute("role", "radio");
+      b.onclick = () => { render(v); onpick(v); }; seg.appendChild(b);
+    }
+    render(value); return seg;
+  }
+  function timeInput(value, onchange) { const i = el("input"); i.type = "time"; i.value = value || ""; i.oninput = () => onchange(i.value); return i; }
+  function offToggle(label, isOff, onchange) {
+    const l = el("label", "row meta"); l.style.marginTop = "0";
+    const c = el("input"); c.type = "checkbox"; c.checked = isOff; c.onchange = () => onchange(c.checked);
+    l.append(c, el("span", "", label)); return l;
+  }
+
+  const builders = {
+    toggle(spec, v, set) { const l = el("label", "switch"); const i = el("input"); i.type = "checkbox"; i.checked = !!v;
+      i.setAttribute("aria-label", spec.label); i.onchange = () => set(i.checked); l.append(i, el("span")); return l; },
+    text(spec, v, set) { const i = el("input"); i.type = "text"; i.value = v ?? ""; i.oninput = () => set(i.value); return i; },
+    url(spec, v, set) {
+      const wrap = el("div", "control");
+      const line = el("div", "row"); line.style.marginTop = "0";
+      const i = el("input"); i.type = "url"; i.value = v ?? ""; i.className = "grow"; i.oninput = () => set(i.value);
+      const out = el("div", "hint");
+      line.append(i, btn("Test verbinding", "small", async () => {
+        out.className = "hint"; out.textContent = "Testen…";
+        try {
+          const r = await post("api/settings/test-ollama", { url: i.value });
+          out.className = "hint " + (r.reachable ? "ok" : "bad");
+          out.textContent = r.reachable ? `✓ Bereikbaar · ${r.model_count} modellen geïnstalleerd` : `✗ Niet bereikbaar: ${r.error}`;
+        } catch (e) { out.className = "hint bad"; out.textContent = "✗ " + e.message; }
+      }));
+      wrap.append(line, out); return wrap;
+    },
+    number(spec, v, set) {
+      const wrap = el("div", "unit"); const i = el("input"); i.type = "number";
+      Object.assign(i, { min: spec.min, max: spec.max, step: spec.step || 1, value: v });
+      i.oninput = () => set(i.value === "" ? "" : Number(i.value));
+      wrap.append(i); if (spec.unit) wrap.append(el("span", "meta", spec.unit)); return wrap;
+    },
+    segmented(spec, v, set) { return segmented(spec.options, v, set); },
+    model(spec, v, set, ctl) {
+      const models = settings.choices.models;
+      if (!models.length) {
+        const wrap = el("div", "control");
+        wrap.append(builders.text(spec, v, set), el("div", "hint warn", "Ollama niet bereikbaar: typ de modelnaam zelf."));
+        return wrap;
+      }
+      const s = el("select");
+      if (spec.optional) s.appendChild(new Option("(zelfde als taalmodel)", ""));
+      if (v && !models.some(m => m.name === v)) s.appendChild(new Option(`${v} (niet geïnstalleerd)`, v));
+      for (const m of models) {
+        const caps = [m.tools && "🛠 tools", m.vision && "👁 beeld"].filter(Boolean).join(" · ");
+        s.appendChild(new Option(`${m.name} · ${m.size_gb} GB${caps ? " · " + caps : ""}`, m.name));
+      }
+      s.value = v || ""; s.onchange = () => set(s.value);
+      const hint = el("div", "hint");
+      ctl.update = () => {
+        const value = draft[spec.key], m = models.find(x => x.name === value);
+        hint.className = "hint"; hint.textContent = "";
+        if (!value) return;
+        if (!m) { hint.className = "hint warn"; hint.textContent = `⚠️ Niet geïnstalleerd. Op de server: ollama pull ${value}`; return; }
+        const has = spec.capability === "vision" ? m.vision : m.tools;
+        if (has === false) {
+          hint.className = "hint warn";
+          hint.textContent = spec.capability === "vision" ? "⚠️ Dit model kan geen beelden bekijken."
+            : "⚠️ Dit model ondersteunt geen tool-calling en kan je huis dus niet bedienen.";
+        } else if (has) {
+          hint.className = "hint ok";
+          hint.textContent = spec.capability === "vision" ? "✓ Kan beelden bekijken" : "✓ Ondersteunt tool-calling";
+        }
+      };
+      const wrap = el("div", "control"); wrap.append(s, hint); return wrap;
+    },
+    select(spec, v, set) {
+      const s = el("select"); const list = settings.choices[spec.choices] || [];
+      if (spec.optional) s.appendChild(new Option("(geen — alleen in Home Assistant)", ""));
+      if (v && !list.some(x => x.value === v)) s.appendChild(new Option(v, v));
+      list.forEach(x => s.appendChild(new Option(x.label, x.value)));
+      s.value = v || ""; s.onchange = () => set(s.value); return s;
+    },
+    entity(spec, v, set) {
+      const s = el("select"); const list = (settings.choices.entities || {})[spec.domain] || [];
+      if (spec.optional) s.appendChild(new Option("(geen)", ""));
+      if (v && !list.some(x => x.value === v)) s.appendChild(new Option(`${v} (wordt aangemaakt)`, v));
+      list.forEach(x => s.appendChild(new Option(`${x.label} (${x.value})`, x.value)));
+      s.value = v || ""; s.onchange = () => set(s.value); return s;
+    },
+    entities(spec, v, set) {
+      const list = (settings.choices.entities || {})[spec.domain] || [];
+      if (!list.length) return el("div", "meta", "Geen apparaten van dit type gevonden.");
+      const box = el("div", "checklist"); const chosen = new Set(v || []);
+      for (const x of list) {
+        const l = el("label"); const c = el("input"); c.type = "checkbox"; c.checked = chosen.has(x.value);
+        c.onchange = () => { c.checked ? chosen.add(x.value) : chosen.delete(x.value); set([...chosen]); };
+        l.append(c, el("span", "", x.label)); box.appendChild(l);
+      }
+      return box;
+    },
+    chips(spec, v, set) {
+      const box = el("div", "chips"); const items = [...(v || [])];
+      const input = el("input"); input.placeholder = "Typ en druk op Enter";
+      if (spec.suggestions) {
+        const dl = el("datalist"); dl.id = "dl-" + spec.key;
+        (settings.choices[spec.suggestions] || []).forEach(d => dl.appendChild(new Option(d)));
+        box.appendChild(dl); input.setAttribute("list", dl.id);
+      }
+      const render = () => {
+        box.querySelectorAll(".chip").forEach(c => c.remove());
+        items.forEach((t, idx) => {
+          const c = el("span", "chip", t); const x = el("button", "", "×"); x.type = "button"; x.title = `${t} verwijderen`;
+          x.onclick = () => { items.splice(idx, 1); render(); set([...items]); };
+          c.appendChild(x); box.insertBefore(c, input);
+        });
+      };
+      const add = () => { const t = input.value.trim(); if (t && !items.includes(t)) { items.push(t); set([...items]); } input.value = ""; render(); };
+      input.onkeydown = e => {
+        if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(); }
+        else if (e.key === "Backspace" && !input.value && items.length) { items.pop(); render(); set([...items]); }
+      };
+      input.onblur = add; box.appendChild(input); render(); return box;
+    },
+    time(spec, v, set) {
+      const wrap = el("div", "row"); wrap.style.marginTop = "0";
+      const t = timeInput(v, x => set(x)); t.disabled = !v;
+      wrap.append(t, offToggle("Uit", !v, off => { t.disabled = off; if (!off && !t.value) t.value = "07:30"; set(off ? "" : t.value); }));
+      return wrap;
+    },
+    timerange(spec, v, set) {
+      const [a, b] = (v || "").split("-");
+      const wrap = el("div", "row"); wrap.style.marginTop = "0";
+      const emit = () => set(`${from.value}-${to.value}`);
+      const from = timeInput(a, emit), to = timeInput(b, emit);
+      from.disabled = to.disabled = !v;
+      wrap.append(el("span", "meta", "van"), from, el("span", "meta", "tot"), to);
+      if (spec.optional) wrap.append(offToggle("Uit", !v, off => {
+        from.disabled = to.disabled = off;
+        if (!off) { from.value ||= "23:00"; to.value ||= "07:00"; }
+        set(off ? "" : `${from.value}-${to.value}`);
+      }));
+      return wrap;
+    },
+    autonomy(spec, v, set) {
+      const levels = Object.fromEntries((v || []).map(x => x.split("=")));
+      const grid = el("div", "autonomy-grid");
+      for (const [domain, label] of spec.domains) {
+        grid.append(el("div", "", label), segmented(LEVELS, levels[domain] || "ask", lvl => {
+          levels[domain] = lvl; set(Object.entries(levels).map(([d, l]) => `${d}=${l}`));
+        }));
+      }
+      return grid;
+    },
+  };
+
+  function renderSettings() {
+    const form = $("settings-form"); form.replaceChildren(); fieldEls = {};
+    const nav = $("section-nav"); nav.replaceChildren();
+    for (const section of settings.sections) {
+      const a = el("a", "", `${section.icon} ${section.title}`); a.href = "#sec-" + section.id;
+      a.onclick = e => { e.preventDefault(); $("sec-" + section.id).scrollIntoView({ behavior: "smooth" }); };
+      nav.appendChild(a);
+      const card = el("div", "card settings-card"); card.id = "sec-" + section.id;
+      card.appendChild(el("h3", "", `${section.icon} ${section.title}`));
+      for (const spec of section.fields) {
+        const box = el("div", "field" + (spec.emphasis ? " emphasis" : ""));
+        const labelCol = el("div"); labelCol.append(el("label", "title", spec.label));
+        if (spec.help) labelCol.append(el("div", "help", spec.help));
+        const ctl = {}, control = el("div", "control"), error = el("div", "error");
+        control.append(builders[spec.type](spec, draft[spec.key], v => setValue(spec.key, v), ctl), error);
+        box.append(labelCol, control);
+        fieldEls[spec.key] = { box, error, update: ctl.update };
+        if (ctl.update) ctl.update();
+        box.classList.toggle("changed", !same(draft[spec.key], original[spec.key]));
+        card.appendChild(box);
+      }
+      form.appendChild(card);
+    }
+  }
+  async function loadSettings() {
+    if (settings && changedKeys().length) return;  // keep unsaved edits when coming back
+    settings = await api("api/settings");
+    original = structuredClone(settings.values); draft = structuredClone(settings.values);
+    renderSettings(); updateSavebar();
+  }
+  $("settings-reset").onclick = () => { draft = structuredClone(original); renderSettings(); updateSavebar(); };
+  $("settings-save").onclick = async () => {
+    const keys = changedKeys(); if (!keys.length) return;
+    $("settings-save").disabled = true;
+    try {
+      const r = await post("api/settings", { values: Object.fromEntries(keys.map(k => [k, draft[k]])) });
+      original = structuredClone(r.values); draft = structuredClone(r.values);
+      renderSettings(); updateSavebar();
+      toast(r.warning ? `Toegepast, maar: ${r.warning}` : "✓ Opgeslagen en direct toegepast");
+      refreshStatus();
+    } catch (e) {
+      const fields = (e.data && e.data.fields) || {};
+      for (const [k, msg] of Object.entries(fields)) if (fieldEls[k]) { fieldEls[k].box.classList.add("invalid"); fieldEls[k].error.textContent = msg; }
+      const first = Object.keys(fields)[0];
+      if (first && fieldEls[first]) fieldEls[first].box.scrollIntoView({ behavior: "smooth", block: "center" });
+      toast("❌ " + e.message);
+    } finally { $("settings-save").disabled = false; }
+  };
+  window.addEventListener("beforeunload", e => { if (changedKeys().length) { e.preventDefault(); e.returnValue = ""; } });
+
+  /* ---------------- Navigation ---------------- */
+  const loaders = { incidents: refreshIncidents, agent: refreshAgent, events: refreshEvents, rules: renderRules,
+                    routines: refreshRoutines, memory: refreshMemories, log: refreshLog, settings: loadSettings, pair: refreshPair };
+  let currentTab = "chat";
+  function showTab(tab) {
+    if (currentTab === "settings" && tab !== "settings" && changedKeys().length
+        && !confirm("Je hebt niet-opgeslagen instellingen. Toch verlaten? De wijzigingen gaan verloren.")) return;
+    if (currentTab === "settings" && tab !== "settings") { draft = structuredClone(original); updateSavebar(); }
+    currentTab = tab;
+    document.querySelectorAll("#nav button").forEach(x => x.classList.toggle("active", x.dataset.tab === tab));
+    document.querySelectorAll("main > section").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + tab));
+    $("form").classList.toggle("hidden", tab !== "chat");
+    try { localStorage.setItem("tab", tab); } catch (e) {}
+    if (loaders[tab]) loaders[tab]().catch(e => toast("❌ " + e.message));
+    if (tab === "chat") $("input").focus();
+  }
+  document.querySelectorAll("#nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  document.querySelectorAll("[data-goto]").forEach(b => b.onclick = () => showTab(b.dataset.goto));
 
   refreshStatus();
   setInterval(refreshStatus, 15000);
-  $("input").focus();
+  setInterval(() => { if (["incidents", "agent"].includes(currentTab) && !document.hidden) loaders[currentTab]().catch(() => {}); }, 30000);
+  let startTab = "chat"; try { startTab = localStorage.getItem("tab") || "chat"; } catch (e) {}
+  showTab(startTab in loaders || startTab === "chat" ? startTab : "chat");
 </script>
 </body>
 </html>

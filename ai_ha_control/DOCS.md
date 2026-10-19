@@ -21,6 +21,40 @@ Een **lokale AI (Ollama)** die je huis helpt beheren via Home Assistant. Alles b
 - **Routines leren**: de add-on zoekt elke nacht in het logboek naar handelingen die je vaak rond hetzelfde tijdstip handmatig doet en stelt automatiseringen voor (tabblad *Routines*).
 - **Geheugen**: voorkeuren die je vertelt worden onthouden en meegenomen in elk gesprek.
 
+## Autonome agent
+
+De agent bewaakt het huis zelfstandig:
+
+1. **Hartslag**: elke `heartbeat_minutes` (en binnen ~20 s bij iets opvallends) krijgt hij een situatierapport: wat er veranderd is, afwijkingen, open incidenten, geplande controles, huisregels en jouw feedback. Is er niets veranderd, dan slaat hij de beurt over zonder het LLM te gebruiken.
+2. Hij beslist: **niets doen**, een **incident** openen of bijwerken (één melding per incident), **zelf handelen** binnen zijn autonomie, of een **controle plannen** ("over 15 minuten kijken of het raam dicht is").
+3. **Huismodus** (thuis / weg / slapen / vakantie / gast) komt uit je **modus-scènes** als je die hebt (scènes met namen als *Afwezig, Thuis, Slapen, Gast, Vakantie*; de laatst geactiveerde telt). Anders wordt hij bepaald uit je `person.*`-entiteiten en de slaaptijden.
+4. **Wat is normaal**: per sensor en per uur van de dag leert de add-on een basislijn (temperatuur, vocht, stroom, CO₂, fijnstof…). Na ~30 metingen per uur worden grote afwijkingen gemeld. Na twee weken ook beweging of geopende deuren op een uur waarop dat nog nooit gebeurde. Apparaten die tijdens het draaien wegvallen worden gemeld (permanent dode entiteiten niet).
+5. **Camerapatrouille** (als je weg bent of slaapt): snapshots worden goedkoop vergeleken met de vorige; alleen bij verschil kijkt het beeldmodel. Voorbijgangers op straat worden genegeerd.
+
+### Wat mag de agent zelf?
+
+Per domein stel je in: **👀 Kijken** (alleen melden), **❓ Vragen** (melding met knop *Uitvoeren*) of **✅ Zelf doen**. Zelf doen is begrensd:
+- alleen als de **noodknop** `input_boolean.ai_autonoom` aan staat (wordt automatisch aangemaakt; ook te bedienen in het tabblad *Agent*);
+- alleen **omkeerbare** acties, met een **↩️ Ongedaan maken**-knop in de melding en in de web-UI;
+- maximaal `max_autonomous_actions_per_hour` acties per uur en maximaal `max_climate_change` graden temperatuurverschil;
+- domeinen in `confirm_domains` vragen altijd eerst, en de agent kan zijn eigen noodknop niet bedienen.
+
+### Feedback
+
+Elke melding heeft **👍 Nuttig / 👎 Onnodig**. 👎 op een afwijking betekent *dit is normaal*: die wordt gedempt (terug te zetten in het tabblad *Agent*). De agent krijgt je recente 👎's mee en meldt vergelijkbare zaken minder.
+
+### Entiteiten in Home Assistant
+
+| Entiteit | Inhoud |
+|----------|--------|
+| `sensor.ai_huis_status` | `rustig`, `aandacht` of `alarm` (+ huismodus, aantal incidenten, laatste controle) |
+| `sensor.ai_huismodus` | thuis / weg / slapen / vakantie / gast |
+| `binary_sensor.ai_bezorgd` | aan als er een incident met ernst *warning* of *critical* open staat |
+| `sensor.ai_laatste_incident` | titel van het laatste incident |
+| `input_boolean.ai_autonoom` | noodknop: zelf handelen aan/uit |
+
+Gebruik ze op je dashboard of in eigen automatiseringen (bijv. een lamp rood als `binary_sensor.ai_bezorgd` aan gaat).
+
 ## Veiligheid
 
 - Start standaard in **testmodus** (`dry_run: true`): de AI vertelt wat hij zou doen, maar voert niets uit. Controleer het *Actielog* en zet testmodus daarna uit.
@@ -77,6 +111,8 @@ De integratie geeft ook de actie `ai_ha_control.ask` (met antwoord), te gebruike
 
 ## Opties
 
+Alle opties zijn ook te bewerken in **AI Huis → ⚙️ Instellingen**: gegroepeerd, met uitleg, keuzelijsten met je eigen modellen, telefoons en speakers, en direct toegepast zonder herstart. Wijzigingen worden ook in de add-on-configuratie van Home Assistant opgeslagen.
+
 | Optie | Standaard | Uitleg |
 |-------|-----------|--------|
 | `ollama_url` | – | Adres van Ollama |
@@ -102,6 +138,17 @@ De integratie geeft ook de actie `ai_ha_control.ask` (met antwoord), te gebruike
 | `routine_learning` | `true` | Routines herkennen (elke nacht om 03:30) |
 | `tts_entity` | – | Bijv. `tts.piper` of `tts.google_translate_nl_nl`; nodig voor aankondigingen |
 | `announce_players` | – | Speakers (`media_player.*`) waarop deurbel en alarmen worden uitgesproken |
+| `autonomous` | `true` | Autonome agent aan/uit |
+| `autonomy` | zie boven | Per domein `observe`, `ask` of `act` |
+| `kill_switch` | `input_boolean.ai_autonoom` | Noodknop (wordt aangemaakt) |
+| `max_climate_change` | `2.0` | Max. temperatuurwijziging die de agent zelf mag doen |
+| `max_autonomous_actions_per_hour` | `10` | Max. eigen acties per uur |
+| `triage_model` | – | Klein snel model voor de hartslag, bijv. `qwen3:4b-instruct` (leeg = taalmodel) |
+| `heartbeat_minutes` | `10` | Hoe vaak de agent rondkijkt |
+| `sleep_hours` | `23:00-07:00` | Huismodus 'slapen' (als er geen modus-scènes zijn) |
+| `camera_patrol` | `away` | `off`, `away` (weg/slapen) of `always` |
+| `patrol_minutes` | `15` | Interval van de patrouille |
+| `snapshot_retention_days` | `7` | Hoe lang snapshots van incidenten bewaard blijven |
 | `api_key` | automatisch | Sleutel voor de Assist-integratie |
 
 "Niemand thuis" wordt bepaald aan de hand van je `person.*`-entiteiten. Zonder personen worden afwezigheidsregels overgeslagen.

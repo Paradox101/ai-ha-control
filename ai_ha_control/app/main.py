@@ -16,19 +16,26 @@ import json
 import aiohttp
 from aiohttp import web
 
+from .agent.autonomous import AutonomousAgent
 from .agent.loop import Agent
+from .autonomy import Autonomy, undo_action
 from .config import Config, container_env, supervisor_token
 from .ha.client import HAClient
 from .ha.index import EntityIndex
+from .ha.status import StatusPublisher, ensure_kill_switch
 from .llm.ollama import LLMError, OllamaClient
 from .notify import Notifier
 from .policy import Policy
 from .storage.db import Database
 from .tools.actions import ConfirmationStore, resolve_confirmation
 from .tools.base import ToolContext
-from .tools.home import build_registry
+from .tools.home import build_autonomous_registry, build_registry
+from . import settings as settings_module
+from .watcher.baseline import Baseline
+from .watcher.incidents import IncidentManager, SnapshotStore
+from .watcher.patrol import Patrol
 from .watcher.routines import accept_suggestion
-from .watcher.rules import Watcher
+from .watcher.rules import Watcher, apply_feedback
 from .watcher.scheduler import Scheduler
 
 _LOGGER = logging.getLogger("ai_ha_control")
@@ -84,6 +91,7 @@ class App:
         self.notifier: Notifier | None = None
         self.watcher: Watcher | None = None
         self.scheduler: Scheduler | None = None
+        self.guardian: AutonomousAgent | None = None
         self._refresh_task: asyncio.Task | None = None
 
     async def startup(self, _app: web.Application) -> None:
@@ -91,6 +99,9 @@ class App:
         self.ha = HAClient(self.config, self.session)
         self.llm = OllamaClient(self.config, self.session)
         self.notifier = Notifier(self.config, self.ha, self.db)
+        self.autonomy = Autonomy(self.config, self.index, self.db)
+        self.incidents = IncidentManager(self.db, self.notifier)
+        self.snapshots = SnapshotStore(self.config.data_dir)
         self.ctx = ToolContext(
             config=self.config,
             ha=self.ha,
@@ -100,15 +111,30 @@ class App:
             db=self.db,
             confirmations=self.confirmations,
             notifier=self.notifier,
+            autonomy=self.autonomy,
+            incidents=self.incidents,
         )
         self.agent = Agent(self.ctx, self.registry)
         self.watcher = Watcher(self.ctx, self.notifier)
         self.scheduler = Scheduler(self.ctx, self.notifier, self.watcher)
+        self.guardian = AutonomousAgent(self.ctx, build_autonomous_registry(), self.incidents)
+        self.baseline = Baseline(self.db, self.index)
+        self.patrol = Patrol(self.ctx, self.incidents, self.snapshots)
+        self.patrol.on_observation = lambda text: self.guardian.observe(text, urgent=True)
+        self.publisher = StatusPublisher(self.ha, self.db, self.autonomy)
+        self.watcher.agent, self.watcher.incidents = self.guardian, self.incidents
+        self.watcher.baseline, self.watcher.snapshots = self.baseline, self.snapshots
+        s = self.scheduler
+        s.agent, s.baseline, s.patrol = self.guardian, self.baseline, self.patrol
+        s.incidents, s.snapshots, s.publisher = self.incidents, self.snapshots, self.publisher
         self.ha.on_connect(self.refresh_index)
+        self.ha.on_connect(self.watcher.on_connected)
+        self.ha.on_event("homeassistant_started", self.watcher.on_ha_started)
         # Order matters: the index must be updated before the watcher looks at it.
         self.ha.on_state_changed(self.index.handle_state_changed)
         self.ha.on_state_changed(self.watcher.handle_state_changed)
         self.ha.on_event("mobile_app_notification_action", self.watcher.handle_notification_action)
+        self.ha.on_event("automation_triggered", self.guardian.note_automation)
         for event_type in REGISTRY_EVENTS:
             self.ha.on_event(event_type, self.schedule_refresh)
         await self.ha.start()
@@ -132,6 +158,7 @@ class App:
         self.ctx.timezone = ha_config.get("time_zone")
         self.notifier.timezone = self.ctx.timezone
         self.watcher.set_timezone(self.ctx.timezone)
+        self.guardian.set_timezone(self.ctx.timezone)
         self.index.location_name = ha_config.get("location_name")
         allowed = await self.ha.exposed_entities() if self.config.only_exposed_entities else None
         self.index.load(
@@ -142,6 +169,9 @@ class App:
             services=await self.ha.get_services(),
             allowed=allowed,
         )
+        if self.config.autonomous and self.config.kill_switch:
+            await ensure_kill_switch(self.ha, self.index, self.config.kill_switch)
+        self.publisher.reset()
 
     def schedule_refresh(self, _data: dict) -> None:
         """Reload the index shortly after entities, devices or areas change."""
@@ -196,6 +226,10 @@ class App:
                 },
                 "ollama": await self.llm.status(),
                 "dry_run": self.config.dry_run,
+                "mode": self.guardian.mode if self.guardian else None,
+                "autonomous": self.config.autonomous,
+                "acting": self.autonomy.enabled,
+                "active_incidents": len(self.db.incidents(status="active")),
                 "proactive": self.config.proactive,
                 "language": self.config.language,
             }
@@ -284,6 +318,125 @@ class App:
         except LLMError as err:
             return web.json_response({"error": str(err)}, status=502)
 
+    # --- Autonomous agent ---------------------------------------------------------
+
+    async def agent_status(self, _request: web.Request) -> web.Response:
+        assert self.guardian
+        switch = self.index.get(self.config.kill_switch) if self.config.kill_switch else None
+        return web.json_response({
+            "enabled": self.config.autonomous,
+            "acting": self.autonomy.enabled,
+            "kill_switch": {"entity_id": self.config.kill_switch, "state": switch.state if switch else None},
+            "mode": self.guardian.mode,
+            "running": self.guardian.running,
+            "last_summary": self.guardian.last_summary,
+            "runs": self.db.agent_runs(30),
+            "actions": self.db.recent_actions(limit=30),
+            "followups": self.db.pending_followups(),
+            "mutes": self.db.mutes(),
+        })
+
+    async def agent_run(self, _request: web.Request) -> web.Response:
+        assert self.guardian
+        if self.guardian.running:
+            return web.json_response({"error": "de agent is al bezig"}, status=409)
+        self.guardian.observe("Handmatige controle gevraagd vanuit de web-UI")
+        try:
+            summary = await self.guardian.run("handmatig")
+        except LLMError as err:
+            return web.json_response({"error": str(err)}, status=502)
+        return web.json_response({"summary": summary or "Niets bijzonders"})
+
+    async def kill_switch(self, request: web.Request) -> web.Response:
+        assert self.ha
+        if not self.config.kill_switch:
+            return web.json_response({"error": "geen noodknop ingesteld"}, status=400)
+        on = bool((await json_body(request)).get("on"))
+        await self.ha.call_service("input_boolean", "turn_on" if on else "turn_off",
+                                   target={"entity_id": [self.config.kill_switch]})
+        self.db.audit("kill_switch", {"on": on}, "executed", "ok", "web")
+        return web.json_response({"on": on})
+
+    async def undo(self, request: web.Request) -> web.Response:
+        assert self.ctx
+        result = await undo_action(self.ctx, int(request.match_info["action_id"]))
+        return web.json_response(result, status=400 if result.get("status") == "error" else 200)
+
+    async def unmute(self, request: web.Request) -> web.Response:
+        self.db.unmute(request.match_info["key"])
+        return web.json_response({"status": "ok"})
+
+    async def feedback(self, request: web.Request) -> web.Response:
+        value = 1 if (await json_body(request)).get("value", 0) > 0 else -1
+        apply_feedback(self.db, int(request.match_info["event_id"]), value)
+        return web.json_response({"status": "ok"})
+
+    async def incidents_list(self, request: web.Request) -> web.Response:
+        if request.query.get("status") == "active":
+            return web.json_response(self.db.incidents(status="active"))
+        return web.json_response(self.db.incidents(limit=query_int(request, "limit", 50, 200)))
+
+    async def incident_detail(self, request: web.Request) -> web.Response:
+        incident = self.db.get_incident(int(request.match_info["incident_id"]))
+        if incident is None:
+            raise web.HTTPNotFound()
+        return web.json_response(incident)
+
+    async def incident_resolve(self, request: web.Request) -> web.Response:
+        incident_id = int(request.match_info["incident_id"])
+        if self.db.get_incident(incident_id) is None:
+            raise web.HTTPNotFound()
+        self.incidents.resolve(incident_id, "Afgesloten door de bewoner")
+        return web.json_response({"status": "ok"})
+
+    async def snapshot(self, request: web.Request) -> web.StreamResponse:
+        path = self.snapshots.path(request.match_info["name"])
+        if path is None:
+            raise web.HTTPNotFound()
+        return web.FileResponse(path, headers={"Cache-Control": "max-age=86400"})
+
+    async def rules(self, request: web.Request) -> web.Response:
+        if request.method == "POST":
+            text = ((await json_body(request)).get("text") or "").strip()
+            if not text:
+                return web.json_response({"error": "lege regel"}, status=400)
+            self.db.add_rule(text[:300])
+        elif request.method == "DELETE":
+            self.db.delete_rule(int(request.match_info["rule_id"]))
+        return web.json_response(self.db.rules())
+
+    async def rule_toggle(self, request: web.Request) -> web.Response:
+        enabled = bool((await json_body(request)).get("enabled"))
+        self.db.set_rule_enabled(int(request.match_info["rule_id"]), enabled)
+        return web.json_response(self.db.rules())
+
+    # --- Settings --------------------------------------------------------------------
+
+    async def settings_get(self, _request: web.Request) -> web.Response:
+        assert self.llm
+        return web.json_response({
+            "values": settings_module.current_values(self.config),
+            "sections": settings_module.SECTIONS,
+            "choices": await settings_module.choices(self.index, self.llm),
+        })
+
+    async def settings_save(self, request: web.Request) -> web.Response:
+        assert self.session
+        changes = (await json_body(request)).get("values") or {}
+        try:
+            clean = settings_module.validate(self.config, changes)
+        except settings_module.SettingsError as err:
+            return web.json_response({"error": "Controleer de gemarkeerde velden", "fields": err.errors}, status=400)
+        settings_module.apply(self.config, clean)
+        warning = await settings_module.persist(self.session, self.config)
+        self.db.audit("settings", {"changed": sorted(clean)}, "executed", warning or "ok", "web")
+        return web.json_response({"values": settings_module.current_values(self.config), "warning": warning})
+
+    async def test_ollama(self, request: web.Request) -> web.Response:
+        assert self.llm
+        url = ((await json_body(request)).get("url") or "").strip()
+        return web.json_response(await self.llm.status(url or None))
+
     async def health(self, _request: web.Request) -> web.Response:
         return web.json_response({"ok": True})
 
@@ -359,6 +512,23 @@ def create_app(config: Config) -> web.Application:
             web.post(r"/api/jobs/{job:summary|routines}", state.run_job),
             web.get("/api/entities", state.entities),
             web.get("/api/integration", state.integration),
+            web.get("/api/agent", state.agent_status),
+            web.post("/api/agent/run", state.agent_run),
+            web.post("/api/agent/kill-switch", state.kill_switch),
+            web.post(r"/api/actions/{action_id:\d+}/undo", state.undo),
+            web.delete("/api/mutes/{key}", state.unmute),
+            web.post(r"/api/events/{event_id:\d+}/feedback", state.feedback),
+            web.get("/api/incidents", state.incidents_list),
+            web.get(r"/api/incidents/{incident_id:\d+}", state.incident_detail),
+            web.post(r"/api/incidents/{incident_id:\d+}/resolve", state.incident_resolve),
+            web.get("/api/snapshots/{name}", state.snapshot),
+            web.get("/api/rules", state.rules),
+            web.post("/api/rules", state.rules),
+            web.delete(r"/api/rules/{rule_id:\d+}", state.rules),
+            web.post(r"/api/rules/{rule_id:\d+}/toggle", state.rule_toggle),
+            web.get("/api/settings", state.settings_get),
+            web.post("/api/settings", state.settings_save),
+            web.post("/api/settings/test-ollama", state.test_ollama),
             web.get("/api/health", state.health),
             web.get(r"/api/camera/{entity_id:camera\.[a-z0-9_]+}", state.camera),
         ]
