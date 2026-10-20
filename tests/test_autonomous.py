@@ -407,3 +407,27 @@ async def test_agent_knows_about_automations(auto):
     agent = AutonomousAgent(auto, registry, auto.incidents)
     agent.note_automation({"name": "Vertrek", "entity_id": "automation.vertrek"})
     assert "Automatisering uitgevoerd: Vertrek" in agent.situation_report([])
+
+
+async def test_away_heartbeat_skips_routine_changes(auto):
+    """While away, our own actions and automations adjusting the heating do not wake the model."""
+    agent = AutonomousAgent(auto, build_autonomous_registry(), auto.incidents)
+    agent.set_mode("weg")
+    agent._observations.clear()
+    agent.note_automation({"name": "Nachtverlaging", "entity_id": "automation.nacht"})
+    auto.index.update_state({"entity_id": "climate.woonkamer", "state": "heat", "attributes": {}})
+    agent.note_state_change(auto.index.get("climate.woonkamer"), "off", "heat", origin="automatisering")
+    assert not agent._needs_thinking([])
+    assert await agent.run() is None
+    assert "Nachtverlaging" in agent.situation_report([])  # still reported at the next real heartbeat
+    set_state(auto.index, "lock.voordeur", "unlocked")
+    agent.note_state_change(auto.index.get("lock.voordeur"), "locked", "unlocked", origin="automatisering")
+    assert agent._needs_thinking([])
+
+
+async def test_background_calls_cap_answer_length(auto):
+    from app.llm.ollama import AGENT_MAX_TOKENS
+    agent = AutonomousAgent(auto, build_autonomous_registry(), auto.incidents)
+    agent.observe("Afwijking: test")
+    await agent.run()
+    assert auto.llm.requests[-1].get("max_tokens") == AGENT_MAX_TOKENS

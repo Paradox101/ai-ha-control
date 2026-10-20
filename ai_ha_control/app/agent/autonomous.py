@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from ..ha.context import DEVICE, ContextTracker
+from ..ha.context import AGENT, AI, AUTOMATION, DEVICE, ContextTracker
 from ..ha.index import DETECTION_CLASSES, OPENING_CLASSES, SAFETY_CLASSES, EntityIndex, EntityInfo
 from ..house import climate_text
 from ..llm.ollama import PRIORITY_AGENT, LLMError
@@ -89,6 +89,7 @@ class AutonomousAgent:
         self._changes: list[str] = []
         self._activity: Counter[str] = Counter()
         self._observations: list[str] = []
+        self._notable = False  # a change worth a heartbeat while away (not our own or routine automation work)
         self._urgent_since: float | None = None
         self._last_run = time.monotonic()  # first heartbeat after one interval
         self._last_review = 0.0
@@ -119,8 +120,12 @@ class AutonomousAgent:
                 and not self._ctx.index.is_opening(ent):
             if ent.device_class not in OPENING_CLASSES and new == "on":
                 self._activity[ent.name] += 1  # motion/detections: counted, not listed
+                self._notable = True
             return
         who = "" if ent.domain == "binary_sensor" else f" [{ContextTracker.describe(origin, label)}]"
+        # Our own actions and an automation adjusting the heating are no reason to wake the GPU on their own.
+        if origin not in (AGENT, AI) and not (origin == AUTOMATION and ent.domain == "climate"):
+            self._notable = True
         self._changes.append(f"{self._now():%H:%M} {ent.name}: {old} → {new}{who}")
         del self._changes[:-MAX_CHANGES]
 
@@ -159,7 +164,7 @@ class AutonomousAgent:
     def _needs_thinking(self, followups: list[dict[str, Any]]) -> bool:
         if self._observations or followups:
             return True
-        if (self._changes or self._activity) and self.mode not in (MODE_HOME, MODE_GUEST):
+        if self._notable and self.mode not in (MODE_HOME, MODE_GUEST):
             return True
         return bool(self._incidents.active()) and time.time() - self._last_review >= REVIEW_INCIDENTS_EVERY
 
@@ -263,6 +268,7 @@ class AutonomousAgent:
             # Take what the report contains: anything that arrives while the model thinks waits for the next run.
             taken = (self._observations, self._changes, self._activity)
             self._observations, self._changes, self._activity = [], [], Counter()
+            notable, self._notable = self._notable, False
             autonomy = self._ctx.autonomy.summary() if self._ctx.autonomy else "alleen melden"
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT.format(autonomy=autonomy)},
@@ -276,6 +282,7 @@ class AutonomousAgent:
                 observations, changes, activity = taken
                 self._changes = (changes + self._changes)[-MAX_CHANGES:]
                 self._activity = activity + self._activity
+                self._notable = self._notable or notable
                 if raise_llm_error:
                     self._observations = (observations + self._observations)[-MAX_CHANGES:]
                     raise

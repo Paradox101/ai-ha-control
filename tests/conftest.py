@@ -131,9 +131,10 @@ class FakeLLM:
         self.responses = list(responses or [])
         self.requests: list[dict[str, Any]] = []
 
-    async def chat(self, messages, tools=None, model=None, timeout=300, priority=1, on_delta=None, schema=None):
+    async def chat(self, messages, tools=None, model=None, timeout=300, priority=1, on_delta=None, schema=None,
+                   max_tokens=None):
         self.requests.append({"messages": [dict(m) for m in messages], "tools": tools, "model": model,
-                              "streamed": on_delta is not None, "schema": schema})
+                              "streamed": on_delta is not None, "schema": schema, "max_tokens": max_tokens})
         response = self.responses.pop(0) if self.responses else {"role": "assistant", "content": "klaar"}
         if on_delta is not None and response.get("content") and not response.get("tool_calls"):
             for word in response["content"].split(" "):

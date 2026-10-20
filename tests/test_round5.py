@@ -14,7 +14,8 @@ async def test_text_streamed_before_a_tool_call_is_kept_apart(ctx):
         {"role": "assistant", "content": "De keukenlamp is aan."},
     ]
 
-    async def chat(messages, tools=None, model=None, timeout=300, priority=1, on_delta=None, schema=None):
+    async def chat(messages, tools=None, model=None, timeout=300, priority=1, on_delta=None, schema=None,
+                   max_tokens=None):
         response = responses.pop(0)
         if on_delta is not None:
             await on_delta(response["content"])
