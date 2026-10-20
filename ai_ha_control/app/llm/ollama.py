@@ -32,6 +32,9 @@ NO_STREAM_PREFIXES = ("{", "`", "<")
 # Camera snapshots are often 4K; vision models don't need that and the extra image tokens cost VRAM.
 IMAGE_MAX_SIZE = 1280
 IMAGE_RETRY_SIZE = 768
+# Background answers are short; a cap stops a rambling model from keeping the GPU at full power.
+AGENT_MAX_TOKENS = 768
+VISION_MAX_TOKENS = 300
 VISION_CONTEXT = 4096  # one picture + a short question; the chat context size is not needed here
 
 
@@ -179,6 +182,7 @@ class OllamaClient:
         timeout: float = 300,
         priority: int = PRIORITY_CHAT,
         on_delta: DeltaCallback | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Run one chat completion and return the assistant message.
 
@@ -186,7 +190,7 @@ class OllamaClient:
         """
         await self._acquire(priority)
         try:
-            return await self._chat(messages, tools, model, timeout, on_delta=on_delta)
+            return await self._chat(messages, tools, model, timeout, on_delta=on_delta, max_tokens=max_tokens)
         finally:
             self._lock.release()
 
@@ -199,6 +203,7 @@ class OllamaClient:
         context_size: int | None = None,
         on_delta: DeltaCallback | None = None,
         schema: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model or self._config.model,
@@ -208,6 +213,8 @@ class OllamaClient:
             "think": self._config.think,
             "options": {"num_ctx": context_size or self._config.context_size, "temperature": 0.2},
         }
+        if max_tokens:
+            payload["options"]["num_predict"] = max_tokens
         if tools:
             payload["tools"] = tools
         if schema:
@@ -290,7 +297,8 @@ class OllamaClient:
         await self._acquire(priority)
         try:
             try:
-                message = await self._chat(request(IMAGE_MAX_SIZE), None, model, 180, context, schema=schema)
+                message = await self._chat(request(IMAGE_MAX_SIZE), None, model, 180, context, schema=schema,
+                                           max_tokens=VISION_MAX_TOKENS)
             except LLMError as err:
                 if is_out_of_memory(err):
                     # Usually the chat model still occupies the GPU: free it and try once more, smaller.
@@ -300,7 +308,8 @@ class OllamaClient:
                     _LOGGER.warning("Camera image too large for the vision context, retrying smaller")
                 else:
                     raise
-                message = await self._chat(request(IMAGE_RETRY_SIZE), None, model, 180, context, schema=schema)
+                message = await self._chat(request(IMAGE_RETRY_SIZE), None, model, 180, context, schema=schema,
+                                           max_tokens=VISION_MAX_TOKENS)
         finally:
             self._lock.release()
         return (message.get("content") or "").strip()

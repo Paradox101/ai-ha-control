@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.34
+
+- **Minder GPU-werk, stillere pc**: als niemand thuis is of iedereen slaapt, maakt de hartslag de AI niet meer wakker alleen omdat een automatisering liep, de verwarming door een automatisering werd bijgesteld of de agent zelf iets deed. Zulke wijzigingen staan wel in het volgende rapport. Sloten, deuren, ramen, beweging en personen wekken de agent zoals voorheen. Achtergrondantwoorden (hartslag en camera-analyse) hebben een maximale lengte, zodat een doorratelend model de GPU niet minutenlang vol laat draaien.
+
 ## 0.6.33
 
 - **Stroom en weer van nu komen rechtstreeks uit Home Assistant**: "Hoeveel stroom verbruiken we nu?", "Leveren we terug?", "Wat leveren de zonnepanelen?", "Wat is de stroomprijs?" en "Wat voor weer is het?" beantwoordt de chat direct uit de P1-meter, de omvormer, de prijssensor en de weer-entiteit ("Het huis neemt nu 835 W af van het net. De zonnepanelen leveren nu 138 W."). Vragen over een hele dag ("hoeveel hebben we vandaag verbruikt"), het goedkoopste moment of het weer van morgen gaan nog naar de agent, net als vragen waarvoor geen sensor is.
