@@ -15,7 +15,7 @@ from ..ha.index import NON_ROOM_AREAS, normalize
 from ..answers import status_answer
 from ..house import car_status, climate_text, fmt_number, is_car, outside_temperature, readings_text, room_readings, weather_text
 from ..watcher.guard import security_answer
-from ..llm.ollama import PRIORITY_CHAT, DeltaCallback
+from ..llm.ollama import AGENT_MAX_TOKENS, PRIORITY_AGENT, PRIORITY_CHAT, DeltaCallback
 from ..watcher.baseline import house_mode
 from ..tools.actions import resolve_confirmation
 from ..tools.base import ToolContext, ToolRegistry
@@ -190,7 +190,8 @@ async def run_tool_loop(
         may_stream = on_delta is not None and not ctx.config.think and not (
             check_first and calls_made == 0 and not nudged and budget_left)
         message = await ctx.llm.chat(messages, tools=tools if budget_left else None, model=model, priority=priority,
-                                     on_delta=stream if may_stream else None)
+                                     on_delta=stream if may_stream else None,
+                                     max_tokens=AGENT_MAX_TOKENS if priority >= PRIORITY_AGENT else None)
         tool_calls = message.get("tool_calls") or (
             _text_tool_call(message.get("content") or "", registry.names) if budget_left else None
         )
